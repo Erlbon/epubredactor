@@ -73,7 +73,7 @@ from core.undo import UndoManager
 from core.version import APP_NAME, APP_REPO_URL, APP_VERSION, RELEASE_LABEL
 from redactor_common.gui.menu_builder import MenuAction, Separator, build_menu_bar
 from gui import app_settings
-from redactor_common.gui.about_dialog import AboutDialog, ChangelogDialog
+from redactor_common.gui.about_dialog import AboutDialog, ChangelogDialog, CreditsDialog
 from redactor_common.core.version import REDACTOR_COMMON_REPO_URL, REDACTOR_COMMON_VERSION
 from gui.calibre_lookup_dialog import CalibreLookupDialog
 from gui.case_conversion_dialog import CaseConversionDialog
@@ -485,6 +485,7 @@ class MainWindow(QMainWindow):
             "Help": [
                 MenuAction("about", f"&About {APP_NAME}…", self.open_about_dialog),
                 MenuAction("changelog", "View &Changelog…", self.open_changelog_dialog),
+                MenuAction("credits", "&Credits…", self.open_credits_dialog),
             ],
         }
         kobo_items = [
@@ -2433,6 +2434,10 @@ class MainWindow(QMainWindow):
     def open_changelog_dialog(self) -> None:
         changelog_path = resource_path("CHANGELOG.md")
         ChangelogDialog(changelog_path, self).exec()
+
+    def open_credits_dialog(self) -> None:
+        credits_path = resource_path("CREDITS.md")
+        CreditsDialog(credits_path, self).exec()
 
     # ------------------------------------------------------------------
     # Misc

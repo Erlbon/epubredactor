@@ -23,6 +23,7 @@ a = Analysis(
         ("README.md", "."),
         ("CHANGELOG.md", "."),
         ("ABOUT.md", "."),
+        ("CREDITS.md", "."),
     ],
     hiddenimports=[],
     hookspath=[],
