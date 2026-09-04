@@ -1,9 +1,10 @@
 """
-gui/os_utils.py
+redactor_common/core/os_utils.py
 
-Small shared OS-integration helpers, used from more than one dialog/menu
-(the eReader send dialog, and the table's right-click context menu) so
-there's exactly one implementation to keep correct across platforms.
+Small shared OS-integration helper. Promoted from the epub project's
+gui/os_utils.py -- no PyQt6 dependency despite living in a GUI-adjacent
+role, so it belongs in core/ alongside the rest of the pure-logic
+modules, not gui/.
 """
 
 from __future__ import annotations

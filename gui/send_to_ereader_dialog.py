@@ -38,7 +38,7 @@ from PyQt6.QtWidgets import (
 
 from core.epub_metadata import EpubBook
 from gui import app_settings
-from gui.os_utils import reveal_in_file_manager
+from redactor_common.core.os_utils import reveal_in_file_manager
 
 
 class SendToEreaderDialog(QDialog):

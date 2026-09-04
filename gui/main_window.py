@@ -47,7 +47,6 @@ from PyQt6.QtWidgets import (
     QLabel,
     QLineEdit,
     QMainWindow,
-    QMenu,
     QMessageBox,
     QProgressDialog,
     QSizePolicy,
@@ -71,7 +70,9 @@ from core.sigil_tools import SigilLaunchError, find_sigil
 from core.sigil_tools import open_in_sigil as launch_sigil
 from core.undo import UndoManager
 from core.version import APP_NAME, APP_REPO_URL, APP_VERSION, RELEASE_LABEL
-from redactor_common.gui.menu_builder import MenuAction, Separator, build_menu_bar
+from redactor_common.gui.menu_builder import MenuAction, MenuItems, Separator, build_menu_bar
+from redactor_common.gui.context_menu import show_table_context_menu
+from redactor_common.gui.column_menu import show_column_header_context_menu
 from gui import app_settings
 from redactor_common.gui.about_dialog import AboutDialog, ChangelogDialog, CreditsDialog
 from redactor_common.core.version import REDACTOR_COMMON_REPO_URL, REDACTOR_COMMON_VERSION
@@ -88,7 +89,6 @@ from gui.manage_list_dialog import ManageListDialog
 from gui.manifest_rebuild_dialog import ManifestRebuildDialog
 from gui.missing_space_dialog import MissingSpaceDialog
 from gui.open_library_dialog import OpenLibraryDialog
-from gui.os_utils import reveal_in_file_manager
 from gui.polish_book_dialog import PolishBookDialog
 from gui.rename_dialog import RenameDialog
 from gui.search_replace_dialog import FILENAME_FIELD_KEY, SearchReplaceDialog
@@ -670,47 +670,45 @@ class MainWindow(QMainWindow):
     # ------------------------------------------------------------------
 
     def _show_table_context_menu(self, pos) -> None:
-        row = self.table.rowAt(pos.y())
-        if row >= 0 and row not in self._selected_rows():
-            # Right-clicking outside the current selection replaces it
-            # with just the row under the cursor -- matches how Explorer
-            # and most other apps behave, rather than acting on a
-            # selection the person can't see anymore.
-            self.table.clearSelection()
-            self.table.selectRow(row)
+        # Selection-fix, and the generic Open Containing Folder/Copy Path
+        # actions, are handled by the shared helper -- see its docstring.
+        def extra(books: list[EpubBook]) -> MenuItems:
+            items: MenuItems = []
+            if len(books) == 1 and not books[0].load_error:
+                # Only offered for a single book -- renaming several books
+                # to the same name doesn't make sense. Distinct from
+                # "Rename Files…" just below (plural: the pattern-based
+                # batch tool) -- this is the quick, direct fix for one
+                # typo at a time.
+                items.append(MenuAction(
+                    "rename_file", "Rename File…", lambda: self.rename_single_file(books[0])
+                ))
+            items.append(Separator())
+            items.append(self.rename_files_act)
+            items.append(self.save_act)
+            items.append(Separator())
+            items.append(self.remove_files_act)
+            items.append(self.delete_files_act)
+            items.append(Separator())
+            items.append(MenuAction("validate", "Validate / Fix Issues…", self.open_validation_dialog))
+            items.append(MenuAction("calibre_lookup", "Look Up via Calibre…", self.open_calibre_lookup_dialog))
+            items.append(MenuAction("polish_book", "Polish Book…", self.open_polish_book_dialog))
+            items.append(MenuAction("number_series", "Number Series…", self.quick_number_series))
+            items.append(Separator())
+            items.append(MenuAction("open_sigil", "Open with Sigil…", self.open_in_sigil))
+            items.append(Separator())
+            items.append(MenuAction("send_kobo", "Send to Kobo (USB)…", self.open_send_to_kobo_dialog))
+            items.append(MenuAction(
+                "send_ereader", "Send to eReader (Wireless)…", self.open_send_to_ereader_dialog
+            ))
+            return items
 
-        books = self._currently_selected_books()
-        if not books:
-            return
-
-        menu = QMenu(self)
-        menu.addAction(self._make_action("Open Containing Folder", self.open_containing_folder))
-        menu.addAction(self._make_action("Copy Path", self.copy_selected_paths))
-        if len(books) == 1 and not books[0].load_error:
-            # Only offered for a single book -- renaming several books to
-            # the same name doesn't make sense. Distinct from "Rename
-            # Files…" just below (plural: the pattern-based batch tool)
-            # -- this is the quick, direct fix for one typo at a time.
-            menu.addAction(self._make_action("Rename File…", lambda: self.rename_single_file(books[0])))
-        menu.addSeparator()
-        menu.addAction(self.rename_files_act)
-        menu.addAction(self.save_act)
-        menu.addSeparator()
-        menu.addAction(self.remove_files_act)
-        menu.addAction(self.delete_files_act)
-        menu.addSeparator()
-        menu.addAction(self._make_action("Validate / Fix Issues…", self.open_validation_dialog))
-        menu.addAction(self._make_action("Look Up via Calibre…", self.open_calibre_lookup_dialog))
-        menu.addAction(self._make_action("Polish Book…", self.open_polish_book_dialog))
-        menu.addAction(self._make_action("Number Series…", self.quick_number_series))
-        menu.addSeparator()
-        menu.addAction(self._make_action("Open with Sigil…", self.open_in_sigil))
-        menu.addSeparator()
-        menu.addAction(self._make_action("Send to Kobo (USB)…", self.open_send_to_kobo_dialog))
-        menu.addAction(self._make_action(
-            "Send to eReader (Wireless)…", self.open_send_to_ereader_dialog
-        ))
-        menu.exec(self.table.viewport().mapToGlobal(pos))
+        show_table_context_menu(
+            self, self.table, pos,
+            get_selected_items=self._currently_selected_books,
+            get_path=lambda book: book.path,
+            extra_items=extra,
+        )
 
     # ------------------------------------------------------------------
     # Open with Sigil
@@ -788,36 +786,30 @@ class MainWindow(QMainWindow):
 
     # ------------------------------------------------------------------
 
-    def open_containing_folder(self) -> None:
-        books = self._currently_selected_books()
-        if not books:
-            return
-        # Just the first book's folder -- opening a separate Explorer
-        # window per selected book would be more annoying than helpful
-        # for a multi-selection, and they're usually in the same folder.
-        reveal_in_file_manager(books[0].path)
-
-    def copy_selected_paths(self) -> None:
-        books = self._currently_selected_books()
-        if not books:
-            return
-        QApplication.clipboard().setText("\n".join(b.path for b in books))
-
     def _show_header_context_menu(self, pos) -> None:
-        header = self.table.horizontalHeader()
-        logical_index = header.logicalIndexAt(pos)
+        # Still index-keyed (this project's column-hiding predates
+        # core/table_settings.py's field-name scheme, and hasn't been
+        # migrated onto it) -- show_column_header_context_menu's keys are
+        # untyped for exactly this case, see its module docstring.
+        column_order = [i for i in range(self.table.columnCount()) if i != FILENAME_COL]
+        label_lookup = {
+            i: self.table.horizontalHeaderItem(i).text() for i in column_order
+        }
+        hidden = {i for i in range(self.table.columnCount()) if self.table.isColumnHidden(i)}
 
-        menu = QMenu(self)
-        if logical_index >= 0 and logical_index != FILENAME_COL:
-            column_name = self.table.horizontalHeaderItem(logical_index).text()
-            hide_act = menu.addAction(f'Hide "{column_name}" Column')
-            hide_act.triggered.connect(lambda: self._hide_column(logical_index))
-            menu.addSeparator()
-        menu.addAction(self._make_action("Add/Remove Columns…", self.open_column_settings_dialog))
-        menu.exec(header.viewport().mapToGlobal(pos))
+        show_column_header_context_menu(
+            self, self.table, pos,
+            column_order=column_order,
+            label_lookup=label_lookup,
+            protected_columns=frozenset({FILENAME_COL}),
+            hidden_fields=hidden,
+            is_visible=lambda i, hidden_set: i not in hidden_set,
+            on_toggle=lambda i, checked: self._set_column_visible(i, checked),
+            open_column_settings_dialog=self.open_column_settings_dialog,
+        )
 
-    def _hide_column(self, logical_index: int) -> None:
-        self.table.setColumnHidden(logical_index, True)
+    def _set_column_visible(self, logical_index: int, visible: bool) -> None:
+        self.table.setColumnHidden(logical_index, not visible)
         self._on_columns_changed()
 
     # ------------------------------------------------------------------
