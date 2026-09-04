@@ -4,6 +4,21 @@ All notable changes to The ƎPUB Redactor, by version. Trimmed to new
 functionality and real fixes — cosmetic/UX-only adjustments aren't
 listed here.
 
+## 2026-09-04#01
+
+- `redactor_common` is now a real pip dependency
+  ([Erlbon/redactor_common](https://github.com/Erlbon/redactor_common),
+  pinned to tag `2026-09-04-10` in `requirements.txt`) instead of a
+  vendored copy under `redactor_common/`. Previously each of the three
+  Redactor projects hand-copied this shared code separately, so a fix
+  in one place needed three separate manual resyncs and could silently
+  drift out of sync -- which is exactly what happened with a real
+  crash bug (`setWindowModality`, fixed just prior to this). One
+  canonical source now; bumping the pin is a deliberate one-line
+  `requirements.txt` diff instead of an easy-to-forget copy-paste.
+  Import paths are unchanged (`from redactor_common.gui...` still
+  works, just resolves from site-packages now).
+
 ## 2026-09-03#07
 
 - Fixed the app appearing to freeze with no indicator after loading a

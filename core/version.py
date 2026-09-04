@@ -13,5 +13,5 @@ version + stage), separate from the build identifier above.
 
 APP_NAME = "The \u018ePUB Redactor"  # "\u018e" = Ǝ, LATIN CAPITAL LETTER REVERSED E
 RELEASE_LABEL = "v0.3 Public Beta (I \u2665 mobilism)"
-APP_VERSION = "2026-09-03#07"
+APP_VERSION = "2026-09-04#01"
 APP_REPO_URL = "https://github.com/erlbon/epubredactor"
