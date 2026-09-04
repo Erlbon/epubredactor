@@ -1,0 +1,4 @@
+PyQt6>=6.6
+lxml>=5.0
+pyinstaller>=6.3
+send2trash>=1.8
