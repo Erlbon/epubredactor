@@ -70,11 +70,11 @@ from core.sigil_tools import DOWNLOAD_URL as SIGIL_DOWNLOAD_URL
 from core.sigil_tools import SigilLaunchError, find_sigil
 from core.sigil_tools import open_in_sigil as launch_sigil
 from core.undo import UndoManager
-from core.version import APP_NAME, APP_VERSION, RELEASE_LABEL
+from core.version import APP_NAME, APP_REPO_URL, APP_VERSION, RELEASE_LABEL
 from redactor_common.gui.menu_builder import MenuAction, Separator, build_menu_bar
 from gui import app_settings
 from redactor_common.gui.about_dialog import AboutDialog, ChangelogDialog
-from redactor_common.core.version import REDACTOR_COMMON_VERSION
+from redactor_common.core.version import REDACTOR_COMMON_REPO_URL, REDACTOR_COMMON_VERSION
 from gui.calibre_lookup_dialog import CalibreLookupDialog
 from gui.case_conversion_dialog import CaseConversionDialog
 from gui.column_settings_dialog import ColumnSettingsDialog
@@ -2425,6 +2425,8 @@ class MainWindow(QMainWindow):
             icon_path=icon_path,
             about_path=about_path,
             component_versions={"redactor_common": REDACTOR_COMMON_VERSION},
+            repo_url=APP_REPO_URL,
+            component_repo_urls={"redactor_common": REDACTOR_COMMON_REPO_URL},
             parent=self,
         ).exec()
 
