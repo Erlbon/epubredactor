@@ -73,6 +73,7 @@ from core.version import APP_NAME, APP_REPO_URL, APP_VERSION, RELEASE_LABEL
 from redactor_common.gui.menu_builder import MenuAction, MenuItems, Separator, build_menu_bar
 from redactor_common.gui.context_menu import show_table_context_menu
 from redactor_common.gui.column_menu import show_column_header_context_menu
+from redactor_common.gui.collapsible_splitter import SplitterPaneCollapser
 from gui import app_settings
 from redactor_common.gui.about_dialog import AboutDialog, ChangelogDialog, CreditsDialog
 from redactor_common.core.version import REDACTOR_COMMON_REPO_URL, REDACTOR_COMMON_VERSION
@@ -285,7 +286,6 @@ class MainWindow(QMainWindow):
         # than being locked to a wide fixed range.
         self.tag_panel.setMinimumWidth(24)
         self.tag_panel.setMaximumWidth(440)
-        self._tag_panel_last_width = 340  # restored to this width when un-collapsing
         self.tag_panel.applyRequested.connect(self._apply_bulk_edit)
         self.tag_panel.isbnLookupRequested.connect(self.open_google_books_dialog)
         self.tag_panel.coverAddReplaceRequested.connect(self.on_cover_add_replace)
@@ -358,6 +358,10 @@ class MainWindow(QMainWindow):
 
         self.splitter.setStretchFactor(0, 0)
         self.splitter.setStretchFactor(1, 1)
+
+        self._panel_collapser = SplitterPaneCollapser(
+            self.splitter, pane_index=0, collapsed_width=TAG_PANEL_COLLAPSED_WIDTH, default_width=340,
+        )
 
         # Menu bar and toolbar are built after the widgets above, since
         # some of their actions (Apply) are wired directly to tag_panel.
@@ -611,17 +615,10 @@ class MainWindow(QMainWindow):
         TagPanel._build_ui(), so collapsing to nothing would take the
         only way to bring it back with it), or restores it to its last
         width. Also reachable via the toolbar's "Panel" button, and via
-        dragging the splitter handle by hand."""
-        sizes = self.splitter.sizes()
-        panel_width = sizes[0] if sizes else 0
-        if panel_width > TAG_PANEL_COLLAPSED_WIDTH + 10:
-            self._tag_panel_last_width = panel_width
-            sizes[0], sizes[1] = TAG_PANEL_COLLAPSED_WIDTH, sizes[0] + sizes[1] - TAG_PANEL_COLLAPSED_WIDTH
-        else:
-            restored = max(self._tag_panel_last_width, 200)
-            sizes[1] = max(sizes[1] - (restored - panel_width), 100) if len(sizes) > 1 else 100
-            sizes[0] = restored
-        self.splitter.setSizes(sizes)
+        dragging the splitter handle by hand. Resize logic itself lives
+        in redactor_common's SplitterPaneCollapser -- shared with video.
+        """
+        self._panel_collapser.toggle()
         self._sync_tag_panel_collapsed_indicator()
 
     def _on_splitter_moved(self, _pos, _index) -> None:
@@ -631,9 +628,7 @@ class MainWindow(QMainWindow):
         self._sync_tag_panel_collapsed_indicator()
 
     def _sync_tag_panel_collapsed_indicator(self) -> None:
-        sizes = self.splitter.sizes()
-        panel_width = sizes[0] if sizes else 0
-        self.tag_panel.set_collapsed_indicator(panel_width <= TAG_PANEL_COLLAPSED_WIDTH + 10)
+        self.tag_panel.set_collapsed_indicator(self._panel_collapser.is_collapsed())
 
     def _visible_ordered_field_keys(self) -> list[str]:
         """The bulk-edit field keys, filtered to visible table columns
