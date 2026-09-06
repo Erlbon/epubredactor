@@ -201,13 +201,6 @@ class TagPanel(QWidget):
         self._vertical_splitter.setSizes([600, 300])  # initial bias toward fields; purely a starting hint
         outer.addWidget(self._vertical_splitter, 1)
 
-        btn_row = QVBoxLayout()
-        clear_btn = QPushButton("Uncheck All Fields")
-        clear_btn.clicked.connect(self._uncheck_all)
-        btn_row.addWidget(clear_btn)
-
-        outer.addLayout(btn_row)
-
         self._selected_count = 0
         # Guard against textChanged firing while we're programmatically
         # repopulating fields on selection change (would wrongly tick boxes).

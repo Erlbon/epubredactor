@@ -37,7 +37,7 @@ import traceback
 import webbrowser
 
 from PyQt6.QtCore import QSize, Qt, QTimer
-from PyQt6.QtGui import QAction, QColor, QGuiApplication, QIcon, QKeySequence, QPixmap
+from PyQt6.QtGui import QAction, QGuiApplication, QIcon, QKeySequence, QPixmap
 from PyQt6.QtWidgets import (
     QAbstractItemView,
     QApplication,
@@ -71,6 +71,10 @@ from core.sigil_tools import open_in_sigil as launch_sigil
 from core.undo import UndoManager
 from core.version import APP_NAME, APP_REPO_URL, APP_VERSION, RELEASE_LABEL
 from redactor_common.gui.menu_builder import MenuAction, MenuItems, Separator, build_menu_bar
+from redactor_common.gui.colors import (
+    DIRTY_COLOR, ERROR_COLOR, SAVE_FAILED_COLOR, DRM_COLOR, HIGHLIGHT_TEXT_COLOR,
+    TABLE_SELECTION_STYLESHEET,
+)
 from redactor_common.gui.context_menu import show_table_context_menu
 from redactor_common.gui.column_menu import show_column_header_context_menu
 from redactor_common.gui.collapsible_splitter import SplitterPaneCollapser
@@ -108,17 +112,10 @@ PATH_COL = 0
 FILENAME_COL = 1
 STATUS_COL = 2
 FIRST_FIELD_COL = 3
-DIRTY_COLOR = QColor("#fff3cd")   # soft amber = unsaved change
-ERROR_COLOR = QColor("#f8d7da")   # soft red = failed to load
-SAVE_FAILED_COLOR = QColor("#ffddb3")  # soft orange = failed to SAVE (distinct from load/validation problems)
-# Both highlight colors above are light, so pair them with explicit dark
-# text -- this keeps them readable regardless of whether the OS/app is in
-# light or dark mode. Non-highlighted rows deliberately do NOT set an
-# explicit background/foreground at all, so they just inherit the current
-# theme's normal palette (white-on-dark in dark mode, black-on-white in
-# light mode) instead of fighting it.
-HIGHLIGHT_TEXT_COLOR = QColor("#000000")
-DRM_COLOR = QColor("#dce6fb")     # soft blue = DRM-protected (not broken, just locked)
+# Colors now live in redactor_common.gui.colors -- this project's own
+# scheme became the shared standard (mp3/video had each picked their
+# own row-tint/selection colors independently). See that module's
+# docstring for the light-background/dark-text rationale.
 STATUS_CELL_COLORS = {"OK": None, "ISSUES": DIRTY_COLOR, "DRM": DRM_COLOR, "INVALID": ERROR_COLOR}
 COVER_ICON_SIZE = QSize(24, 32)
 UNDO_MAX_ENTRIES = 5
@@ -340,10 +337,7 @@ class MainWindow(QMainWindow):
         # dirty/status color while selected; the current cell (relevant
         # for typing and Tab/Enter navigation) gets its own bright
         # outline so it's visible even within a selected row.
-        self.table.setStyleSheet(
-            "QTableWidget::item:selected { background-color: #2f6fed; color: white; }"
-            "QTableWidget::item:focus { border: 2px solid #ffb400; }"
-        )
+        self.table.setStyleSheet(TABLE_SELECTION_STYLESHEET)
         self.table.itemSelectionChanged.connect(self._on_selection_changed)
         self.table.itemChanged.connect(self._on_item_changed)
         self.table.cellDoubleClicked.connect(self._on_cell_double_clicked)

@@ -4,6 +4,16 @@ All notable changes to The ƎPUB Redactor, by version. Trimmed to new
 functionality and real fixes — cosmetic/UX-only adjustments aren't
 listed here.
 
+## 2026-09-06#03
+
+- Colors now live in `redactor_common.gui.colors` instead of being
+  defined locally -- this project's own scheme (already the source
+  everyone else was copying by hand) is now the actual shared standard
+  mp3/video import from, so there's one place to change it going
+  forward. No visible change here, since the values are identical.
+- Removed the "Uncheck All Fields" button from the bulk-edit panel --
+  not needed.
+
 ## 2026-09-06#02
 
 - Fixed a latent bug (reported first on mp3, same grid shape here):
