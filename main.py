@@ -11,6 +11,8 @@ import traceback
 from PyQt6.QtGui import QIcon
 from PyQt6.QtWidgets import QApplication, QMessageBox
 
+from redactor_common.gui.theme import apply_theme
+
 from core import crash_log
 from core.version import APP_NAME
 from gui.main_window import MainWindow, resource_path
@@ -59,6 +61,7 @@ def main() -> int:
     _set_windows_app_user_model_id()
     app = QApplication(sys.argv)
     app.setApplicationName(APP_NAME)
+    apply_theme(app)  # Fusion + a WCAG-contrast-verified light/dark palette -- see redactor_common/gui/theme.py
     # QMessageBox sizes itself to fit its text, but a long line with no
     # natural break point (a file path, or raw stderr from an external
     # tool like Calibre) can make it grow arbitrarily wide instead of
