@@ -198,7 +198,7 @@ class BookTableWidget(QTableWidget):
 class MainWindow(QMainWindow):
     def __init__(self):
         super().__init__()
-        self.setWindowTitle(f"{APP_NAME} {RELEASE_LABEL}, ver {APP_VERSION}")
+        self.setWindowTitle(f"{APP_NAME} ({APP_VERSION})")
         self.resize(1280, 760)
         self._center_on_screen()
         icon_path = resource_path("assets", "icon.ico")
@@ -371,25 +371,6 @@ class MainWindow(QMainWindow):
 
         self.status = QStatusBar()
         self.setStatusBar(self.status)
-
-        # Regular widgets anchor left in a QStatusBar; permanent widgets
-        # anchor right -- exactly the "credit low-left, status low-right"
-        # split that was asked for.
-        self.credit_label = QLabel()
-        self.credit_label.setTextFormat(Qt.TextFormat.RichText)
-        self.credit_label.setOpenExternalLinks(True)
-        badge_path = resource_path("assets", "ai_badge.png")
-        badge_html = ""
-        if os.path.exists(badge_path):
-            # HTML/URL src attributes want forward slashes even on Windows,
-            # where os.path.join produced backslashes -- untranslated,
-            # the badge image would silently fail to render there.
-            badge_html = f' <img src="{badge_path.replace(os.sep, "/")}" height="12">'
-        self.credit_label.setText(
-            f'Made by Pubocyno \u2014 '
-            f'<a href="https://www.anthropic.com">using Claude</a>.{badge_html}'
-        )
-        self.status.addWidget(self.credit_label)
 
         self.status_label = QLabel()
         self.status.addPermanentWidget(self.status_label)

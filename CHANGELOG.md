@@ -4,6 +4,17 @@ All notable changes to The ƎPUB Redactor, by version. Trimmed to new
 functionality and real fixes — cosmetic/UX-only adjustments aren't
 listed here.
 
+## 2026-09-06#01
+
+- Unified appearance with the sibling projects: window title is now
+  just `The ƎPUB Redactor (2026-09-06#01)`, dropping the "v0.3 Public
+  Beta (I ♥ mobilism)" tagline (`RELEASE_LABEL` is now empty, matching
+  mp3/video). Removed the "Made by Pubocyno — using Claude" credit line
+  from the bottom-left of the status bar.
+- Bumped `redactor_common` to `2026-09-06-02` (fixes a stray leading
+  comma in the About dialog for a project with no release label — now
+  relevant here too).
+
 ## 2026-09-04#01
 
 - `redactor_common` is now a real pip dependency
