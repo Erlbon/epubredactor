@@ -4,6 +4,15 @@ All notable changes to The ƎPUB Redactor, by version. Trimmed to new
 functionality and real fixes — cosmetic/UX-only adjustments aren't
 listed here.
 
+## 2026-09-06#02
+
+- Fixed a latent bug (reported first on mp3, same grid shape here):
+  the gap between every Bulk Edit Tags field would visibly grow as the
+  window was resized taller -- the fields grid had no row stretch set
+  anywhere, so Qt spread the extra vertical space evenly into every
+  row's gap instead of leaving it as blank space below the last field.
+  Fix lives in `redactor_common` (bumped to `2026-09-06-03`).
+
 ## 2026-09-06#01
 
 - Unified appearance with the sibling projects: window title is now

@@ -44,6 +44,7 @@ from core.genres import add_genre
 from gui import app_settings
 from redactor_common.gui.image_label import AspectRatioImageLabel
 from redactor_common.gui.collapsible_splitter import CollapseToggleButton
+from redactor_common.gui.grid_utils import absorb_extra_row_space
 
 MULTIPLE_VALUES_PLACEHOLDER = "<multiple values>"
 COVER_PREVIEW_MIN_SIZE = (60, 80)
@@ -276,6 +277,12 @@ class TagPanel(QWidget):
                 )
                 lookup_btn.clicked.connect(self.isbnLookupRequested.emit)
                 self._fields_grid.addWidget(lookup_btn, row, 3)
+
+        # Without this, the gap between every field visibly grows as the
+        # window/panel is resized taller -- see grid_utils.py's docstring.
+        # Called after every rebuild (set_visible_fields() too), not just
+        # this first build.
+        absorb_extra_row_space(self._fields_grid, len(field_keys))
 
     def set_visible_fields(self, field_keys: list[str]) -> None:
         """Rebuilds the Bulk Edit Tags rows to show exactly these fields,
