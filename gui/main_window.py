@@ -938,9 +938,26 @@ class MainWindow(QMainWindow):
             self._load_paths(paths)
 
     def add_folder_dialog(self) -> None:
+        # Qt's native folder picker has no multi-select of its own, so
+        # multiple folders are gathered by reopening it -- Cancel is how
+        # you say "done" rather than "abort". The first pick still aborts
+        # the whole action on Cancel (matches the old single-folder
+        # behavior); a folder already chosen only stops the round of
+        # picking, it doesn't undo what's already in `folders`.
         start_dir = app_settings.load_last_directory()
-        folder = QFileDialog.getExistingDirectory(self, "Add Folder of EPUBs", start_dir)
-        if not folder:
+        folders: list[str] = []
+        while True:
+            title = (
+                "Add Folder of EPUBs"
+                if not folders
+                else "Add Another Folder of EPUBs (Cancel When Done)"
+            )
+            folder = QFileDialog.getExistingDirectory(self, title, start_dir)
+            if not folder:
+                break
+            folders.append(folder)
+            start_dir = folder
+        if not folders:
             return
         # Opening a folder replaces the current list rather than adding
         # to it -- choosing a whole new folder to work in usually means
@@ -950,7 +967,7 @@ class MainWindow(QMainWindow):
         # to top up an existing working set with a few more files).
         # Same unsaved-changes confirmation as the existing Clear List
         # action, since this is functionally that action immediately
-        # followed by loading the new folder.
+        # followed by loading the new folder(s).
         if self.books:
             if self._count_dirty() and not self._confirm_discard(
                 "clear the current list and open a new folder"
@@ -959,7 +976,7 @@ class MainWindow(QMainWindow):
             self.books = []
             self._rebuild_table()
             self._refresh_status()
-        app_settings.save_last_directory(folder)
+        app_settings.save_last_directory(folders[-1])
         reply = QMessageBox.question(
             self,
             "Include Subfolders?",
@@ -968,7 +985,10 @@ class MainWindow(QMainWindow):
             QMessageBox.StandardButton.Yes,
         )
         recursive = reply == QMessageBox.StandardButton.Yes
-        self._load_paths(self._find_epubs_in_folder(folder, recursive=recursive))
+        epub_paths: list[str] = []
+        for folder in folders:
+            epub_paths.extend(self._find_epubs_in_folder(folder, recursive=recursive))
+        self._load_paths(epub_paths)
 
     @staticmethod
     def _find_epubs_in_folder(folder: str, recursive: bool = True) -> list[str]:

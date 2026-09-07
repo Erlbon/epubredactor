@@ -16,5 +16,5 @@ in their title bar or About dialog.
 
 APP_NAME = "The \u018ePUB Redactor"  # "\u018e" = Ǝ, LATIN CAPITAL LETTER REVERSED E
 RELEASE_LABEL = ""
-APP_VERSION = "2026-09-06#03"
+APP_VERSION = "2026-09-07#01"
 APP_REPO_URL = "https://github.com/erlbon/epubredactor"

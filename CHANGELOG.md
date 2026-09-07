@@ -4,6 +4,16 @@ All notable changes to The ƎPUB Redactor, by version. Trimmed to new
 functionality and real fixes — cosmetic/UX-only adjustments aren't
 listed here.
 
+## 2026-09-07#01
+
+- Load Folder can now add more than one folder in a single go — the
+  folder picker reopens after each pick, so Cancel means "done" rather
+  than "abort" once you've chosen at least one. Recurse-into-subfolders
+  is still asked just once and applied to all of them.
+- Fixed a literal `&Kobo` showing in the menu bar instead of the
+  Kobo menu with its mnemonic underline — `extra_menus` expects the
+  plain name and adds the `&` itself.
+
 ## 2026-09-06#03
 
 - Colors now live in `redactor_common.gui.colors` instead of being

@@ -179,11 +179,13 @@ them in one go.
   classification. A best-guess heuristic tool, not a reliable parser —
   review the matches before applying, same as the Google Books and Open
   Library lookups.
-- Load individual files, or a whole folder of `.epub` files (asks whether
-  to include subfolders each time); remembers the last folder you used
-  across all "open a file/folder" dialogs, including the cover-image picker.
-  Load Folder replaces the current list rather than adding to it (with the
-  usual unsaved-changes confirmation first) — Load Files and drag-and-drop
+- Load individual files, or one or more folders of `.epub` files (the
+  folder picker reopens after each pick so you can add another — Cancel
+  is how you say "done"; asks once, for all of them, whether to include
+  subfolders); remembers the last folder you used across all "open a
+  file/folder" dialogs, including the cover-image picker. Load Folder
+  replaces the current list rather than adding to it (with the usual
+  unsaved-changes confirmation first) — Load Files and drag-and-drop
   still add to whatever's already loaded.
 - Remembers exactly which books were loaded when you last closed the
   app, and reopens with the same set loaded automatically — a book
