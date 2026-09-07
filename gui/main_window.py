@@ -474,7 +474,7 @@ class MainWindow(QMainWindow):
                 self.open_send_to_ereader_dialog,
             ),
         ]
-        actions = build_menu_bar(self, specs, extra_menus=[("&Kobo", 3, kobo_items)])
+        actions = build_menu_bar(self, specs, extra_menus=[("Kobo", 3, kobo_items)])
 
         # Back-compat: the rest of this file (toolbar, context menus)
         # references these as self.<x>_act attributes directly.
