@@ -46,7 +46,7 @@ from PyQt6.QtWidgets import (
 from core.calibre_lookup import CalibreLookupError, fetch_metadata
 from core.calibre_tools import DOWNLOAD_URL, find_tool
 from core.epub_metadata import EpubBook
-from core.error_summary import summarize_errors
+from redactor_common.core.error_summary import summarize_errors
 from gui import app_settings
 
 BOOK_COL, FOUND_COL, APPLY_COL = range(3)

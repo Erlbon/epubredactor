@@ -42,7 +42,7 @@ from PyQt6.QtWidgets import (
 )
 
 from core.epub_metadata import EpubBook
-from core.error_summary import summarize_errors
+from redactor_common.core.error_summary import summarize_errors
 from core.google_books_lookup import (
     GoogleBooksLookupError,
     download_cover_image,

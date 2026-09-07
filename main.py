@@ -11,6 +11,7 @@ import traceback
 from PyQt6.QtGui import QIcon
 from PyQt6.QtWidgets import QApplication, QMessageBox
 
+from redactor_common.gui.qmessagebox_style import apply_message_box_style
 from redactor_common.gui.theme import apply_theme
 
 from core import crash_log
@@ -62,15 +63,7 @@ def main() -> int:
     app = QApplication(sys.argv)
     app.setApplicationName(APP_NAME)
     apply_theme(app)  # Fusion + a WCAG-contrast-verified light/dark palette -- see redactor_common/gui/theme.py
-    # QMessageBox sizes itself to fit its text, but a long line with no
-    # natural break point (a file path, or raw stderr from an external
-    # tool like Calibre) can make it grow arbitrarily wide instead of
-    # wrapping -- sometimes wider than the whole screen. Capping the
-    # internal label's width here, once, at the application level fixes
-    # this for every message box in the app (every call site already
-    # parents its dialogs to a window inside this app, so there's no
-    # need to repeat this per call site).
-    app.setStyleSheet("QMessageBox QLabel { max-width: 480px; }")
+    apply_message_box_style(app)  # long unwrappable lines (a path, raw Calibre stderr) stay under 480px wide
     icon_path = resource_path("assets", "icon.ico")
     if os.path.exists(icon_path):
         app.setWindowIcon(QIcon(icon_path))

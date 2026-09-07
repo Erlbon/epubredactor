@@ -30,6 +30,7 @@ regardless of where sorting/reordering puts the row.
 
 from __future__ import annotations
 
+import copy
 import mimetypes
 import os
 import sys
@@ -37,7 +38,7 @@ import traceback
 import webbrowser
 
 from PyQt6.QtCore import QSize, Qt, QTimer
-from PyQt6.QtGui import QAction, QGuiApplication, QIcon, QKeySequence, QPixmap
+from PyQt6.QtGui import QGuiApplication, QIcon, QKeySequence, QPixmap
 from PyQt6.QtWidgets import (
     QAbstractItemView,
     QApplication,
@@ -60,16 +61,17 @@ from PyQt6.QtWidgets import (
 )
 
 from core.epub_metadata import EpubBook, EpubError
-from core.error_summary import summarize_errors
 from core.fields import FIELDS, NUMERIC_FIELD_KEYS
 from core.rename_pattern import rename_book_file, render_filename, unique_path
-from core.save_errors import describe_save_error
 from core.series_numbering import generate_series_numbers
 from core.sigil_tools import DOWNLOAD_URL as SIGIL_DOWNLOAD_URL
 from core.sigil_tools import SigilLaunchError, find_sigil
 from core.sigil_tools import open_in_sigil as launch_sigil
-from core.undo import UndoManager
 from core.version import APP_NAME, APP_REPO_URL, APP_VERSION, RELEASE_LABEL
+from redactor_common.core.error_summary import summarize_errors
+from redactor_common.core.save_errors import describe_save_error
+from redactor_common.core.undo import UndoManager
+from redactor_common.gui.action_factory import make_action
 from redactor_common.gui.menu_builder import MenuAction, MenuItems, Separator, build_menu_bar
 from redactor_common.gui.colors import (
     DIRTY_COLOR, ERROR_COLOR, SAVE_FAILED_COLOR, DRM_COLOR, HIGHLIGHT_TEXT_COLOR,
@@ -369,19 +371,6 @@ class MainWindow(QMainWindow):
         self.status_label = QLabel()
         self.status.addPermanentWidget(self.status_label)
 
-    def _make_action(self, text: str, slot, shortcut=None, shortcuts=None) -> QAction:
-        """Small helper so menu items and toolbar buttons that need the
-        same action can share a single QAction instance (keeps enabled
-        state, tooltips, etc. automatically in sync between the two,
-        rather than needing to duplicate and separately maintain them)."""
-        act = QAction(text, self)
-        if shortcuts:
-            act.setShortcuts([QKeySequence(s) for s in shortcuts])
-        elif shortcut:
-            act.setShortcut(QKeySequence(shortcut))
-        act.triggered.connect(slot)
-        return act
-
     def _build_menu_bar(self) -> None:
         # Built via the shared redactor_common menu framework so the
         # top-level shape (File / Import / Operations / Settings / Help,
@@ -521,13 +510,13 @@ class MainWindow(QMainWindow):
         spacer.setSizePolicy(QSizePolicy.Policy.Expanding, QSizePolicy.Policy.Preferred)
         toolbar.addWidget(spacer)
 
-        toggle_panel_act = self._make_action("Panel", self.toggle_tag_panel)
+        toggle_panel_act = make_action(self, "Panel", self.toggle_tag_panel)
         toggle_panel_act.setToolTip("Minimize or restore the bulk-edit panel")
         toolbar.addAction(toggle_panel_act)
         toolbar.addSeparator()
 
-        zoom_out_act = self._make_action(
-            "\u2212", self.zoom_out, shortcut=QKeySequence.StandardKey.ZoomOut
+        zoom_out_act = make_action(
+            self, "\u2212", self.zoom_out, shortcut=QKeySequence.StandardKey.ZoomOut
         )
         zoom_out_act.setToolTip("Decrease table font size")
         toolbar.addAction(zoom_out_act)
@@ -539,8 +528,8 @@ class MainWindow(QMainWindow):
         self.zoom_label.mousePressEvent = lambda _event: self.zoom_reset()
         toolbar.addWidget(self.zoom_label)
 
-        zoom_in_act = self._make_action(
-            "+", self.zoom_in, shortcut=QKeySequence.StandardKey.ZoomIn
+        zoom_in_act = make_action(
+            self, "+", self.zoom_in, shortcut=QKeySequence.StandardKey.ZoomIn
         )
         zoom_in_act.setToolTip("Increase table font size")
         toolbar.addAction(zoom_in_act)
@@ -890,14 +879,34 @@ class MainWindow(QMainWindow):
     # Undo
     # ------------------------------------------------------------------
 
+    @staticmethod
+    def _snapshot_book(book: EpubBook) -> dict:
+        return {
+            "metadata": copy.deepcopy(book.metadata),
+            "dirty": book.dirty,
+            "cover_bytes": book.cover_bytes,
+            "cover_mime": book.cover_mime,
+            "cover_changed": book.cover_changed,
+            "cover_removed": book.cover_removed,
+        }
+
+    @staticmethod
+    def _restore_book(book: EpubBook, snapshot: dict) -> None:
+        book.metadata = snapshot["metadata"]
+        book.dirty = snapshot["dirty"]
+        book.cover_bytes = snapshot["cover_bytes"]
+        book.cover_mime = snapshot["cover_mime"]
+        book.cover_changed = snapshot["cover_changed"]
+        book.cover_removed = snapshot["cover_removed"]
+
     def _push_undo(self, label: str, books: list[EpubBook]) -> None:
         """Call BEFORE mutating `books`."""
         if books:
-            self.undo_manager.push(label, books)
+            self.undo_manager.push(label, books, self._snapshot_book)
             self.undo_act.setEnabled(True)
 
     def on_undo(self) -> None:
-        affected = self.undo_manager.undo()
+        affected = self.undo_manager.undo(self._restore_book)
         if not affected:
             return
         for book in affected:

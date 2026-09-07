@@ -1,9 +1,12 @@
-"""Tests for core/error_summary.py."""
+"""Tests for redactor_common.core.error_summary (this project's own
+local core/error_summary.py -- byte-identical apart from a docstring
+path -- was the module this was generalized from, and was retired
+2026-09-07 in favor of the shared one)."""
 import os
 import sys
 
 sys.path.insert(0, os.path.dirname(__file__))
-from core.error_summary import summarize_errors  # noqa: E402
+from redactor_common.core.error_summary import summarize_errors  # noqa: E402
 
 
 def test_summarize_errors_empty():

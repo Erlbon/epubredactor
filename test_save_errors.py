@@ -1,9 +1,12 @@
-"""Tests for core/save_errors.py."""
+"""Tests for redactor_common.core.save_errors (this project's own local
+core/save_errors.py -- byte-identical apart from a docstring path --
+was the module this was generalized from, and was retired 2026-09-07
+in favor of the shared one)."""
 import os
 import sys
 
 sys.path.insert(0, os.path.dirname(__file__))
-from core.save_errors import (  # noqa: E402
+from redactor_common.core.save_errors import (  # noqa: E402
     PATH_TOO_LONG_MESSAGE,
     describe_save_error,
     is_path_too_long_error,

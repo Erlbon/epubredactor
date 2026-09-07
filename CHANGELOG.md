@@ -4,6 +4,40 @@ All notable changes to The ƎPUB Redactor, by version. Trimmed to new
 functionality and real fixes — cosmetic/UX-only adjustments aren't
 listed here.
 
+## 2026-09-07#02
+
+A cross-repo review of `redactor_common` adoption across all four
+Redactor apps turned up several modules that were originally
+generalized FROM this project's own code, but this project itself was
+never actually switched onto the shared result -- so two near-
+identical implementations existed to maintain instead of one. Fixed:
+
+- **Selection color fix** (shared, `redactor_common` 2026-09-07-01):
+  `colors.py`'s `TABLE_SELECTION_STYLESHEET` used to hardcode a
+  selected row's own background/text color, which silently overrode
+  `apply_theme()`'s WCAG-verified, light/dark-aware selection colors
+  on this project's table specifically. Fixed at the source; bumping
+  the pin here picks it up automatically.
+- `gui/main_window.py`'s own `_make_action()` -- byte-for-byte the
+  code `redactor_common.gui.action_factory.make_action()` was lifted
+  from -- is now the shared one.
+- The local `core/undo.py` (the code `redactor_common.core.undo.
+  UndoManager` was generalized from, once cbzredactor needed the same
+  behavior for its own item type) is retired; this project now uses
+  the shared, generic version via two small adapter methods
+  (`MainWindow._snapshot_book`/`_restore_book`).
+- The local `core/save_errors.py` and `core/error_summary.py` (both
+  already byte-identical to the shared versions apart from a docstring
+  path) are retired in favor of the shared ones.
+- The QMessageBox max-width fix now goes through the shared
+  `redactor_common.gui.qmessagebox_style.apply_message_box_style()`
+  instead of an inlined copy of the same stylesheet rule.
+
+No behavior change intended anywhere in this entry -- every swap was
+either byte-identical code or covered by an existing test (`test_undo.py`,
+`test_save_errors.py`, `test_error_summary.py` all still pass unchanged
+in shape, just importing from `redactor_common` now).
+
 ## 2026-09-07#01
 
 - Load Folder can now add more than one folder in a single go — the
