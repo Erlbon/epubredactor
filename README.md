@@ -846,3 +846,10 @@ bump_version.py                               - maintainer utility: bumps APP_VE
 - Export/import a CSV of metadata for spreadsheet-based bulk editing
 - Content-document (chapter XHTML) well-formedness checking as part of
   validation — deliberately left out of this version to keep loading fast
+
+## License
+
+Licensed under the [GNU General Public License v3.0 or later](LICENSE).
+The GUI is built on PyQt6, which Riverbank Computing licenses under GPL
+v3 (or a paid commercial license) -- this project ships under
+GPL-compatible terms to match.
