@@ -4,6 +4,15 @@ All notable changes to The ƎPUB Redactor, by version. Trimmed to new
 functionality and real fixes — cosmetic/UX-only adjustments aren't
 listed here.
 
+## 2026-09-10#01 -- smaller download
+
+No functional changes. The built .exe is now noticeably smaller
+(~44.2MB -> ~38.6MB, about 13%) because UPX compression -- already
+configured in the PyInstaller spec (`upx=True`) but never actually
+installed in the build environment, so it had silently done nothing on
+every release so far -- is now genuinely wired into `build_exe.bat`.
+Same fix applied across the whole Redactor family.
+
 ## 2026-09-07#02
 
 A cross-repo review of `redactor_common` adoption across all four
