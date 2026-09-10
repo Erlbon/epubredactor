@@ -4,6 +4,13 @@ All notable changes to The ƎPUB Redactor, by version. Trimmed to new
 functionality and real fixes — cosmetic/UX-only adjustments aren't
 listed here.
 
+## 2026-09-10#02
+
+- `core/series_numbering.py` promoted to `redactor_common` (used by
+  both Operations > Number Series and the table right-click's quick
+  version) -- deleted the now-redundant local copy and its test file.
+  No behavior change. Bumped the pin to `2026-09-10-04`.
+
 ## 2026-09-10#01 -- smaller download
 
 No functional changes. The built .exe is now noticeably smaller

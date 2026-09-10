@@ -63,7 +63,6 @@ from PyQt6.QtWidgets import (
 from core.epub_metadata import EpubBook, EpubError
 from core.fields import FIELDS, NUMERIC_FIELD_KEYS
 from core.rename_pattern import rename_book_file, render_filename, unique_path
-from core.series_numbering import generate_series_numbers
 from core.sigil_tools import DOWNLOAD_URL as SIGIL_DOWNLOAD_URL
 from core.sigil_tools import SigilLaunchError, find_sigil
 from core.sigil_tools import open_in_sigil as launch_sigil
@@ -72,6 +71,7 @@ from redactor_common.core.error_summary import summarize_errors
 from redactor_common.core.save_errors import describe_save_error
 from redactor_common.core.undo import UndoManager
 from redactor_common.gui.action_factory import make_action
+from redactor_common.gui.quick_series_number import prompt_and_generate_series_numbers
 from redactor_common.gui.menu_builder import MenuAction, MenuItems, Separator, build_menu_bar
 from redactor_common.gui.colors import (
     DIRTY_COLOR, ERROR_COLOR, SAVE_FAILED_COLOR, DRM_COLOR, HIGHLIGHT_TEXT_COLOR,
@@ -2177,16 +2177,12 @@ class MainWindow(QMainWindow):
         if not target_books:
             return  # this menu item only ever shows with a selection already in place
 
-        start_text, ok = QInputDialog.getText(
-            self, "Number Series",
-            f"Starting Series # for {len(target_books)} selected book(s) "
-            "(numbered in their current table order, +1 per row):",
-            text="1",
+        values = prompt_and_generate_series_numbers(
+            self, len(target_books), field_label="Starting Series #"
         )
-        if not ok:
+        if values is None:
             return
 
-        values = generate_series_numbers(len(target_books), start_text, "1")
         self._push_undo("Number series", target_books)
         for book, new_value in zip(target_books, values):
             book.apply_metadata({"series_index": new_value})

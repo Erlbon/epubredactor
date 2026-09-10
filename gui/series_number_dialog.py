@@ -26,7 +26,7 @@ from PyQt6.QtWidgets import (
 )
 
 from core.epub_metadata import EpubBook
-from core.series_numbering import DEFAULT_START, DEFAULT_STEP, generate_series_numbers
+from redactor_common.core.series_numbering import DEFAULT_START, DEFAULT_STEP, generate_series_numbers
 
 BOOK_COL, CURRENT_COL, NEW_COL = range(3)
 
