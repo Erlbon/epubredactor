@@ -118,7 +118,7 @@ def test_polish_book_success():
     output = os.path.join(TEST_DIR, "book_polished.epub")
     captured_args = []
 
-    def fake_run(args, capture_output, timeout):
+    def fake_run(args, capture_output, timeout, **kwargs):
         captured_args.extend(args)
         return _FakeCompletedProcess(returncode=0)
 
@@ -171,7 +171,7 @@ def test_polish_book_contradictory_options_raise_before_running():
     source = _make_file("book4.epub")
     called = []
 
-    def fake_run(args, capture_output, timeout):
+    def fake_run(args, capture_output, timeout, **kwargs):
         called.append(True)
         return _FakeCompletedProcess(returncode=0)
 
@@ -190,7 +190,7 @@ def test_polish_book_contradictory_options_raise_before_running():
 def test_polish_book_nonzero_returncode_raises():
     source = _make_file("book5.epub")
 
-    def fake_run(args, capture_output, timeout):
+    def fake_run(args, capture_output, timeout, **kwargs):
         return _FakeCompletedProcess(returncode=1, stderr=b"Polishing failed: corrupt input")
 
     try:
@@ -207,7 +207,7 @@ def test_polish_book_nonzero_returncode_raises():
 def test_polish_book_timeout_raises():
     source = _make_file("book6.epub")
 
-    def fake_run(args, capture_output, timeout):
+    def fake_run(args, capture_output, timeout, **kwargs):
         raise subprocess.TimeoutExpired(cmd=args, timeout=timeout)
 
     try:
@@ -224,7 +224,7 @@ def test_polish_book_timeout_raises():
 def test_polish_book_missing_executable_raises():
     source = _make_file("book7.epub")
 
-    def fake_run(args, capture_output, timeout):
+    def fake_run(args, capture_output, timeout, **kwargs):
         raise OSError("No such file or directory")
 
     try:

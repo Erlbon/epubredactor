@@ -51,7 +51,7 @@ def test_convert_success():
     output = os.path.join(TEST_DIR, "book.epub")
     captured_args = []
 
-    def fake_run(args, capture_output, timeout):
+    def fake_run(args, capture_output, timeout, **kwargs):
         captured_args.extend(args)
         return _FakeCompletedProcess(returncode=0)
 
@@ -82,7 +82,7 @@ def test_convert_unsupported_format_raises():
 def test_convert_nonzero_returncode_raises():
     source = _make_file("book.docx")
 
-    def fake_run(args, capture_output, timeout):
+    def fake_run(args, capture_output, timeout, **kwargs):
         return _FakeCompletedProcess(returncode=1, stderr=b"Conversion failed: corrupt input file")
 
     try:
@@ -96,7 +96,7 @@ def test_convert_nonzero_returncode_raises():
 def test_convert_timeout_raises():
     source = _make_file("book.mobi")
 
-    def fake_run(args, capture_output, timeout):
+    def fake_run(args, capture_output, timeout, **kwargs):
         raise subprocess.TimeoutExpired(cmd=args, timeout=timeout)
 
     try:
@@ -110,7 +110,7 @@ def test_convert_timeout_raises():
 def test_convert_missing_executable_raises():
     source = _make_file("book.mobi")
 
-    def fake_run(args, capture_output, timeout):
+    def fake_run(args, capture_output, timeout, **kwargs):
         raise OSError("No such file or directory")
 
     try:

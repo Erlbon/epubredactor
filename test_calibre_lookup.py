@@ -119,7 +119,7 @@ class _FakeCompletedProcess:
 def test_fetch_metadata_success():
     captured_args = []
 
-    def fake_run(args, capture_output, timeout):
+    def fake_run(args, capture_output, timeout, **kwargs):
         captured_args.extend(args)
         return _FakeCompletedProcess(returncode=0, stdout=REALISTIC_OPF)
 
@@ -144,7 +144,7 @@ def test_fetch_metadata_requires_some_search_criteria():
 
 
 def test_fetch_metadata_nonzero_returncode_raises():
-    def fake_run(args, capture_output, timeout):
+    def fake_run(args, capture_output, timeout, **kwargs):
         return _FakeCompletedProcess(returncode=1, stdout=b"", stderr=b"No matches found")
 
     try:
@@ -163,7 +163,7 @@ def test_fetch_metadata_verbose_stderr_truncated():
     results table/status area to an unusable size."""
     huge_stderr = b"SyntaxWarning: something\n" + (b"some verbose plugin log line\n" * 200)
 
-    def fake_run(args, capture_output, timeout):
+    def fake_run(args, capture_output, timeout, **kwargs):
         return _FakeCompletedProcess(returncode=1, stdout=b"", stderr=huge_stderr)
 
     try:
@@ -176,7 +176,7 @@ def test_fetch_metadata_verbose_stderr_truncated():
 
 
 def test_fetch_metadata_timeout_raises():
-    def fake_run(args, capture_output, timeout):
+    def fake_run(args, capture_output, timeout, **kwargs):
         raise subprocess.TimeoutExpired(cmd=args, timeout=timeout)
 
     try:
@@ -188,7 +188,7 @@ def test_fetch_metadata_timeout_raises():
 
 
 def test_fetch_metadata_missing_executable_raises():
-    def fake_run(args, capture_output, timeout):
+    def fake_run(args, capture_output, timeout, **kwargs):
         raise OSError("No such file or directory")
 
     try:
@@ -202,7 +202,7 @@ def test_fetch_metadata_missing_executable_raises():
 def test_fetch_metadata_isbn_only_search():
     captured_args = []
 
-    def fake_run(args, capture_output, timeout):
+    def fake_run(args, capture_output, timeout, **kwargs):
         captured_args.extend(args)
         return _FakeCompletedProcess(returncode=0, stdout=REALISTIC_OPF)
 
