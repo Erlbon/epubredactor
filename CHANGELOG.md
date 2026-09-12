@@ -4,6 +4,16 @@ All notable changes to The ƎPUB Redactor, by version. Trimmed to new
 functionality and real fixes — cosmetic/UX-only adjustments aren't
 listed here.
 
+## 2026-09-13#01
+
+- Load Folder's multi-folder picker no longer reopens serially until
+  you cancel (confusing — that's not what "pick more than one" should
+  feel like). It's now a single dialog where Ctrl/Shift-click selects
+  several folders at once, same as any multi-select file list. Windows'
+  native folder picker has no such multi-select, so this uses Qt's own
+  (non-native) dialog instead — it looks like Qt's file browser rather
+  than the OS one, which is the trade-off for getting real multi-select.
+
 ## 2026-09-10#02
 
 - `core/series_numbering.py` promoted to `redactor_common` (used by

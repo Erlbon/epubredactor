@@ -47,6 +47,7 @@ from PyQt6.QtWidgets import (
     QInputDialog,
     QLabel,
     QLineEdit,
+    QListView,
     QMainWindow,
     QMessageBox,
     QProgressDialog,
@@ -56,6 +57,7 @@ from PyQt6.QtWidgets import (
     QTableWidget,
     QTableWidgetItem,
     QToolBar,
+    QTreeView,
     QVBoxLayout,
     QWidget,
 )
@@ -947,25 +949,25 @@ class MainWindow(QMainWindow):
             self._load_paths(paths)
 
     def add_folder_dialog(self) -> None:
-        # Qt's native folder picker has no multi-select of its own, so
-        # multiple folders are gathered by reopening it -- Cancel is how
-        # you say "done" rather than "abort". The first pick still aborts
-        # the whole action on Cancel (matches the old single-folder
-        # behavior); a folder already chosen only stops the round of
-        # picking, it doesn't undo what's already in `folders`.
+        # Qt's native folder picker can't multi-select directories at all
+        # -- that's an OS limitation (Explorer's browse-folder dialog
+        # only ever returns one), not something Qt chooses to omit. To
+        # get real Ctrl/Shift-click multi-select, this uses Qt's own
+        # (non-native) file dialog instead, with extended selection
+        # turned on for its internal list/tree views -- the standard
+        # workaround for this. Trade-off: the dialog looks like Qt's
+        # file browser rather than the OS's native folder picker.
         start_dir = app_settings.load_last_directory()
-        folders: list[str] = []
-        while True:
-            title = (
-                "Add Folder of EPUBs"
-                if not folders
-                else "Add Another Folder of EPUBs (Cancel When Done)"
-            )
-            folder = QFileDialog.getExistingDirectory(self, title, start_dir)
-            if not folder:
-                break
-            folders.append(folder)
-            start_dir = folder
+        dialog = QFileDialog(
+            self, "Add Folders of EPUBs (Ctrl/Shift-click to select more than one)", start_dir
+        )
+        dialog.setFileMode(QFileDialog.FileMode.Directory)
+        dialog.setOption(QFileDialog.Option.DontUseNativeDialog, True)
+        for view in dialog.findChildren(QListView) + dialog.findChildren(QTreeView):
+            view.setSelectionMode(QAbstractItemView.SelectionMode.ExtendedSelection)
+        if not dialog.exec():
+            return
+        folders = [f for f in dialog.selectedFiles() if os.path.isdir(f)]
         if not folders:
             return
         # Opening a folder replaces the current list rather than adding
