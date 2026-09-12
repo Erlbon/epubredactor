@@ -72,6 +72,12 @@ them in one go.
   correctly leaves small connector words ("of", "the") lowercase except
   at the start/end, and doesn't mangle apostrophes the way `str.title()`
   would.
+- **Author Sort Conversion** — batch version of the Tag panel's Author
+  Sort guess buttons (see "Notes on Author Sort" below for the exact
+  rule and its caveats): pick a direction, Author(s) → Author Sort or
+  the reverse, and it previews every book that would actually change
+  across the whole selection, each with its own checkbox before
+  applying — instead of stepping through books one at a time.
 - **Number Series** — assigns sequential Series # values across a batch
   of selected books at once, in their current table order (top to
   bottom). A plain bulk-edit can't do this, since applying one value to
@@ -796,6 +802,7 @@ gui/open_library_dialog.py         - the Import Metadata from Open Library dialo
 gui/cover_render.py                   - draws the actual placeholder cover image (QPainter/QImage)
 gui/cover_generator_dialog.py         - the Generate Cover from Metadata dialog
 gui/case_conversion_dialog.py       - the Case Conversion dialog
+gui/author_sort_dialog.py            - the Author Sort Conversion (batch) dialog
 gui/series_number_dialog.py          - the Number Series dialog
 gui/manage_list_dialog.py            - reusable Add/Remove dialog (genres, languages)
 gui/column_settings_dialog.py         - the Add/Remove Columns dialog

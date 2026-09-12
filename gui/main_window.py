@@ -85,6 +85,7 @@ from redactor_common.gui.collapsible_splitter import SplitterPaneCollapser
 from gui import app_settings
 from redactor_common.gui.about_dialog import AboutDialog, ChangelogDialog, CreditsDialog
 from redactor_common.core.version import REDACTOR_COMMON_REPO_URL, REDACTOR_COMMON_VERSION
+from gui.author_sort_dialog import AuthorSortDialog
 from gui.calibre_lookup_dialog import CalibreLookupDialog
 from gui.case_conversion_dialog import CaseConversionDialog
 from gui.column_settings_dialog import ColumnSettingsDialog
@@ -433,6 +434,10 @@ class MainWindow(QMainWindow):
                 # never drift out of sync between the two.
                 MenuAction("apply_bulk_edit", "&Apply to 0 selected book(s)", self.tag_panel.apply_bulk_edit),
                 MenuAction("case_conversion", "&Case Conversion…", self.open_case_conversion_dialog),
+                MenuAction(
+                    "author_sort_convert", "Author Sor&t Conversion…",
+                    self.open_author_sort_dialog,
+                ),
                 MenuAction("number_series", "&Number Series…", self.open_series_number_dialog),
                 MenuAction(
                     "generate_cover", "&Generate Cover from Metadata…",
@@ -2058,6 +2063,36 @@ class MainWindow(QMainWindow):
         field_key = dialog.result_field_key()
         affected_books = [target_books[i] for i in changes]
         self._push_undo("Case conversion", affected_books)
+        for i, new_value in changes.items():
+            target_books[i].apply_metadata({field_key: new_value})
+        for book in affected_books:
+            self._refresh_row_full(book)
+        self._refresh_status()
+        self._on_selection_changed()  # bulk-edit panel may be showing the field this just changed
+
+    # ------------------------------------------------------------------
+    # Author Sort Conversion
+    # ------------------------------------------------------------------
+
+    def open_author_sort_dialog(self) -> None:
+        target_books = self._selection_or_all_books()
+        if not target_books:
+            QMessageBox.information(
+                self, "No books", "Load some books first (or select the ones to convert)."
+            )
+            return
+
+        dialog = AuthorSortDialog(target_books, self)
+        if dialog.exec() != AuthorSortDialog.DialogCode.Accepted:
+            return
+
+        changes = dialog.accepted_changes()  # book index -> new value
+        if not changes:
+            return
+
+        field_key = dialog.result_field_key()
+        affected_books = [target_books[i] for i in changes]
+        self._push_undo("Author Sort conversion", affected_books)
         for i, new_value in changes.items():
             target_books[i].apply_metadata({field_key: new_value})
         for book in affected_books:

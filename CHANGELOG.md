@@ -4,6 +4,15 @@ All notable changes to The ƎPUB Redactor, by version. Trimmed to new
 functionality and real fixes — cosmetic/UX-only adjustments aren't
 listed here.
 
+## 2026-09-13#02
+
+- New **Author Sort Conversion** (Operations menu) — batch version of
+  the Tag panel's per-book Author(s) ↔ Author Sort guess buttons, one
+  of the most repeated single-book actions. Pick a direction, preview
+  every book across the selection (or the whole list) that would
+  actually change, uncheck any you don't want, then apply the rest in
+  one go.
+
 ## 2026-09-13#01
 
 - Load Folder's multi-folder picker no longer reopens serially until
