@@ -4,6 +4,18 @@ All notable changes to The ƎPUB Redactor, by version. Trimmed to new
 functionality and real fixes — cosmetic/UX-only adjustments aren't
 listed here.
 
+## 2026-09-14#01
+
+- New **Junk Cover** flag: right-click a book with a bad cover and
+  choose Flag Cover as Junk -- every other loaded book whose cover is
+  byte-for-byte the exact same image (a broken converter's generic
+  placeholder, say) gets flagged too, automatically. Shows as a
+  sortable Junk Cover column, and Operations > Regenerate Junk
+  Covers… runs Generate Cover from Metadata against every flagged book
+  at once. Not tracked by Undo and never written to the EPUB -- it's a
+  standing note about a cover image, not book content, remembered
+  across restarts like a column width.
+
 ## 2026-09-13#06 -- Cover icons: cached, and decoded off the UI thread
 
 Follow-up to the discussion in `#05`'s entry about the list-rebuild

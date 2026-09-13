@@ -67,6 +67,19 @@ them in one go.
   straight to the current selection, no dialog — the menu version opens
   a full preview table first, for reviewing a larger batch before
   committing. See "Notes on Generate Cover" below.
+- **Junk Cover flag** — right-click a book with a bad cover (a broken
+  converter's generic placeholder, say) and choose **Flag Cover as
+  Junk**: every OTHER loaded book whose cover is byte-for-byte the exact
+  same image gets flagged too, automatically, not just the one you
+  clicked. Shows as a sortable **Junk Cover** column (click its header
+  to group them together), and **Operations > Regenerate Junk
+  Covers…** runs Generate Cover from Metadata against every currently-
+  flagged book in one go — a freshly generated cover naturally
+  un-flags itself, since it's no longer that same junk image.
+  **Unflag Cover as Junk** reverses it, same propagation in reverse.
+  The flag itself isn't book content — it's not written to the EPUB,
+  doesn't dirty the book, and isn't part of Undo, just a standing note
+  about a cover image, remembered across restarts like a column width.
 - **Case Conversion** — UPPERCASE / lowercase / Title Case / Sentence
   case for any column, with a live preview before applying. Title Case
   correctly leaves small connector words ("of", "the") lowercase except

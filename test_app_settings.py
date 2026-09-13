@@ -294,6 +294,38 @@ def test_parse_session_files_drops_malformed_entries():
     print("PASS: non-string and blank entries are dropped, valid paths kept")
 
 
+def test_parse_junk_cover_hashes_valid():
+    from gui.app_settings import _parse_junk_cover_hashes
+    result = _parse_junk_cover_hashes('["abc123", "def456"]')
+    assert result == {"abc123", "def456"}, result
+    print("PASS: valid junk-cover-hashes JSON parses to a set of hashes")
+
+
+def test_parse_junk_cover_hashes_empty_string():
+    from gui.app_settings import _parse_junk_cover_hashes
+    assert _parse_junk_cover_hashes("") == set()
+    print("PASS: empty string parses to an empty set, not an error")
+
+
+def test_parse_junk_cover_hashes_garbage_json():
+    from gui.app_settings import _parse_junk_cover_hashes
+    assert _parse_junk_cover_hashes("not json [[[") == set()
+    print("PASS: unparseable JSON parses to an empty set, not a crash")
+
+
+def test_parse_junk_cover_hashes_not_a_list():
+    from gui.app_settings import _parse_junk_cover_hashes
+    assert _parse_junk_cover_hashes('{"abc123": true}') == set()
+    print("PASS: valid JSON that isn't a list (e.g. a dict) parses to an empty set")
+
+
+def test_parse_junk_cover_hashes_drops_malformed_entries():
+    from gui.app_settings import _parse_junk_cover_hashes
+    result = _parse_junk_cover_hashes('["abc123", 5, null, "", "def456"]')
+    assert result == {"abc123", "def456"}, result
+    print("PASS: non-string and blank entries are dropped, valid hashes kept")
+
+
 if __name__ == "__main__":
     test_add_to_empty()
     test_new_pattern_goes_first()
@@ -334,4 +366,9 @@ if __name__ == "__main__":
     test_parse_session_files_garbage_json()
     test_parse_session_files_not_a_list()
     test_parse_session_files_drops_malformed_entries()
+    test_parse_junk_cover_hashes_valid()
+    test_parse_junk_cover_hashes_empty_string()
+    test_parse_junk_cover_hashes_garbage_json()
+    test_parse_junk_cover_hashes_not_a_list()
+    test_parse_junk_cover_hashes_drops_malformed_entries()
     print("\nALL APP SETTINGS TESTS PASSED")

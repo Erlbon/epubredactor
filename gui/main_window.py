@@ -38,7 +38,7 @@ import traceback
 import webbrowser
 
 from PyQt6.QtCore import QSize, Qt, QTimer
-from PyQt6.QtGui import QGuiApplication, QIcon, QKeySequence
+from PyQt6.QtGui import QColor, QGuiApplication, QIcon, QKeySequence
 from PyQt6.QtWidgets import (
     QAbstractItemView,
     QApplication,
@@ -120,11 +120,22 @@ PATH_COL = 0
 FILENAME_COL = 1
 STATUS_COL = 2
 FIRST_FIELD_COL = 3
+# Junk Cover is appended AFTER every FIELDS column, deliberately, rather
+# than being inserted among the other fixed columns -- both column
+# widths and hidden-columns are persisted keyed by logical index (see
+# app_settings.load_column_widths/load_hidden_columns), so slotting a
+# new column in earlier would shift every FIELDS column's saved index
+# out from under existing users' settings on upgrade.
+JUNK_COVER_COL = FIRST_FIELD_COL + len(FIELDS)
 # Colors now live in redactor_common.gui.colors -- this project's own
 # scheme became the shared standard (mp3/video had each picked their
 # own row-tint/selection colors independently). See that module's
-# docstring for the light-background/dark-text rationale.
+# docstring for the light-background/dark-text rationale. Junk Cover
+# is purely a local, app-side flag (never written to the EPUB, no
+# equivalent concept in the sibling projects), so its color stays local
+# too rather than joining the shared palette.
 STATUS_CELL_COLORS = {"OK": None, "ISSUES": DIRTY_COLOR, "DRM": DRM_COLOR, "INVALID": ERROR_COLOR}
+JUNK_COVER_COLOR = QColor("#f3d9fa")  # soft magenta -- distinct from the shared status colors
 COVER_ICON_SIZE = QSize(24, 32)
 UNDO_MAX_ENTRIES = 5
 LOAD_PROGRESS_THRESHOLD = 3  # don't bother with a progress dialog for a tiny batch
@@ -215,6 +226,13 @@ class MainWindow(QMainWindow):
         self.undo_manager = UndoManager(max_entries=UNDO_MAX_ENTRIES)
         self._cover_icon_cache = AsyncIconCache(COVER_ICON_SIZE, parent=self)
         self._cover_icon_cache.icon_ready.connect(self._on_cover_icon_ready)
+        # Cached in memory rather than re-reading app_settings on every
+        # row paint (_populate_row runs once per book, potentially
+        # thousands of times per rebuild) -- reloaded from disk only when
+        # actually needed, at startup. Kept current afterward by
+        # flag_selected_covers_as_junk/unflag_selected_covers_as_junk,
+        # the only things that ever change it.
+        self._junk_cover_hashes: set[str] = app_settings.load_junk_cover_hashes()
 
         self._build_ui()
         self.setAcceptDrops(True)
@@ -304,7 +322,7 @@ class MainWindow(QMainWindow):
 
         self.table = BookTableWidget()
         self._default_table_font_pt = self.table.font().pointSize()
-        headers = ["Path", "Filename", "Status"] + [label for _key, label, _m in FIELDS]
+        headers = ["Path", "Filename", "Status"] + [label for _key, label, _m in FIELDS] + ["Junk Cover"]
         self.table.setColumnCount(len(headers))
         self.table.setHorizontalHeaderLabels(headers)
         self.table.horizontalHeader().setSectionResizeMode(
@@ -464,6 +482,10 @@ class MainWindow(QMainWindow):
                 MenuAction(
                     "generate_cover", "&Generate Cover from Metadata…",
                     self.open_cover_generator_dialog,
+                ),
+                MenuAction(
+                    "regenerate_junk_covers", "Regenerate &Junk Covers…",
+                    self.open_regenerate_junk_covers_dialog,
                 ),
                 MenuAction(
                     "search_replace", "&Search/Replace…", self.open_search_replace_dialog,
@@ -692,6 +714,17 @@ class MainWindow(QMainWindow):
             items.append(MenuAction("calibre_lookup", "Look Up via Calibre…", self.open_calibre_lookup_dialog))
             items.append(MenuAction("polish_book", "Polish Book…", self.open_polish_book_dialog))
             items.append(MenuAction("number_series", "Number Series…", self.quick_number_series))
+            books_with_covers = [b for b in books if b.cover_hash is not None]
+            if any(not self._book_is_junk_cover(b) for b in books_with_covers):
+                items.append(MenuAction(
+                    "flag_junk_cover", "Flag Cover as Junk",
+                    self.flag_selected_covers_as_junk,
+                ))
+            if any(self._book_is_junk_cover(b) for b in books_with_covers):
+                items.append(MenuAction(
+                    "unflag_junk_cover", "Unflag Cover as Junk",
+                    self.unflag_selected_covers_as_junk,
+                ))
             items.append(Separator())
             items.append(MenuAction("open_sigil", "Open with Sigil…", self.open_in_sigil))
             items.append(Separator())
@@ -910,6 +943,7 @@ class MainWindow(QMainWindow):
             if item is not None:
                 item.setText(getattr(book.metadata, key, ""))
         self._update_status_cell(row, book)
+        self._update_junk_cover_cell(row, book)
         self._set_row_dirty_style(row, book.dirty)
         self.table.setSortingEnabled(was_sorting)
         self._updating_table = was_updating
@@ -1249,6 +1283,11 @@ class MainWindow(QMainWindow):
             item = NumericTableWidgetItem(value) if key in NUMERIC_FIELD_KEYS else QTableWidgetItem(value)
             self.table.setItem(row, col, item)
 
+        junk_item = QTableWidgetItem("")
+        junk_item.setFlags(junk_item.flags() & ~Qt.ItemFlag.ItemIsEditable)
+        self.table.setItem(row, JUNK_COVER_COL, junk_item)
+        self._update_junk_cover_cell(row, book)
+
         self._set_row_dirty_style(row, book.dirty)
 
     def _update_status_cell(self, row: int, book: EpubBook) -> None:
@@ -1276,6 +1315,33 @@ class MainWindow(QMainWindow):
             item.setBackground(color)
             item.setForeground(HIGHLIGHT_TEXT_COLOR)
         else:
+            item.setData(Qt.ItemDataRole.BackgroundRole, None)
+            item.setData(Qt.ItemDataRole.ForegroundRole, None)
+
+    def _book_is_junk_cover(self, book: EpubBook) -> bool:
+        """A book's cover counts as "junk" purely by matching an
+        already-flagged cover image byte-for-byte (see EpubBook.cover_hash)
+        -- there's no per-book flag to drift out of sync, so flagging (or
+        unflagging) one book's cover always correctly covers every other
+        loaded book sharing that exact same cover image too."""
+        cover_hash = book.cover_hash
+        return cover_hash is not None and cover_hash in self._junk_cover_hashes
+
+    def _update_junk_cover_cell(self, row: int, book: EpubBook) -> None:
+        item = self.table.item(row, JUNK_COVER_COL)
+        if item is None:
+            return
+        is_junk = self._book_is_junk_cover(book)
+        item.setText("Junk" if is_junk else "")
+        if is_junk:
+            item.setToolTip(
+                "Flagged as a junk cover -- shares its cover image with every other book "
+                "flagged this way. See Operations > Regenerate Junk Covers…"
+            )
+            item.setBackground(JUNK_COVER_COLOR)
+            item.setForeground(HIGHLIGHT_TEXT_COLOR)
+        else:
+            item.setToolTip("")
             item.setData(Qt.ItemDataRole.BackgroundRole, None)
             item.setData(Qt.ItemDataRole.ForegroundRole, None)
 
@@ -1406,7 +1472,7 @@ class MainWindow(QMainWindow):
             return
         row = item.row()
         col = item.column()
-        if col in (PATH_COL, FILENAME_COL, STATUS_COL):
+        if col in (PATH_COL, FILENAME_COL, STATUS_COL, JUNK_COVER_COL):
             return
         book = self._book_for_row(row)
         if book is None or book.load_error:
@@ -1577,6 +1643,11 @@ class MainWindow(QMainWindow):
         self._refresh_affected_rows(books)
 
     def _refresh_affected_rows(self, books: list[EpubBook]) -> None:
+        # Guards the Junk Cover cell's item.setText() below the same way
+        # _refresh_row_full() does -- without it, _on_item_changed would
+        # treat it as a user edit and push a bogus undo entry.
+        was_updating = self._updating_table
+        self._updating_table = True
         was_sorting = self.table.isSortingEnabled()
         self.table.setSortingEnabled(False)
         rows_by_book = self._rows_by_book()
@@ -1588,9 +1659,95 @@ class MainWindow(QMainWindow):
             if item is not None:
                 self._apply_cover_icon(item, book)
             self._set_row_dirty_style(row, book.dirty)
+            self._update_junk_cover_cell(row, book)  # cover just changed -- its hash may have too
         self.table.setSortingEnabled(was_sorting)
+        self._updating_table = was_updating
         self._refresh_status()
         self._on_selection_changed()  # refresh the cover preview panel too
+
+    # ------------------------------------------------------------------
+    # Junk Cover flag (table right-click) / Regenerate Junk Covers (Operations)
+    # ------------------------------------------------------------------
+
+    def flag_selected_covers_as_junk(self) -> None:
+        """Flags every SELECTED book's cover image as junk -- and, because
+        the flag lives on the cover's hash rather than any one book, that
+        immediately flags every OTHER loaded book sharing that exact same
+        cover image too, whether or not it's currently selected. Not
+        pushed to Undo: this isn't an edit to a book's own content, just
+        a standing note about a cover image (persisted the same way as a
+        column width or a custom genre, see app_settings.py), so it
+        doesn't dirty the book or need saving."""
+        books = self._currently_selected_books()
+        new_hashes = {b.cover_hash for b in books if b.cover_hash is not None}
+        if not new_hashes:
+            QMessageBox.information(
+                self, "No cover to flag", "None of the selected book(s) have a cover to flag."
+            )
+            return
+        self._junk_cover_hashes |= new_hashes
+        app_settings.save_junk_cover_hashes(self._junk_cover_hashes)
+        self._refresh_all_junk_cover_cells()
+
+    def unflag_selected_covers_as_junk(self) -> None:
+        """The exact inverse of flag_selected_covers_as_junk() above --
+        same reasoning applies in reverse: unflagging any one book whose
+        cover is currently flagged un-flags every other book sharing that
+        exact cover image too."""
+        books = self._currently_selected_books()
+        hashes_to_clear = {b.cover_hash for b in books if b.cover_hash is not None}
+        if not hashes_to_clear:
+            return
+        self._junk_cover_hashes -= hashes_to_clear
+        app_settings.save_junk_cover_hashes(self._junk_cover_hashes)
+        self._refresh_all_junk_cover_cells()
+
+    def _refresh_all_junk_cover_cells(self) -> None:
+        """Re-checks every loaded book's Junk Cover cell against the
+        current flagged-hash set. Unlike _refresh_affected_rows(), this
+        has to cover every loaded book, not just the ones just acted on --
+        flagging (or unflagging) one book's cover can affect every OTHER
+        book that happens to share the exact same cover image."""
+        was_updating = self._updating_table
+        self._updating_table = True
+        was_sorting = self.table.isSortingEnabled()
+        self.table.setSortingEnabled(False)
+        rows_by_book = self._rows_by_book()
+        for book in self.books:
+            row = rows_by_book.get(book)
+            if row is not None:
+                self._update_junk_cover_cell(row, book)
+        self.table.setSortingEnabled(was_sorting)
+        self._updating_table = was_updating
+
+    def open_regenerate_junk_covers_dialog(self) -> None:
+        """Operations menu batch version of the table right-click's Flag
+        Cover as Junk -- runs the exact same Generate Cover from Metadata
+        preview/apply flow as Operations > Generate Cover from Metadata
+        (gui/cover_generator_dialog.py), just pre-filtered to books
+        currently flagged, rather than the current selection."""
+        target_books = [b for b in self.books if not b.load_error and self._book_is_junk_cover(b)]
+        if not target_books:
+            QMessageBox.information(
+                self, "No junk covers flagged",
+                "No loaded books are currently flagged as junk covers. Right-click a book "
+                "with a junk cover and choose \"Flag Cover as Junk\" first.",
+            )
+            return
+
+        dialog = CoverGeneratorDialog(target_books, self)
+        if dialog.exec() != CoverGeneratorDialog.DialogCode.Accepted:
+            return
+
+        covers = dialog.accepted_covers()  # book index -> (image_bytes, mime)
+        if not covers:
+            return
+
+        affected_books = [dialog.books[i] for i in covers]
+        self._push_undo("Regenerate junk covers", affected_books)
+        for i, (image_bytes, mime) in covers.items():
+            dialog.books[i].set_cover(image_bytes, mime)
+        self._refresh_affected_rows(affected_books)
 
     # ------------------------------------------------------------------
     # Remove / clear / delete / refresh

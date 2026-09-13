@@ -42,6 +42,7 @@ Design notes:
 
 from __future__ import annotations
 
+import hashlib
 import mimetypes
 import posixpath
 import re
@@ -488,6 +489,17 @@ class EpubBook:
         self.cover_removed = True
         if had_cover:
             self.dirty = True
+
+    @property
+    def cover_hash(self) -> Optional[str]:
+        """SHA-256 of the raw cover image bytes -- identifies books that
+        share the exact same cover image (e.g. a broken converter's
+        generic placeholder, reused byte-for-byte across many books),
+        regardless of filename or path. Used by the Junk Cover flag (see
+        gui/main_window.py); None if there's no cover to hash."""
+        if not self.cover_bytes:
+            return None
+        return hashlib.sha256(self.cover_bytes).hexdigest()
 
     # ------------------------------------------------------------------
     # Validation

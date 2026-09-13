@@ -312,6 +312,51 @@ def test_cover_untouched_book_saves_cleanly():
     print("PASS: saving unrelated metadata changes leaves an untouched cover intact")
 
 
+# ----------------------------------------------------------------------
+# cover_hash: identifies books sharing the exact same cover image bytes
+# (used by the Junk Cover flag, gui/main_window.py)
+# ----------------------------------------------------------------------
+
+def test_cover_hash_none_without_cover():
+    path = os.path.join(TEST_DIR, "hash_no_cover.epub")
+    build_epub_no_cover(path)
+    b = EpubBook(path)
+    assert b.cover_hash is None
+    print("PASS: a book with no cover has cover_hash=None")
+
+
+def test_cover_hash_matches_for_identical_cover_bytes():
+    path1 = os.path.join(TEST_DIR, "hash_a.epub")
+    path2 = os.path.join(TEST_DIR, "hash_b.epub")
+    build_epub(path1, with_cover=True)
+    build_epub(path2, with_cover=True)
+    b1 = EpubBook(path1)
+    b2 = EpubBook(path2)
+    assert b1.cover_hash is not None
+    assert b1.cover_hash == b2.cover_hash, "two books with the byte-identical cover must hash equal"
+    print("PASS: two books sharing the exact same cover image hash equal")
+
+
+def test_cover_hash_differs_for_different_cover_bytes():
+    path = os.path.join(TEST_DIR, "hash_diff.epub")
+    build_epub(path, with_cover=True)
+    b = EpubBook(path)
+    original_hash = b.cover_hash
+    b.set_cover(TINY_PNG_2, "image/png")
+    assert b.cover_hash != original_hash, "a different cover image must hash differently"
+    print("PASS: replacing the cover image changes cover_hash")
+
+
+def test_cover_hash_none_after_delete():
+    path = os.path.join(TEST_DIR, "hash_delete.epub")
+    build_epub(path, with_cover=True)
+    b = EpubBook(path)
+    assert b.cover_hash is not None
+    b.remove_cover()
+    assert b.cover_hash is None
+    print("PASS: deleting the cover clears cover_hash back to None")
+
+
 if __name__ == "__main__":
     test_parse_date_full()
     test_parse_date_year_month()
@@ -327,4 +372,8 @@ if __name__ == "__main__":
     test_cover_delete()
     test_cover_delete_noop_when_none()
     test_cover_untouched_book_saves_cleanly()
+    test_cover_hash_none_without_cover()
+    test_cover_hash_matches_for_identical_cover_bytes()
+    test_cover_hash_differs_for_different_cover_bytes()
+    test_cover_hash_none_after_delete()
     print("\nALL DATE/DDC/COVER TESTS PASSED")

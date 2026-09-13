@@ -34,6 +34,7 @@ _EREADER_SERVERS_KEY = "ereader/servers"
 DEFAULT_EREADER_SERVERS = ["https://send.djazz.se", "https://bookdrop.cc"]
 _COLUMN_WIDTHS_KEY = "table/column_widths"
 _HIDDEN_COLUMNS_KEY = "table/hidden_columns"
+_JUNK_COVER_HASHES_KEY = "covers/junk_hashes"
 
 
 def _dedupe_and_trim(history: list[str], new_pattern: str, max_history: int = _MAX_HISTORY) -> list[str]:
@@ -536,3 +537,39 @@ def load_hidden_columns() -> set[int]:
 
 def save_hidden_columns(hidden: set[int]) -> None:
     _settings().setValue(_HIDDEN_COLUMNS_KEY, json.dumps(sorted(hidden)))
+
+
+# ------------------------------------------------------------------
+# Junk Cover hashes -- SHA-256 hashes (EpubBook.cover_hash) of cover
+# images the user has flagged as junk (Table right-click > Flag Cover
+# as Junk). The flag lives on the HASH, not any one book, so it's a
+# workspace-wide "this exact cover image is junk" fact rather than a
+# per-book setting -- every loaded book sharing that exact cover image
+# is flagged too, automatically, on both sides of a load. Not tracked
+# by Undo (see MainWindow.flag_selected_covers_as_junk): this isn't an
+# edit to a book's own content, just a standing note about a cover
+# image, same category of thing as a column width or a custom genre.
+# ------------------------------------------------------------------
+
+def _parse_junk_cover_hashes(raw: str) -> set[str]:
+    """Pure logic: parse+validate the stored JSON into a set of cover
+    hashes, dropping anything malformed rather than failing outright.
+    Split out for testability, same pattern as _parse_hidden_columns."""
+    if not raw:
+        return set()
+    try:
+        data = json.loads(raw)
+    except (json.JSONDecodeError, TypeError, ValueError):
+        return set()
+    if not isinstance(data, list):
+        return set()
+    return {h for h in data if isinstance(h, str) and h}
+
+
+def load_junk_cover_hashes() -> set[str]:
+    raw = _settings().value(_JUNK_COVER_HASHES_KEY, "", type=str)
+    return _parse_junk_cover_hashes(raw)
+
+
+def save_junk_cover_hashes(hashes: set[str]) -> None:
+    _settings().setValue(_JUNK_COVER_HASHES_KEY, json.dumps(sorted(hashes)))
