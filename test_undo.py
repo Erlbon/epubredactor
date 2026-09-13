@@ -150,6 +150,45 @@ def test_push_snapshots_independent_of_later_mutation():
     print("PASS: snapshot is a deep copy, immune to later in-place mutation")
 
 
+def test_undo_then_redo_restores_the_undone_title():
+    """redo() is the mirror of undo(): pass _snapshot_book to undo()
+    too (not just _restore_book) so it captures the about-to-be-
+    overwritten state onto the redo stack -- see main_window.on_undo()
+    and redactor_common.core.undo's own docstring."""
+    book = make_book("redo.epub")
+    mgr = UndoManager(max_entries=5)
+
+    mgr.push("edit title", [book], _snapshot_book)
+    book.apply_metadata({"title": "New Title"})
+
+    mgr.undo(_restore_book, _snapshot_book)
+    assert book.metadata.title == "Original Title"
+    assert mgr.can_redo() is True
+
+    affected = mgr.redo(_restore_book, _snapshot_book)
+    assert affected == [book]
+    assert book.metadata.title == "New Title"
+    assert book.dirty
+    assert mgr.can_redo() is False
+    print("PASS: redo brings back exactly what undo just took away")
+
+
+def test_new_edit_after_undo_clears_redo_history():
+    book = make_book("redo_clear.epub")
+    mgr = UndoManager(max_entries=5)
+
+    mgr.push("first edit", [book], _snapshot_book)
+    book.apply_metadata({"title": "Changed once"})
+    mgr.undo(_restore_book, _snapshot_book)
+    assert mgr.can_redo() is True
+
+    # A genuinely new edit invalidates the old redo future, same as
+    # every other app's undo/redo.
+    mgr.push("second edit", [book], _snapshot_book)
+    assert mgr.can_redo() is False
+    print("PASS: a fresh push() after undo clears the redo stack")
+
+
 if __name__ == "__main__":
     test_push_and_undo_restores_metadata()
     test_undo_on_empty_stack_is_safe()
@@ -157,4 +196,6 @@ if __name__ == "__main__":
     test_capped_at_max_entries()
     test_undo_restores_cover_state()
     test_push_snapshots_independent_of_later_mutation()
+    test_undo_then_redo_restores_the_undone_title()
+    test_new_edit_after_undo_clears_redo_history()
     print("\nALL UNDO TESTS PASSED")

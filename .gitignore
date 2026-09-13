@@ -5,3 +5,8 @@ __pycache__/
 build/
 dist/
 *.spec.bak
+
+# Runtime-generated: written next to the app on first run / on an
+# unhandled exception -- per-machine, not something to ship in the repo.
+epubredactor_settings.ini
+epubredactor_crash.log

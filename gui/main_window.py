@@ -82,6 +82,7 @@ from redactor_common.gui.colors import (
 from redactor_common.gui.context_menu import show_table_context_menu
 from redactor_common.gui.column_menu import show_column_header_context_menu
 from redactor_common.gui.collapsible_splitter import SplitterPaneCollapser
+from redactor_common.gui import standard_shortcuts as shortcuts
 from gui import app_settings
 from redactor_common.gui.about_dialog import AboutDialog, ChangelogDialog, CreditsDialog
 from redactor_common.core.version import REDACTOR_COMMON_REPO_URL, REDACTOR_COMMON_VERSION
@@ -387,26 +388,43 @@ class MainWindow(QMainWindow):
         # actions themselves changes.
         specs = {
             "File": [
-                MenuAction("load_files", "&Load Files…", self.add_files_dialog, shortcut="Ctrl+O"),
-                MenuAction("load_folder", "Load &Folder…", self.add_folder_dialog, shortcut="Ctrl+Shift+O"),
+                MenuAction("load_files", "&Load Files…", self.add_files_dialog, shortcut=shortcuts.LOAD_FILES),
+                MenuAction(
+                    "load_folder", "Load &Folder…", self.add_folder_dialog, shortcut=shortcuts.LOAD_FOLDER
+                ),
                 Separator(),
-                MenuAction("save", "&Save Files", self.save_changed, shortcut="Ctrl+S"),
-                MenuAction("save_as", "Save As Cop&y…", self.save_as_copies, shortcut="F4"),
+                MenuAction("save", "&Save Files", self.save_changed, shortcut=shortcuts.SAVE),
+                MenuAction("save_as", "Save As Cop&y…", self.save_as_copies, shortcut=shortcuts.SAVE_AS),
                 Separator(),
-                MenuAction("rename_files", "&Rename Files…", self.open_rename_dialog, shortcut="F2"),
+                # Quick, direct rename of the one selected file -- matches
+                # Explorer's F2 exactly. Distinct from "rename_files"
+                # below (the pattern-based batch tool, moved off F2 to
+                # make room for this): see rename_selected_file().
+                MenuAction(
+                    "rename_file", "&Rename File…", self.rename_selected_file,
+                    shortcut=shortcuts.RENAME_SINGLE_FILE,
+                ),
+                MenuAction(
+                    "rename_files", "Rename Files (&Pattern)…", self.open_rename_dialog,
+                    shortcut=shortcuts.RENAME_EXPORT_BY_PATTERN,
+                ),
                 Separator(),
-                MenuAction("remove_files", "Remo&ve Files", self.remove_selected, shortcut="Delete"),
+                MenuAction("remove_files", "Remo&ve Files", self.remove_selected, shortcut=shortcuts.REMOVE_FROM_LIST),
                 MenuAction("delete_files", "&Delete Files…", self.delete_files, shortcut="F8"),
                 Separator(),
-                MenuAction("refresh", "Re&fresh List", self.refresh_list, shortcuts=["F5", "Ctrl+R"]),
+                MenuAction("refresh", "Re&fresh List", self.refresh_list, shortcuts=shortcuts.REFRESH_LIST),
                 MenuAction("clear", "&Clear List", self.clear_list),
                 Separator(),
+                # No explicit shortcut -- Alt+F4 already closes this (or
+                # any) plain QMainWindow at the OS level, verified
+                # directly (launch, send Alt+F4, confirm the process
+                # exits), independent of anything bound here.
                 MenuAction("exit", "E&xit Program", self.close),
             ],
             "Import": [
                 MenuAction(
                     "import_from_filename", "Import Metadata from &Filename…",
-                    self.open_filename_parse_dialog, shortcut="F3",
+                    self.open_filename_parse_dialog, shortcut=shortcuts.PARSE_FILENAME_TO_METADATA,
                 ),
                 MenuAction(
                     "import_google_books", "Import Metadata from &Google Books…",
@@ -443,14 +461,19 @@ class MainWindow(QMainWindow):
                     "generate_cover", "&Generate Cover from Metadata…",
                     self.open_cover_generator_dialog,
                 ),
-                MenuAction("search_replace", "&Search/Replace…", self.open_search_replace_dialog),
+                MenuAction(
+                    "search_replace", "&Search/Replace…", self.open_search_replace_dialog,
+                    shortcut=shortcuts.SEARCH_REPLACE,
+                ),
                 MenuAction("validate", "&Validate / Fix Issues…", self.open_validation_dialog),
                 MenuAction("rebuild_manifest", "Re&build Manifest…", self.open_manifest_rebuild_dialog),
                 MenuAction("missing_space", "Detect &Missing Spaces…", self.open_missing_space_dialog),
                 MenuAction("polish_book", "&Polish Book…", self.open_polish_book_dialog),
                 Separator(),
-                MenuAction("undo", "&Undo", self.on_undo, shortcut="Ctrl+Z",
+                MenuAction("undo", "&Undo", self.on_undo, shortcut=shortcuts.UNDO,
                            tooltip="Undo the last change (in-memory edits only, up to 5 steps back)"),
+                MenuAction("redo", "&Redo", self.on_redo, shortcut=shortcuts.REDO,
+                           tooltip="Redo the last undone change"),
             ],
             "Settings": [
                 MenuAction("column_settings", "Add/Remove &Columns…", self.open_column_settings_dialog),
@@ -458,7 +481,7 @@ class MainWindow(QMainWindow):
                 MenuAction("genre_settings", "Add/Remove &Genres…", self.open_genre_settings_dialog),
             ],
             "Help": [
-                MenuAction("about", f"&About {APP_NAME}…", self.open_about_dialog),
+                MenuAction("about", f"&About {APP_NAME}…", self.open_about_dialog, shortcut=shortcuts.HELP),
                 MenuAction("changelog", "View &Changelog…", self.open_changelog_dialog),
                 MenuAction("credits", "&Credits…", self.open_credits_dialog),
             ],
@@ -478,6 +501,7 @@ class MainWindow(QMainWindow):
         self.load_folder_act = actions["load_folder"]
         self.save_act = actions["save"]
         self.save_as_act = actions["save_as"]
+        self.rename_file_act = actions["rename_file"]
         self.rename_files_act = actions["rename_files"]
         self.remove_files_act = actions["remove_files"]
         self.delete_files_act = actions["delete_files"]
@@ -485,6 +509,8 @@ class MainWindow(QMainWindow):
         self.apply_bulk_edit_act.setEnabled(False)
         self.undo_act = actions["undo"]
         self.undo_act.setEnabled(False)
+        self.redo_act = actions["redo"]
+        self.redo_act.setEnabled(False)
 
     def _build_toolbar(self) -> None:
         """Slim toolbar: just the handful of most-frequent actions,
@@ -503,6 +529,7 @@ class MainWindow(QMainWindow):
         toolbar.addAction(self.apply_bulk_edit_act)
         toolbar.addSeparator()
         toolbar.addAction(self.undo_act)
+        toolbar.addAction(self.redo_act)
         toolbar.addSeparator()
 
         self.filter_edit = QLineEdit()
@@ -641,14 +668,15 @@ class MainWindow(QMainWindow):
         def extra(books: list[EpubBook]) -> MenuItems:
             items: MenuItems = []
             if len(books) == 1 and not books[0].load_error:
-                # Only offered for a single book -- renaming several books
-                # to the same name doesn't make sense. Distinct from
-                # "Rename Files…" just below (plural: the pattern-based
+                # Reuses the actual File-menu QAction (F2) rather than
+                # building a fresh one -- same object, so this shows the
+                # real shortcut hint and can never drift out of sync
+                # with it. Only offered for a single book -- renaming
+                # several to the same name doesn't make sense. Distinct
+                # from "Rename Files…" just below (the pattern-based
                 # batch tool) -- this is the quick, direct fix for one
                 # typo at a time.
-                items.append(MenuAction(
-                    "rename_file", "Rename File…", lambda: self.rename_single_file(books[0])
-                ))
+                items.append(self.rename_file_act)
             items.append(Separator())
             items.append(self.rename_files_act)
             items.append(self.save_act)
@@ -911,9 +939,13 @@ class MainWindow(QMainWindow):
         if books:
             self.undo_manager.push(label, books, self._snapshot_book)
             self.undo_act.setEnabled(True)
+            self.redo_act.setEnabled(False)  # push() clears any pending redo
 
     def on_undo(self) -> None:
-        affected = self.undo_manager.undo(self._restore_book)
+        # snapshot_fn passed too (not just restore_fn) so the state
+        # being overwritten is captured onto the redo stack first --
+        # see redactor_common.core.undo's own docstring.
+        affected = self.undo_manager.undo(self._restore_book, self._snapshot_book)
         if not affected:
             return
         for book in affected:
@@ -921,6 +953,18 @@ class MainWindow(QMainWindow):
         self._refresh_status()
         self._on_selection_changed()  # cover preview / bulk-edit fields may need refreshing
         self.undo_act.setEnabled(self.undo_manager.can_undo())
+        self.redo_act.setEnabled(self.undo_manager.can_redo())
+
+    def on_redo(self) -> None:
+        affected = self.undo_manager.redo(self._restore_book, self._snapshot_book)
+        if not affected:
+            return
+        for book in affected:
+            self._refresh_row_full(book)
+        self._refresh_status()
+        self._on_selection_changed()
+        self.undo_act.setEnabled(self.undo_manager.can_undo())
+        self.redo_act.setEnabled(self.undo_manager.can_redo())
 
     # ------------------------------------------------------------------
     # Drag and drop
@@ -1282,6 +1326,16 @@ class MainWindow(QMainWindow):
             return
         self._refresh_row_full(book)
         self._refresh_status()
+
+    def rename_selected_file(self) -> None:
+        """F2 entry point (Explorer convention: select one item, press
+        F2, rename it directly) -- same guard the right-click "Rename
+        File…" item uses (exactly one book selected, no load error,
+        via _currently_selected_books()), since F2 and that menu item
+        are the same action reached two ways."""
+        selected = self._currently_selected_books()
+        if len(selected) == 1:
+            self.rename_single_file(selected[0])
 
     @staticmethod
     def _apply_cover_icon(item: QTableWidgetItem, book: EpubBook) -> None:

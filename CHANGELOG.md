@@ -4,6 +4,36 @@ All notable changes to The ƎPUB Redactor, by version. Trimmed to new
 functionality and real fixes — cosmetic/UX-only adjustments aren't
 listed here.
 
+## 2026-09-13#03 -- hotkey audit: Redo, real F2, and family-wide alignment
+
+Full audit of keyboard shortcuts across the whole Redactor family
+against Qt's own Windows-standard bindings (verified via
+`QKeySequence.keyBindings()`, not assumed). Real changes here:
+
+- **New Redo** (Ctrl+Y, Operations menu and toolbar, right after Undo)
+  -- `redactor_common.core.undo.UndoManager` gained real redo support.
+- **F2 now directly renames the one selected file** (Explorer
+  convention) -- same action the right-click "Rename File…" already
+  did, now also reachable by keyboard. The pattern-based batch tool
+  ("Rename Files…") moves to **Ctrl+Shift+R** to make room -- matches
+  videoredactor's own existing convention for the same shape of
+  feature.
+- **"Save As Copy…" moves from F4 to Ctrl+Shift+S** --
+  `QKeySequence::SaveAs`, and cbzredactor's own existing "Save As..."
+  key; F4 had no real meaning as "Save As" anywhere.
+- **Import Metadata from Filename… moves from F3 to Ctrl+E** -- F3 is
+  `QKeySequence::FindNext` (search) everywhere else; a metadata tool
+  had no business sitting on it.
+- **Search/Replace… gains Ctrl+H** (`QKeySequence::Replace`).
+- **About gains F1** (`QKeySequence::HelpContents`).
+- **Exit's shortcut hint removed** (it never had one to begin with,
+  now deliberately so) -- Alt+F4 already closes this (or any) app at
+  the OS level, verified with a real launch-and-close test.
+
+New shared `redactor_common.gui.standard_shortcuts` module is now the
+source of truth for all of the above, imported instead of literal key
+strings, so this doesn't drift again.
+
 ## 2026-09-13#02
 
 - New **Author Sort Conversion** (Operations menu) — batch version of
