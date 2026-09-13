@@ -4,6 +4,15 @@ All notable changes to The ƎPUB Redactor, by version. Trimmed to new
 functionality and real fixes — cosmetic/UX-only adjustments aren't
 listed here.
 
+## 2026-09-13#04 -- Ctrl+E/Ctrl+I export/import shortcut pairing
+
+Rename Files (Pattern)... moves from Ctrl+Shift+R (this morning's
+choice) to **Ctrl+E**, and Import Metadata from Filename... from
+Ctrl+E to **Ctrl+I** -- a deliberate export/import mnemonic pair for
+the two directions of the filename<->metadata relationship, requested
+explicitly. Applied family-wide via
+`redactor_common.gui.standard_shortcuts`.
+
 ## 2026-09-13#03 -- hotkey audit: Redo, real F2, and family-wide alignment
 
 Full audit of keyboard shortcuts across the whole Redactor family
