@@ -38,7 +38,7 @@ import traceback
 import webbrowser
 
 from PyQt6.QtCore import QSize, Qt, QTimer
-from PyQt6.QtGui import QGuiApplication, QIcon, QKeySequence, QPixmap
+from PyQt6.QtGui import QGuiApplication, QIcon, QKeySequence
 from PyQt6.QtWidgets import (
     QAbstractItemView,
     QApplication,
@@ -74,6 +74,7 @@ from redactor_common.core.save_errors import describe_save_error
 from redactor_common.core.undo import UndoManager
 from redactor_common.gui.action_factory import make_action
 from redactor_common.gui.progress import run_with_progress
+from redactor_common.gui.async_icon_cache import AsyncIconCache
 from redactor_common.gui.quick_series_number import prompt_and_generate_series_numbers
 from redactor_common.gui.menu_builder import MenuAction, MenuItems, Separator, build_menu_bar
 from redactor_common.gui.colors import (
@@ -212,6 +213,8 @@ class MainWindow(QMainWindow):
         self.books: list[EpubBook] = []
         self._updating_table = False
         self.undo_manager = UndoManager(max_entries=UNDO_MAX_ENTRIES)
+        self._cover_icon_cache = AsyncIconCache(COVER_ICON_SIZE, parent=self)
+        self._cover_icon_cache.icon_ready.connect(self._on_cover_icon_ready)
 
         self._build_ui()
         self.setAcceptDrops(True)
@@ -1338,21 +1341,42 @@ class MainWindow(QMainWindow):
         if len(selected) == 1:
             self.rename_single_file(selected[0])
 
-    @staticmethod
-    def _apply_cover_icon(item: QTableWidgetItem, book: EpubBook) -> None:
+    def _apply_cover_icon(self, item: QTableWidgetItem, book: EpubBook) -> None:
+        """Sets item's icon from book.cover_bytes -- from cache if
+        book's cover hasn't changed since it was last computed
+        (checked by identity, not content: cover_bytes is reassigned,
+        never mutated in place, whenever a cover actually changes, so
+        `is` is enough and never re-hashes potentially large image
+        bytes on every rebuild), or a blank placeholder immediately
+        plus a background decode request otherwise -- see
+        redactor_common.gui.async_icon_cache's module docstring. The
+        real icon for a genuine miss arrives later, via
+        _on_cover_icon_ready(), updating this cell alone."""
         if not book.cover_bytes:
             item.setIcon(QIcon())
             return
-        pixmap = QPixmap()
-        if pixmap.loadFromData(book.cover_bytes):
-            scaled = pixmap.scaled(
-                COVER_ICON_SIZE,
-                Qt.AspectRatioMode.KeepAspectRatio,
-                Qt.TransformationMode.SmoothTransformation,
-            )
-            item.setIcon(QIcon(scaled))
-        else:
-            item.setIcon(QIcon())
+        cached = self._cover_icon_cache.get_cached_icon(book, book.cover_bytes)
+        if cached is not None:
+            item.setIcon(cached)
+            return
+        item.setIcon(QIcon())
+        self._cover_icon_cache.request(book, book.cover_bytes, book.cover_bytes)
+
+    def _on_cover_icon_ready(self, book: EpubBook, icon: QIcon) -> None:
+        """A background cover decode (queued by _apply_cover_icon's
+        cache-miss path) has finished. Sets ONLY this book's icon, on
+        whichever row it currently occupies, if any -- never a
+        rebuild, never any other cell. _find_row_for_book() re-derives
+        the row fresh rather than trusting one captured at request
+        time, since Qt's own column-sort can reorder rows on its own,
+        with no callback into any of this project's code, while a
+        decode is still in flight."""
+        row = self._find_row_for_book(book)
+        if row is None:
+            return  # removed, or no longer loaded, since the request was made
+        item = self.table.item(row, FILENAME_COL)
+        if item is not None:
+            item.setIcon(icon)
 
     def _set_row_dirty_style(self, row: int, dirty: bool) -> None:
         for col in range(self.table.columnCount()):

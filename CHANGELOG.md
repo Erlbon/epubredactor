@@ -4,6 +4,31 @@ All notable changes to The ƎPUB Redactor, by version. Trimmed to new
 functionality and real fixes — cosmetic/UX-only adjustments aren't
 listed here.
 
+## 2026-09-13#06 -- Cover icons: cached, and decoded off the UI thread
+
+Follow-up to the discussion in `#05`'s entry about the list-rebuild
+step being slow for a large library: found and fixed the actual
+dominant cost. `_apply_cover_icon()` was re-decoding and re-scaling
+every book's cover from raw bytes on every single table rebuild --
+Save, Undo, Delete, Refresh -- even though the cover hadn't changed
+since the last rebuild. For a genuinely large library that's
+thousands of redundant JPEG/PNG decodes on the UI thread, every time.
+
+Now built on `redactor_common.gui.async_icon_cache.AsyncIconCache`:
+- A book's icon is cached and reused across rebuilds until its cover
+  actually changes (cover add/replace/delete/generate).
+- A genuine cache miss (a real new/changed cover) decodes and scales
+  in a background thread pool instead of blocking table population --
+  the row shows up immediately with a blank icon, and the real one
+  fills in independently, whenever its own decode finishes, updating
+  only that one cell. No rebuild, no re-layout, nothing else touched.
+- Robust to a rebuild, sort, or removal happening while a decode is
+  still in flight (re-derives the book's current row fresh via the
+  existing `_find_row_for_book()`, rather than trusting a row number
+  captured back when the request was made).
+
+Bumped `redactor_common` to `2026-09-13-04`.
+
 ## 2026-09-13#05 -- Save's progress dialog now shared, not hand-rolled
 
 `_save_books()`'s own copy of the "progress dialog with a per-file
