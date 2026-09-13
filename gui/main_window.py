@@ -73,6 +73,7 @@ from redactor_common.core.error_summary import summarize_errors
 from redactor_common.core.save_errors import describe_save_error
 from redactor_common.core.undo import UndoManager
 from redactor_common.gui.action_factory import make_action
+from redactor_common.gui.progress import run_with_progress
 from redactor_common.gui.quick_series_number import prompt_and_generate_series_numbers
 from redactor_common.gui.menu_builder import MenuAction, MenuItems, Separator, build_menu_bar
 from redactor_common.gui.colors import (
@@ -1782,22 +1783,9 @@ class MainWindow(QMainWindow):
         self._report_save_result(len(changed_books), errors, in_place=False)
 
     def _save_books(self, books: list[EpubBook], output_folder: str | None) -> list[tuple[str, str]]:
-        errors = []
-        progress = None
-        if len(books) >= LOAD_PROGRESS_THRESHOLD:
-            label = "Saving copies…" if output_folder else "Saving books…"
-            progress = QProgressDialog(label, "Cancel", 0, len(books), self)
-            progress.setWindowModality(Qt.WindowModality.WindowModal)
-            progress.setMinimumDuration(0)
+        errors: list[tuple[str, str]] = []
 
-        for i, book in enumerate(books):
-            if progress is not None:
-                if progress.wasCanceled():
-                    break
-                progress.setValue(i)
-                progress.setLabelText(f"Saving: {os.path.basename(book.path)}")
-                QApplication.processEvents()
-
+        def _step(book: EpubBook, _index: int) -> None:
             try:
                 if output_folder:
                     out_path = os.path.join(output_folder, os.path.basename(book.path))
@@ -1827,9 +1815,12 @@ class MainWindow(QMainWindow):
                 if not output_folder:
                     book.save_error = message
 
-        if progress is not None:
-            progress.setValue(len(books))
-        return errors
+        label = "Saving copies…" if output_folder else "Saving books…"
+        run_with_progress(
+            self, books, _step, label,
+            threshold=LOAD_PROGRESS_THRESHOLD,
+            label_for=lambda book: f"Saving: {os.path.basename(book.path)}",
+        )
         return errors
 
     def _report_save_result(self, attempted: int, errors: list[tuple[str, str]], in_place: bool) -> None:

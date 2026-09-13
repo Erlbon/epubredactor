@@ -4,6 +4,24 @@ All notable changes to The ƎPUB Redactor, by version. Trimmed to new
 functionality and real fixes — cosmetic/UX-only adjustments aren't
 listed here.
 
+## 2026-09-13#05 -- Save's progress dialog now shared, not hand-rolled
+
+`_save_books()`'s own copy of the "progress dialog with a per-file
+label" pattern is retired -- now built on
+`redactor_common.gui.run_with_progress`'s new `label_for` param (added
+specifically so this and video's near-identical hand-rolled copy could
+both go away). No behavior change: same threshold, same Cancel
+button, same per-file "Saving: foo.epub" label. Bumped `redactor_common`
+to `2026-09-13-03`.
+
+If you're seeing Save look frozen on a very large batch (5000+ files):
+this progress dialog has existed since `#07` on 2026-09-03 -- check
+you're running a build from on or after that date. The list-rebuild
+step immediately after Save finishes has had its own progress dialog
+since the same date, for the same reason; a further look at *why*
+rebuilding is still slow for a batch that size is a separate,
+follow-up discussion, not addressed in this entry.
+
 ## 2026-09-13#04 -- Ctrl+E/Ctrl+I export/import shortcut pairing
 
 Rename Files (Pattern)... moves from Ctrl+Shift+R (this morning's
