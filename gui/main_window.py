@@ -316,6 +316,7 @@ class MainWindow(QMainWindow):
         self.tag_panel.coverAddReplaceRequested.connect(self.on_cover_add_replace)
         self.tag_panel.coverGenerateRequested.connect(self.on_cover_generate)
         self.tag_panel.coverDeleteRequested.connect(self.on_cover_delete)
+        self.tag_panel.coverToggleJunkRequested.connect(self.on_cover_toggle_junk)
         self.tag_panel.selectionCountChanged.connect(self._on_tag_panel_selection_count_changed)
         self.tag_panel.collapseToggleRequested.connect(self.toggle_tag_panel)
         self.splitter.addWidget(self.tag_panel)
@@ -1484,7 +1485,11 @@ class MainWindow(QMainWindow):
         self._refresh_status()
 
     def _on_selection_changed(self) -> None:
-        self.tag_panel.set_selection(self._currently_selected_books())
+        books = self._currently_selected_books()
+        self.tag_panel.set_selection(books)
+        # Reflects/acts on the FIRST selected book, same "first of N"
+        # convention the cover preview itself uses for a mixed selection.
+        self.tag_panel.set_cover_junk_flagged(bool(books) and self._book_is_junk_cover(books[0]))
 
     def _apply_bulk_edit(self, values: dict) -> None:
         books = self._currently_selected_books()
@@ -1642,6 +1647,23 @@ class MainWindow(QMainWindow):
             book.remove_cover()
         self._refresh_affected_rows(books)
 
+    def on_cover_toggle_junk(self) -> None:
+        """The cover preview panel's Junk button -- which direction to go
+        is decided from the FIRST selected book's current flagged state
+        (same "first of N" convention the preview itself uses), then
+        applied via the same flag/unflag methods the table right-click
+        uses, which already act on the whole current selection."""
+        books = self._currently_selected_books()
+        if not books:
+            QMessageBox.information(
+                self, "No books selected", "Select at least one book first."
+            )
+            return
+        if self._book_is_junk_cover(books[0]):
+            self.unflag_selected_covers_as_junk()
+        else:
+            self.flag_selected_covers_as_junk()
+
     def _refresh_affected_rows(self, books: list[EpubBook]) -> None:
         # Guards the Junk Cover cell's item.setText() below the same way
         # _refresh_row_full() does -- without it, _on_item_changed would
@@ -1688,6 +1710,7 @@ class MainWindow(QMainWindow):
         self._junk_cover_hashes |= new_hashes
         app_settings.save_junk_cover_hashes(self._junk_cover_hashes)
         self._refresh_all_junk_cover_cells()
+        self._on_selection_changed()  # cover preview panel's Junk button may need to flip to "Unflag"
 
     def unflag_selected_covers_as_junk(self) -> None:
         """The exact inverse of flag_selected_covers_as_junk() above --
@@ -1701,6 +1724,7 @@ class MainWindow(QMainWindow):
         self._junk_cover_hashes -= hashes_to_clear
         app_settings.save_junk_cover_hashes(self._junk_cover_hashes)
         self._refresh_all_junk_cover_cells()
+        self._on_selection_changed()  # cover preview panel's Junk button may need to flip to "Flag"
 
     def _refresh_all_junk_cover_cells(self) -> None:
         """Re-checks every loaded book's Junk Cover cell against the

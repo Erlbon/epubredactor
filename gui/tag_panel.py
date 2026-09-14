@@ -108,6 +108,7 @@ class TagPanel(QWidget):
     coverAddReplaceRequested = pyqtSignal()  # cover edits apply per-book too
     coverGenerateRequested = pyqtSignal()
     coverDeleteRequested = pyqtSignal()
+    coverToggleJunkRequested = pyqtSignal()  # MainWindow decides flag vs. unflag, see set_cover_junk_flagged()
     selectionCountChanged = pyqtSignal(int)  # lets MainWindow mirror this in its toolbar Apply action
     collapseToggleRequested = pyqtSignal()  # the panel doesn't control its own width -- MainWindow does
 
@@ -165,13 +166,18 @@ class TagPanel(QWidget):
         self.cover_hint.setAlignment(Qt.AlignmentFlag.AlignCenter)
         cover_layout.addWidget(self.cover_hint)
 
-        cover_btn_row = QHBoxLayout()
+        # Two rows, not one -- a fourth button (Junk) made a single row
+        # too cramped once the panel is dragged down toward its narrower
+        # end (see the splitter above), same reasoning as elsewhere in
+        # this panel favoring a scrollable/collapsible layout over a
+        # fixed-width one.
+        cover_btn_row1 = QHBoxLayout()
         self.cover_add_btn = QPushButton("Add/Replace")
         self.cover_add_btn.setToolTip(
             "Choose an image file to set as the cover for every selected book"
         )
         self.cover_add_btn.clicked.connect(self.coverAddReplaceRequested.emit)
-        cover_btn_row.addWidget(self.cover_add_btn)
+        cover_btn_row1.addWidget(self.cover_add_btn)
 
         self.cover_generate_btn = QPushButton("Generate")
         self.cover_generate_btn.setToolTip(
@@ -179,14 +185,27 @@ class TagPanel(QWidget):
             "background) for every selected book, replacing any existing cover"
         )
         self.cover_generate_btn.clicked.connect(self.coverGenerateRequested.emit)
-        cover_btn_row.addWidget(self.cover_generate_btn)
+        cover_btn_row1.addWidget(self.cover_generate_btn)
 
+        cover_layout.addLayout(cover_btn_row1)
+
+        cover_btn_row2 = QHBoxLayout()
         self.cover_delete_btn = QPushButton("Delete")
         self.cover_delete_btn.setToolTip("Remove the cover image from every selected book")
         self.cover_delete_btn.clicked.connect(self.coverDeleteRequested.emit)
-        cover_btn_row.addWidget(self.cover_delete_btn)
+        cover_btn_row2.addWidget(self.cover_delete_btn)
 
-        cover_layout.addLayout(cover_btn_row)
+        # Label/tooltip flip between Flag/Unflag by set_cover_junk_flagged()
+        # (MainWindow calls it on every selection change, since knowing
+        # which one applies means checking the shared junk-hash set --
+        # state this panel doesn't own, see MainWindow._book_is_junk_cover).
+        # Reflects/acts on the FIRST selected book, same "first of N"
+        # convention _update_cover_preview() already uses above.
+        self.cover_junk_btn = QPushButton("Flag as Junk")
+        self.cover_junk_btn.clicked.connect(self.coverToggleJunkRequested.emit)
+        cover_btn_row2.addWidget(self.cover_junk_btn)
+
+        cover_layout.addLayout(cover_btn_row2)
 
         # A real draggable divider between the two sections -- lets you
         # give the cover image much more room by dragging, even if that
@@ -469,6 +488,7 @@ class TagPanel(QWidget):
         self.cover_add_btn.setEnabled(self._selected_count > 0)
         self.cover_generate_btn.setEnabled(self._selected_count > 0)
         self.cover_delete_btn.setEnabled(self._selected_count > 0)
+        self.cover_junk_btn.setEnabled(self._selected_count > 0)
 
         metadatas = [b.metadata for b in books]
         for key in self._visible_field_keys:
@@ -528,6 +548,27 @@ class TagPanel(QWidget):
             self.cover_preview.set_original_pixmap(None)
             self.cover_preview.setText("(cover image unreadable)")
         self.cover_hint.setText(extra.strip(" ()") or "")
+
+    def set_cover_junk_flagged(self, is_junk: bool) -> None:
+        """Flips the Junk button's label/tooltip between Flag and Unflag
+        -- called by MainWindow on every selection change (and after
+        flagging/unflagging), since whether the FIRST selected book is
+        currently flagged depends on the shared junk-hash set, which
+        lives in MainWindow, not here (see MainWindow._book_is_junk_cover).
+        Doesn't touch enabled state -- set_selection() already handles
+        that the same way it does for the other three cover buttons."""
+        if is_junk:
+            self.cover_junk_btn.setText("Unflag Junk")
+            self.cover_junk_btn.setToolTip(
+                "Unflag this cover as junk -- also un-flags every other book sharing "
+                "the exact same cover image"
+            )
+        else:
+            self.cover_junk_btn.setText("Flag as Junk")
+            self.cover_junk_btn.setToolTip(
+                "Flag this cover as junk -- also flags every other book sharing the "
+                "exact same cover image"
+            )
 
     @staticmethod
     def _value_for(metadata, key: str) -> str:

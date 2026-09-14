@@ -69,14 +69,16 @@ them in one go.
   committing. See "Notes on Generate Cover" below.
 - **Junk Cover flag** — right-click a book with a bad cover (a broken
   converter's generic placeholder, say) and choose **Flag Cover as
-  Junk**: every OTHER loaded book whose cover is byte-for-byte the exact
-  same image gets flagged too, automatically, not just the one you
-  clicked. Shows as a sortable **Junk Cover** column (click its header
-  to group them together), and **Operations > Regenerate Junk
-  Covers…** runs Generate Cover from Metadata against every currently-
-  flagged book in one go — a freshly generated cover naturally
-  un-flags itself, since it's no longer that same junk image.
-  **Unflag Cover as Junk** reverses it, same propagation in reverse.
+  Junk** (also a **Flag as Junk** / **Unflag Junk** toggle button under
+  the cover preview in the bulk-edit panel, second row): every OTHER
+  loaded book whose cover is byte-for-byte the exact same image gets
+  flagged too, automatically, not just the one you clicked. Shows as a
+  sortable **Junk Cover** column (click its header to group them
+  together), and **Operations > Regenerate Junk Covers…** runs
+  Generate Cover from Metadata against every currently-flagged book in
+  one go — a freshly generated cover naturally un-flags itself, since
+  it's no longer that same junk image. **Unflag Cover as Junk**
+  reverses it, same propagation in reverse.
   The flag itself isn't book content — it's not written to the EPUB,
   doesn't dirty the book, and isn't part of Undo, just a standing note
   about a cover image, remembered across restarts like a column width.
@@ -268,10 +270,11 @@ them in one go.
 - Filter box to narrow the list by filename or title
 - **Cover image** — a preview panel in the bulk-edit panel (bottom-left)
   shows the cover of the first selected book, plus **Add/Replace**,
-  **Generate**, and **Delete** buttons that apply to every selected book
-  at once. A small thumbnail also appears next to each book's filename
-  in the table. Nothing touches disk until you Save, same as every
-  other edit.
+  **Generate**, **Delete**, and a **Flag as Junk** / **Unflag Junk**
+  toggle button (see "Junk Cover flag" above) that apply to every
+  selected book at once. A small thumbnail also appears next to each
+  book's filename in the table. Nothing touches disk until you Save,
+  same as every other edit.
 - **Rename / Export by Pattern** — mp3tag's "Convert: Tag → Filename" feature.
   Build a filename from a pattern like `%series% %series_index% - %title%`,
   preview the result for every book, then either rename files in place or

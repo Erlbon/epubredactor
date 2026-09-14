@@ -4,6 +4,15 @@ All notable changes to The ƎPUB Redactor, by version. Trimmed to new
 functionality and real fixes — cosmetic/UX-only adjustments aren't
 listed here.
 
+## 2026-09-14#02
+
+- Junk Cover flag is now also available right where you're looking at
+  the cover: a **Flag as Junk** / **Unflag Junk** toggle button under
+  the cover preview in the bulk-edit panel, next to Add/Replace,
+  Generate, and Delete (now two rows of buttons instead of one, to fit
+  it). Same propagation as the table right-click version -- flagging
+  flags every other loaded book sharing that exact cover image too.
+
 ## 2026-09-14#01
 
 - New **Junk Cover** flag: right-click a book with a bad cover and
