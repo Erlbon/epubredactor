@@ -4,6 +4,23 @@ All notable changes to The ƎPUB Redactor, by version. Trimmed to new
 functionality and real fixes — cosmetic/UX-only adjustments aren't
 listed here.
 
+## 2026-09-14#05
+
+- New **per-field overwrite review** for Look Up via Calibre, Import
+  Metadata from Google Books, and Import Metadata from Open Library:
+  if applying a found result would actually replace a field that
+  already has a different, non-blank value, a second dialog opens
+  first -- every touched field, current value next to new, its own
+  checkbox. A blank field starts ticked (nothing to lose); a genuine
+  overwrite starts unticked, so accepting a book's good fields no
+  longer means accepting every field it found, bad ones included (the
+  underlying reason `file-as="Unknown"` could silently clobber a
+  correct Author Sort, fixed narrowly last version). A clean batch
+  (nothing would be overwritten anywhere) skips this review entirely.
+  Built on `redactor_common.gui.overwrite_review_dialog`, promoted
+  there from cbzredactor, where it originated. Bumped `redactor_common`
+  to `2026-09-14-01`.
+
 ## 2026-09-14#04
 
 - Fixed: Look Up via Calibre could silently overwrite a correct Author

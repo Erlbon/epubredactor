@@ -77,6 +77,7 @@ from redactor_common.gui.progress import run_with_progress
 from redactor_common.gui.async_icon_cache import AsyncIconCache
 from redactor_common.gui.quick_series_number import prompt_and_generate_series_numbers
 from redactor_common.gui.menu_builder import MenuAction, MenuItems, Separator, build_menu_bar
+from redactor_common.gui.overwrite_review_dialog import resolve_overwrite_conflicts
 from redactor_common.gui.colors import (
     DIRTY_COLOR, ERROR_COLOR, SAVE_FAILED_COLOR, DRM_COLOR, HIGHLIGHT_TEXT_COLOR,
     TABLE_SELECTION_STYLESHEET,
@@ -151,6 +152,15 @@ TABLE_ZOOM_MAX_PT = 20
 TAG_PANEL_COLLAPSED_WIDTH = 32  # slim strip, not zero -- keeps the panel's own toggle button reachable
 
 IMAGE_FILE_FILTER = "Images (*.jpg *.jpeg *.png *.gif *.webp)"
+
+# For redactor_common.gui.overwrite_review_dialog.resolve_overwrite_conflicts()'s
+# per-field review table -- same name/shape as cbzredactor's own
+# _FIELD_LABELS/_field_label, the project this was promoted from.
+_FIELD_LABELS = {key: label for key, label, _multiline in FIELDS}
+
+
+def _field_label(key: str) -> str:
+    return _FIELD_LABELS.get(key, key.replace("_", " ").title())
 
 
 def resource_path(*parts: str) -> str:
@@ -2156,6 +2166,20 @@ class MainWindow(QMainWindow):
         if not metadata_changes and not cover_changes:
             return
 
+        # Per-field review before anything is actually applied -- covers
+        # are a separate, visual thing (not reviewed field-by-field
+        # here), only the text metadata goes through this. Skips itself
+        # entirely if nothing found would overwrite an existing,
+        # different value; see resolve_overwrite_conflicts()'s own
+        # docstring. None means the user cancelled the review outright,
+        # which aborts applying the cover changes too, not just metadata.
+        if metadata_changes:
+            metadata_changes = resolve_overwrite_conflicts(self, target_books, metadata_changes, _field_label)
+            if metadata_changes is None:
+                return
+        if not metadata_changes and not cover_changes:
+            return
+
         affected_rows = set(metadata_changes) | set(cover_changes)
         affected_books = [target_books[row] for row in affected_rows]
         self._push_undo("Import metadata from Google Books", affected_books)
@@ -2275,6 +2299,16 @@ class MainWindow(QMainWindow):
             return
 
         changes = dialog.accepted_changes()  # book index -> {field_key: value}
+        if not changes:
+            return
+
+        # Per-field review before anything is actually applied -- skips
+        # itself entirely if nothing found would overwrite an existing,
+        # different value; see resolve_overwrite_conflicts()'s own
+        # docstring. Returns None if the user cancelled outright.
+        changes = resolve_overwrite_conflicts(self, target_books, changes, _field_label)
+        if changes is None:
+            return
         if not changes:
             return
 
@@ -2563,6 +2597,20 @@ class MainWindow(QMainWindow):
 
         metadata_changes = dialog.accepted_metadata()  # row index -> {field_key: value}
         cover_changes = dialog.accepted_covers()  # row index -> (image_bytes, mime)
+        if not metadata_changes and not cover_changes:
+            return
+
+        # Per-field review before anything is actually applied -- covers
+        # are a separate, visual thing (not reviewed field-by-field
+        # here), only the text metadata goes through this. Skips itself
+        # entirely if nothing found would overwrite an existing,
+        # different value; see resolve_overwrite_conflicts()'s own
+        # docstring. None means the user cancelled the review outright,
+        # which aborts applying the cover changes too, not just metadata.
+        if metadata_changes:
+            metadata_changes = resolve_overwrite_conflicts(self, target_books, metadata_changes, _field_label)
+            if metadata_changes is None:
+                return
         if not metadata_changes and not cover_changes:
             return
 

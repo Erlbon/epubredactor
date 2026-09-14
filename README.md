@@ -51,14 +51,20 @@ them in one go.
   [Google Books](https://books.google.com) for each selected book by
   title/author and brings back title, authors, publisher, year, ISBN,
   genre, language, description, and a cover thumbnail together, in one
-  review-and-apply step. One checkbox per book — ticking a row applies
-  everything found for that book.
+  review-and-apply step. One checkbox per book chooses whether to bring
+  in that book's result at all; if applying it would actually overwrite
+  a field that already has a different, non-blank value, a second
+  per-field review opens before anything is written (see "Notes on
+  Google Books and Open Library lookups" below) — a cover thumbnail
+  isn't part of that per-field review, since it's a visual comparison,
+  not text.
 - **Import Metadata from Open Library** — the same idea via
   [Open Library](https://openlibrary.org): title, authors, publisher,
   year, ISBN, genre (subjects), and cover together. Doesn't import
   Language — Open Library's codes use a different format than this
   app's Language field expects, so it's left out rather than importing
-  something that wouldn't match.
+  something that wouldn't match. Same per-field overwrite review as
+  Google Books.
 - **Generate Cover from Metadata** (Operations menu) — creates a
   placeholder cover (title, author, and series if present, on a plain
   background) for selected books, to replace a missing or wrong cover,
@@ -316,7 +322,9 @@ them in one go.
   Goodreads-replacement or FantasticFiction plugin, which Calibre
   doesn't ship by default (Goodreads shut down its public API in 2020;
   those are community plugins people add themselves). Same
-  review-before-applying pattern as Google Books/Open Library lookup.
+  review-before-applying pattern as Google Books/Open Library lookup,
+  including the per-field overwrite review (see "Notes on Google Books
+  and Open Library lookups" below).
   Needs Calibre installed;
   the first time, if it can't be found automatically, you'll be asked to
   browse to it once. See "Notes on the Calibre lookup" below.
@@ -504,10 +512,23 @@ The app **icon**, being an actual image, uses a genuinely 180°-rotated E.
 - Matching is done by title/author text search, so both are "probably
   right, please glance and confirm" tools, not guaranteed exact —
   that's why nothing is written until you review and click Apply.
-- One checkbox per book, not per field: ticking a row applies
-  everything found for that book — title, authors, publisher, year,
-  ISBN, genre, cover, and (Google Books only) language and description.
-  Untick anything you don't trust before Apply.
+- One checkbox per book decides whether to bring in that book's result
+  at all — title, authors, publisher, year, ISBN, genre, cover, and
+  (Google Books only) language and description. Untick anything you
+  don't trust before Apply.
+- **Overwrite review**: if applying the checked results would actually
+  replace a field that already has a different, non-blank value (not
+  just filling in something that was blank), a second dialog opens
+  first — every touched field, current value next to the new one, its
+  own checkbox. A field that's currently blank starts ticked (nothing
+  to lose); a genuine overwrite starts UNTICKED, so it takes a
+  deliberate opt-in per field rather than accepting a whole book's
+  worth of fields just to get the one you actually wanted. A totally
+  clean batch (nothing would be overwritten anywhere) skips this
+  review entirely. Cover images aren't part of this per-field review —
+  they're a visual comparison, reviewed via the thumbnail instead.
+  Same mechanism backs Look Up via Calibre, and the family's
+  cbzredactor sibling, where it originated.
 - Neither needs an API key for this app's usage level.
 - Open Library's Language field isn't imported — it uses a different
   code format (3-letter) than this app's Language field expects
@@ -860,6 +881,7 @@ test_google_books_lookup.py             - automated test for Google Books metada
 test_search_replace.py                  - automated test for the search/replace engine
 test_undo.py                              - automated test for the undo stack
 test_app_settings.py                       - automated test for settings persistence logic
+test_main_window_overwrite.py              - automated test for the per-field overwrite-review wiring in the three metadata-lookup handlers
 requirements.txt
 build_exe.bat                                - Windows build script
 bump_version.py                               - maintainer utility: bumps APP_VERSION from the real system clock
