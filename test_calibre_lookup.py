@@ -105,6 +105,59 @@ def test_multiple_authors():
     print("PASS: multiple authors and their sort-names are collected in order")
 
 
+def test_file_as_unknown_placeholder_is_dropped():
+    """Regression test: Calibre's own fetch-ebook-metadata frequently
+    emits a literal file-as="Unknown" when a plugin found the author's
+    name but couldn't work out a real sort form for it. That must never
+    flow through as a real Author Sort value -- it would silently
+    overwrite an existing, correct one on Apply."""
+    opf = b"""<?xml version='1.0' encoding='utf-8'?>
+<package xmlns="http://www.idpf.org/2007/opf" version="2.0">
+  <metadata xmlns:dc="http://purl.org/dc/elements/1.1/" xmlns:opf="http://www.idpf.org/2007/opf">
+    <dc:title>Some Book</dc:title>
+    <dc:creator opf:file-as="Unknown">Some Author</dc:creator>
+  </metadata>
+</package>
+"""
+    result = parse_calibre_opf(opf)
+    assert result.authors_str == "Some Author"
+    assert result.author_sort_str == "", result.author_sort_str
+    assert "author_sort_str" not in result.as_dict(), result.as_dict()
+    print("PASS: a literal file-as=\"Unknown\" is dropped, not treated as a real Author Sort")
+
+
+def test_file_as_unknown_is_case_insensitive():
+    opf = b"""<?xml version='1.0' encoding='utf-8'?>
+<package xmlns="http://www.idpf.org/2007/opf" version="2.0">
+  <metadata xmlns:dc="http://purl.org/dc/elements/1.1/" xmlns:opf="http://www.idpf.org/2007/opf">
+    <dc:title>Some Book</dc:title>
+    <dc:creator opf:file-as="UNKNOWN">Some Author</dc:creator>
+  </metadata>
+</package>
+"""
+    result = parse_calibre_opf(opf)
+    assert result.author_sort_str == ""
+    print("PASS: the \"Unknown\" placeholder is matched case-insensitively")
+
+
+def test_file_as_unknown_for_one_of_several_authors():
+    """Only the "Unknown" author's sort-name is dropped -- a real
+    sort-name for a co-author on the same book is unaffected."""
+    opf = b"""<?xml version='1.0' encoding='utf-8'?>
+<package xmlns="http://www.idpf.org/2007/opf" version="2.0">
+  <metadata xmlns:dc="http://purl.org/dc/elements/1.1/" xmlns:opf="http://www.idpf.org/2007/opf">
+    <dc:title>Good Omens</dc:title>
+    <dc:creator opf:file-as="Unknown">Terry Pratchett</dc:creator>
+    <dc:creator opf:file-as="Gaiman, Neil">Neil Gaiman</dc:creator>
+  </metadata>
+</package>
+"""
+    result = parse_calibre_opf(opf)
+    assert result.authors_str == "Terry Pratchett; Neil Gaiman"
+    assert result.author_sort_str == "; Gaiman, Neil", result.author_sort_str
+    print("PASS: a real co-author sort-name survives even when another author's is \"Unknown\"")
+
+
 # ----------------------------------------------------------------------
 # fetch_metadata (subprocess interaction faked via run_fn)
 # ----------------------------------------------------------------------
@@ -219,6 +272,9 @@ if __name__ == "__main__":
     test_parse_garbage_input()
     test_parse_empty_input()
     test_multiple_authors()
+    test_file_as_unknown_placeholder_is_dropped()
+    test_file_as_unknown_is_case_insensitive()
+    test_file_as_unknown_for_one_of_several_authors()
     test_fetch_metadata_success()
     test_fetch_metadata_requires_some_search_criteria()
     test_fetch_metadata_nonzero_returncode_raises()

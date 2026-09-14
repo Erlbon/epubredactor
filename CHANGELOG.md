@@ -4,6 +4,16 @@ All notable changes to The ƎPUB Redactor, by version. Trimmed to new
 functionality and real fixes — cosmetic/UX-only adjustments aren't
 listed here.
 
+## 2026-09-14#04
+
+- Fixed: Look Up via Calibre could silently overwrite a correct Author
+  Sort with the literal text "Unknown" -- Calibre's own
+  fetch-ebook-metadata frequently returns that as a placeholder
+  `file-as` when a plugin found the author's name but couldn't work
+  out a real sort form for it. That placeholder is now dropped rather
+  than parsed as a real value, matching Author Sort's own "empty means
+  nothing found" convention everywhere else.
+
 ## 2026-09-14#03
 
 - Generate Cover from Metadata / Regenerate Junk Covers now show a

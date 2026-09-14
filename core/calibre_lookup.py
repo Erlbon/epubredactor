@@ -126,6 +126,14 @@ def parse_calibre_opf(opf_bytes: bytes) -> CalibreLookupResult:
                 for attr_name, attr_val in el.attrib.items():
                     if _localname(attr_name) == "file-as":
                         file_as = attr_val.strip()
+                # Calibre's own fetch-ebook-metadata frequently emits a
+                # literal file-as="Unknown" when a plugin found the
+                # author's name but couldn't work out a real sort form
+                # for it -- treated the same as no file-as at all
+                # (skipped below), not a real value that should ever
+                # overwrite an existing, correct Author Sort.
+                if file_as.lower() == "unknown":
+                    file_as = ""
                 author_sort.append(file_as)
         elif local == "subject":
             if text:
