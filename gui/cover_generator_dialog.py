@@ -28,9 +28,17 @@ from PyQt6.QtWidgets import (
 
 from core.epub_metadata import EpubBook
 from gui.cover_render import generate_cover_image
+from redactor_common.gui.progress import run_with_progress
 
 BOOK_COL, PREVIEW_COL, APPLY_COL = range(3)
 THUMB_SIZE = QSize(70, 105)
+# Rendering each cover (1200x1800 QPainter draw + PNG encode) is real
+# work, not the cheap per-row cost _rebuild_table()'s much higher
+# threshold assumes -- a batch as small as a handful of books can
+# already take long enough, with no progress dialog, to look exactly
+# like the app has frozen (this is what Regenerate Junk Covers is for,
+# which can realistically mean "every book in the library").
+PROGRESS_THRESHOLD = 3
 
 
 class CoverGeneratorDialog(QDialog):
@@ -74,7 +82,9 @@ class CoverGeneratorDialog(QDialog):
 
     def _generate_previews(self) -> None:
         self.table.setRowCount(len(self.books))
-        for row, book in enumerate(self.books):
+
+        def render_one(item: tuple[int, EpubBook], _index: int) -> None:
+            row, book = item
             m = book.metadata
             image_bytes = generate_cover_image(m.title, m.authors_str, m.series, m.series_index)
             self._generated[row] = image_bytes
@@ -95,6 +105,16 @@ class CoverGeneratorDialog(QDialog):
             cb.setChecked(True)
             self._checkboxes[row] = cb
             self.table.setCellWidget(row, APPLY_COL, cb)
+
+        # Cancelling just stops early -- whatever rows already rendered
+        # stay in the preview table (nothing's been written to any book
+        # yet, that only happens on Apply), so bailing out partway loses
+        # nothing beyond not previewing the rest.
+        run_with_progress(
+            self, list(enumerate(self.books)), render_one, "Generating cover previews…",
+            threshold=PROGRESS_THRESHOLD,
+            label_for=lambda item: f"Generating: {os.path.basename(item[1].path)}",
+        )
 
         self.table.resizeColumnsToContents()
 

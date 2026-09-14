@@ -4,6 +4,16 @@ All notable changes to The ƎPUB Redactor, by version. Trimmed to new
 functionality and real fixes — cosmetic/UX-only adjustments aren't
 listed here.
 
+## 2026-09-14#03
+
+- Generate Cover from Metadata / Regenerate Junk Covers now show a
+  progress dialog ("Generating: foo.epub") while rendering previews,
+  instead of silently doing nothing on screen for however long a
+  batch takes -- rendering each placeholder cover is real work
+  (1200x1800 QPainter draw + PNG encode), so a batch of more than a
+  couple of books could look exactly like the app had frozen. Built on
+  the same shared `run_with_progress` helper as Save.
+
 ## 2026-09-14#02
 
 - Junk Cover flag is now also available right where you're looking at
