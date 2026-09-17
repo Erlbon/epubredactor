@@ -75,4 +75,3 @@ echo  SUCCESS. Your app is at: %cd%\dist\epubredactor.exe
 echo  That one file can be copied anywhere and run with no Python
 echo  install needed.
 echo ================================================================
-pause
