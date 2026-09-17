@@ -627,7 +627,8 @@ class EpubBook:
         if dup_ids:
             issues.append(ValidationIssue(
                 "DUPLICATE_MANIFEST_ID", SEVERITY_ERROR,
-                f"Duplicate manifest id(s): {', '.join(sorted(dup_ids))}",
+                f"Duplicate manifest id(s): {', '.join(sorted(dup_ids))}. Use Repair → "
+                f"Deduplicate Manifest IDs to fix.",
                 fixable=False,
             ))
 
@@ -839,6 +840,92 @@ class EpubBook:
             self.revalidate()
 
         return removed_hrefs
+
+    def find_duplicate_manifest_ids(self) -> dict[str, list[str]]:
+        """id -> [href, href, ...] for every manifest item id used by more
+        than one <item>. A real pattern in badly-converted EPUB2->EPUB3
+        files (most often id="ncx", with a stray second item somehow
+        ending up with the same id as the genuine toc.ncx entry). Read-only,
+        reflects the OPF as currently loaded."""
+        manifest = self._manifest_el()
+        if manifest is None:
+            return {}
+        by_id: dict[str, list[str]] = {}
+        for item in manifest.findall("opf:item", namespaces=NS):
+            item_id = item.get("id")
+            if item_id:
+                by_id.setdefault(item_id, []).append(item.get("href", ""))
+        return {item_id: hrefs for item_id, hrefs in by_id.items() if len(hrefs) > 1}
+
+    def dedupe_manifest_ids(self, ids: set[str] | None = None) -> list[tuple[str, str]]:
+        """For every duplicated manifest id (or just those in `ids`, if
+        given) -- picks one <item> to keep the id as-is and renames every
+        other <item> sharing it to a fresh, unused id (`<id>-2`, `<id>-3`,
+        ...). Returns [(old_id, new_id), ...] for each rename actually
+        made. Marks the book dirty.
+
+        Deliberately doesn't need to repatch any idref/toc/refines
+        attribute elsewhere in the OPF: whichever item KEEPS the
+        original id is still resolved by every existing reference to
+        that id exactly as before -- only the newly-renamed duplicates
+        needed touching, and by definition nothing in the document was
+        pointing at those (a reference can't distinguish which of two
+        identically-id'd items it meant; renaming the other one doesn't
+        break it either way).
+
+        Which item gets to keep the id, when there's a choice: prefer
+        the one whose media-type/properties actually matches what the
+        id conventionally means (application/x-dtbncx+xml for "ncx",
+        properties="nav" for a nav doc) over document order, so e.g. a
+        stray non-NCX item that happens to also be id="ncx" doesn't
+        "win" the id away from the real toc.ncx and leave <spine
+        toc="ncx"> pointing at the wrong file. Falls back to keeping
+        whichever occurs first when there's no such signal."""
+        manifest = self._manifest_el()
+        if manifest is None:
+            return []
+        all_items = manifest.findall("opf:item", namespaces=NS)
+
+        dup_ids = ids if ids is not None else set(self.find_duplicate_manifest_ids())
+        if not dup_ids:
+            return []
+
+        root = self._opf_tree.getroot()
+        all_ids = {e.get("id") for e in root.iter() if e.get("id")}
+
+        renames: list[tuple[str, str]] = []
+        for dup_id in dup_ids:
+            matching = [item for item in all_items if item.get("id") == dup_id]
+            if len(matching) < 2:
+                continue
+            # Explicit is-not-None checks, not an `or` chain: an <item>
+            # element has no children, so lxml's own __len__-based
+            # truthiness makes EVERY element falsy here -- `a or b`
+            # would silently skip a real match and always fall through.
+            ncx_item = next((it for it in matching if it.get("media-type") == "application/x-dtbncx+xml"), None)
+            nav_item = next((it for it in matching if "nav" in (it.get("properties") or "").split()), None)
+            if ncx_item is not None:
+                keep = ncx_item
+            elif nav_item is not None:
+                keep = nav_item
+            else:
+                keep = matching[0]
+            for item in matching:
+                if item is keep:
+                    continue
+                n = 2
+                candidate = f"{dup_id}-{n}"
+                while candidate in all_ids:
+                    n += 1
+                    candidate = f"{dup_id}-{n}"
+                item.set("id", candidate)
+                all_ids.add(candidate)
+                renames.append((dup_id, candidate))
+
+        if renames:
+            self.dirty = True
+            self.revalidate()
+        return renames
 
     # ------------------------------------------------------------------
     # Navigation repair: broken <guide> references and orphaned (on-disk

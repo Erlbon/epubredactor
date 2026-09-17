@@ -105,6 +105,7 @@ from gui.filename_parse_dialog import FilenameParseDialog
 from gui.google_books_dialog import GoogleBooksDialog
 from gui.image_compress import recompress_jpeg
 from gui.manage_list_dialog import ManageListDialog
+from gui.manifest_dedupe_dialog import ManifestDedupeDialog
 from gui.manifest_rebuild_dialog import ManifestRebuildDialog
 from gui.missing_space_dialog import MissingSpaceDialog
 from gui.nav_repair_dialog import NavRepairDialog
@@ -642,6 +643,10 @@ class MainWindow(QMainWindow):
         repair_items = [
             MenuAction("validate", "&Validate / Fix Issues…", self.open_validation_dialog),
             MenuAction("rebuild_manifest", "Re&build Manifest…", self.open_manifest_rebuild_dialog),
+            MenuAction(
+                "dedupe_manifest_ids", "&Deduplicate Manifest IDs…",
+                self.open_manifest_dedupe_dialog,
+            ),
             MenuAction(
                 "repair_navigation", "Repair &Navigation…",
                 self.open_nav_repair_dialog,
@@ -2869,6 +2874,39 @@ class MainWindow(QMainWindow):
         QMessageBox.information(
             self, "Manifest Rebuilt",
             f"Removed {total_removed} broken manifest reference(s) across "
+            f"{len(affected_books)} book(s). Remember to save.",
+        )
+
+    def open_manifest_dedupe_dialog(self) -> None:
+        target_books = self._selection_or_all_books()
+        if not target_books:
+            QMessageBox.information(
+                self, "No books", "Load some books first (or select the ones to check)."
+            )
+            return
+
+        dialog = ManifestDedupeDialog(target_books, self)
+        if dialog.exec() != ManifestDedupeDialog.DialogCode.Accepted:
+            return
+
+        indices = dialog.accepted_book_indices()
+        if not indices:
+            return
+
+        # dedupe_manifest_ids() acts directly on the book, same
+        # convention as rebuild_manifest()/repair_guide_references(): a
+        # structural repair, not user-authored content, not pushed to
+        # Undo -- the dialog's own upfront listing is the safeguard.
+        affected_books = [dialog.books[i] for i in indices]
+        total_renamed = 0
+        for book in affected_books:
+            total_renamed += len(book.dedupe_manifest_ids())
+        self._refresh_rows_full(affected_books)
+        self._refresh_status()
+        self._on_selection_changed()
+        QMessageBox.information(
+            self, "Manifest IDs Deduplicated",
+            f"Renamed {total_renamed} duplicate manifest id(s) across "
             f"{len(affected_books)} book(s). Remember to save.",
         )
 

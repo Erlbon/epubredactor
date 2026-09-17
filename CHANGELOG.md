@@ -4,6 +4,23 @@ All notable changes to The ƎPUB Redactor, by version. Trimmed to new
 functionality and real fixes — cosmetic/UX-only adjustments aren't
 listed here.
 
+## 2026-09-17#10
+
+- New **Repair → Deduplicate Manifest IDs…**: fixes manifest `<item>`
+  entries that share the same id -- most often two items both with
+  id="ncx" in a badly-converted EPUB2→EPUB3 file, one the genuine
+  toc.ncx and one a stray leftover from whatever tool produced it.
+  This app's own validation already caught this (`DUPLICATE_MANIFEST_ID`)
+  but had no fix; found via a real user report of files showing INVALID
+  after Rebuild Manifest -- Rebuild Manifest only ever removes
+  references to genuinely missing files, so it correctly left this
+  separate, pre-existing defect in place. The fix renames the id on
+  every duplicate except one, and specifically prefers keeping the id
+  on whichever item actually matches what it conventionally means (the
+  real NCX document for id="ncx", the nav document for a duplicated nav
+  id) rather than just picking whichever comes first, so existing
+  references like `<spine toc="ncx">` keep resolving correctly.
+
 ## 2026-09-17#09
 
 - Fixed: on a real ~15,000-book library, updating the list after
