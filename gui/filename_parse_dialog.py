@@ -43,9 +43,22 @@ from PyQt6.QtWidgets import (
 )
 
 from core.epub_metadata import EpubBook
-from core.filename_parser import count_matching_filenames, parse_filename, parsed_to_metadata_kwargs
+from core.filename_parser import (
+    count_matching_filenames,
+    field_value_counts,
+    parse_filename,
+    parsed_to_metadata_kwargs,
+    sibling_epub_stems,
+)
 from core.rename_pattern import DEFAULT_PATTERN, PLACEHOLDERS, SUGGESTED_PATTERNS
 from gui import app_settings
+
+# Fields worth cross-checking for repetition across other books -- ones
+# a real library commonly has SEVERAL entries sharing the exact same
+# value for. %title% is deliberately excluded: it's supposed to be
+# different in nearly every file, so repetition there wouldn't confirm
+# anything.
+_CONFIRMABLE_FIELDS = ("authors", "series")
 
 # Same narrow "▼" style used for every other field-side menu button in
 # the app (Google Books lookup, Genre, Language, Author Sort/Author
@@ -66,6 +79,11 @@ class FilenameParseDialog(QDialog):
         self._checkboxes: dict[int, QCheckBox] = {}
         self._parsed: dict[int, dict[str, str]] = {}
         self._filename_stems = [os.path.splitext(os.path.basename(b.path))[0] for b in self.books]
+        # Directory -> sibling .epub stems, populated lazily and kept for
+        # the dialog's whole lifetime -- the listing itself never changes
+        # while this dialog is open, even though _refresh_preview() reruns
+        # on every keystroke as the pattern is edited.
+        self._sibling_stems_cache: dict[str, list[str]] = {}
 
         self._build_ui()
         self._refresh_preview()
@@ -80,7 +98,8 @@ class FilenameParseDialog(QDialog):
             "are extracted and offered; everything else is left untouched. Patterns below "
             "are ranked by how many of these filenames they actually match, best first -- "
             "including a few common naming templates tried automatically alongside your own "
-            "pattern history."
+            "pattern history. An extracted author or series is marked “confirmed” when "
+            "the same value shows up for another loaded book or another file in the same folder."
         ))
 
         pattern_row = QHBoxLayout()
@@ -238,10 +257,49 @@ class FilenameParseDialog(QDialog):
     def _on_recent_picked(self, pattern: str) -> None:
         self.pattern_edit.setText(pattern)
 
+    def _sibling_stems_for(self, book_path: str) -> list[str]:
+        directory = os.path.dirname(book_path)
+        cached = self._sibling_stems_cache.get(directory)
+        if cached is None:
+            cached = sibling_epub_stems(book_path)
+            self._sibling_stems_cache[directory] = cached
+        return cached
+
+    def _confirmation_note(
+        self, field: str, value: str, book_path: str, pattern: str,
+        batch_counts: dict[str, dict[str, int]], folder_counts_cache: dict[tuple[str, str], dict[str, int]],
+    ) -> str | None:
+        """Whether `value` (this row's %authors% or %series%) is
+        corroborated by any OTHER book -- first among the other books
+        already loaded into this dialog, falling back to the rest of
+        this book's own folder on disk only when the loaded batch alone
+        doesn't show it repeating. A repeating value across several
+        books is real evidence the pattern assigned this field's role
+        correctly; a one-off isn't necessarily wrong, just unconfirmed
+        by this signal, so it gets no note rather than a warning."""
+        batch_count = batch_counts.get(field, {}).get(value, 0)
+        if batch_count >= 2:
+            return f"{field}: confirmed, shared with {batch_count - 1} other loaded book(s)"
+        directory = os.path.dirname(book_path)
+        cache_key = (directory, field)
+        if cache_key not in folder_counts_cache:
+            folder_counts_cache[cache_key] = field_value_counts(
+                self._sibling_stems_for(book_path), pattern, field
+            )
+        folder_count = folder_counts_cache[cache_key].get(value, 0)
+        if folder_count >= 1:
+            return f"{field}: confirmed, also found in {folder_count} other file(s) in this folder"
+        return None
+
     def _refresh_preview(self) -> None:
         pattern = self.pattern_edit.text()
         self._checkboxes = {}
         self._parsed = {}
+
+        batch_counts = {
+            field: field_value_counts(self._filename_stems, pattern, field) for field in _CONFIRMABLE_FIELDS
+        } if pattern.strip() else {}
+        folder_counts_cache: dict[tuple[str, str], dict[str, int]] = {}
 
         self.preview_table.setRowCount(len(self.books))
         matched_count = 0
@@ -251,11 +309,22 @@ class FilenameParseDialog(QDialog):
 
             parsed = parse_filename(stem, pattern) if pattern.strip() else None
             non_empty = {k: v for k, v in (parsed or {}).items() if v}
+
+            notes = []
+            for field in _CONFIRMABLE_FIELDS:
+                value = non_empty.get(field)
+                if value:
+                    note = self._confirmation_note(field, value, book.path, pattern, batch_counts, folder_counts_cache)
+                    if note:
+                        notes.append(note)
+
             non_empty = parsed_to_metadata_kwargs(non_empty)
 
             cb = QCheckBox()
             if non_empty:
                 summary = "; ".join(f"{k}: {v}" for k, v in non_empty.items())
+                if notes:
+                    summary += "  [" + "; ".join(notes) + "]"
                 self.preview_table.setItem(row, EXTRACTED_COL, self._readonly_item(summary))
                 cb.setChecked(True)
                 self._parsed[row] = non_empty

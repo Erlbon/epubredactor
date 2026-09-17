@@ -4,6 +4,20 @@ All notable changes to The ƎPUB Redactor, by version. Trimmed to new
 functionality and real fixes — cosmetic/UX-only adjustments aren't
 listed here.
 
+## 2026-09-17#13
+
+- **Parse Filename → Metadata** now cross-checks extracted authors and
+  series against other books, to give a real signal for whether a
+  pattern assigned that field correctly (rather than, say, capturing
+  part of the title): checks the other books already loaded into the
+  dialog first, and if none of them share the same value, falls back
+  to checking the rest of that book's own folder on disk (just a
+  filename listing -- no files opened). A confirmed value is marked
+  right in the preview, e.g. "authors: confirmed, shared with 2 other
+  loaded book(s)". Titles are deliberately never checked this way --
+  they're supposed to be different in nearly every file, so repetition
+  there wouldn't mean anything.
+
 ## 2026-09-17#12
 
 - **Parse Filename → Metadata** patterns are more forgiving:

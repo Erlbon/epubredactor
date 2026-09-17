@@ -7,7 +7,9 @@ from core.filename_parser import (  # noqa: E402
     best_matching_pattern,
     build_parser_regex,
     count_matching_filenames,
+    field_value_counts,
     parse_filename,
+    sibling_epub_stems,
 )
 from core.rename_pattern import render_filename  # noqa: E402
 from core.epub_metadata import EpubMetadata  # noqa: E402
@@ -203,6 +205,46 @@ def test_best_matching_pattern_empty_inputs():
     assert best_matching_pattern([], ["%title%"]) is None
     assert best_matching_pattern(["Some Title"], []) is None
     print("PASS: an empty filename list or pattern list both yield None, not an error")
+
+
+def test_field_value_counts_finds_repeated_authors():
+    filenames = [
+        "Terry Pratchett - Mort",
+        "Terry Pratchett - Reaper Man",
+        "Neil Gaiman - American Gods",
+    ]
+    counts = field_value_counts(filenames, "%authors% - %title%", "authors")
+    assert counts == {"Terry Pratchett": 2, "Neil Gaiman": 1}, counts
+    print("PASS: field_value_counts() tallies how many filenames share the same author value")
+
+
+def test_field_value_counts_ignores_non_matching_filenames():
+    filenames = ["Terry Pratchett - Mort", "totally unrelated", "Terry Pratchett - Reaper Man"]
+    counts = field_value_counts(filenames, "%authors% - %title%", "authors")
+    assert counts == {"Terry Pratchett": 2}, counts
+    print("PASS: field_value_counts() skips filenames the pattern doesn't match at all")
+
+
+def test_field_value_counts_empty_list():
+    assert field_value_counts([], "%authors% - %title%", "authors") == {}
+    print("PASS: field_value_counts() on an empty filename list returns an empty dict, not an error")
+
+
+def test_sibling_epub_stems_lists_other_epubs_same_folder():
+    tmp_dir = "/tmp/epub_test_sibling_stems"
+    os.makedirs(tmp_dir, exist_ok=True)
+    for name in ["Author - Book One.epub", "Author - Book Two.EPUB", "cover.jpg", "notes.txt"]:
+        open(os.path.join(tmp_dir, name), "w").close()
+    this_book = os.path.join(tmp_dir, "Author - Book One.epub")
+    stems = sibling_epub_stems(this_book)
+    assert sorted(stems) == ["Author - Book Two"], stems
+    print("PASS: sibling_epub_stems() lists other .epub files in the same folder, "
+          "case-insensitively, excluding the book itself and non-epub files")
+
+
+def test_sibling_epub_stems_missing_directory_returns_empty():
+    assert sibling_epub_stems("/tmp/epub_test_sibling_stems_does_not_exist/Book.epub") == []
+    print("PASS: sibling_epub_stems() on a nonexistent folder returns an empty list, not an error")
 
 
 def test_best_matching_pattern_tie_prefers_earlier_in_list():
@@ -504,6 +546,11 @@ if __name__ == "__main__":
     test_best_matching_pattern_picks_highest_count()
     test_best_matching_pattern_none_match()
     test_best_matching_pattern_empty_inputs()
+    test_field_value_counts_finds_repeated_authors()
+    test_field_value_counts_ignores_non_matching_filenames()
+    test_field_value_counts_empty_list()
+    test_sibling_epub_stems_lists_other_epubs_same_folder()
+    test_sibling_epub_stems_missing_directory_returns_empty()
     test_best_matching_pattern_tie_prefers_earlier_in_list()
     test_multiword_series_disambiguated_by_numeric_index()
     test_parsed_to_metadata_kwargs_translates_multivalue_keys()

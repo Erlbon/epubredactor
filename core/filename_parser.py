@@ -30,6 +30,7 @@ over.
 
 from __future__ import annotations
 
+import os
 import re
 
 from core.rename_pattern import PLACEHOLDERS
@@ -346,3 +347,46 @@ def best_matching_pattern(filenames: list[str], patterns: list[str]) -> tuple[st
             best = pattern
             best_count = count
     return (best, best_count) if best is not None else None
+
+
+def field_value_counts(filenames: list[str], pattern: str, field: str) -> dict[str, int]:
+    """value -> how many of these filename stems produced that same
+    (non-empty) `field` value when parsed with `pattern`.
+
+    Used to tell whether a field's role assignment is plausible without
+    needing any pre-existing metadata to check against: %authors% and
+    %series% are both things a real library tends to have SEVERAL books
+    that share the exact same value for, while %title% is normally
+    different in every single file. A value with count >= 2 here has
+    real corroborating evidence across the batch; a count of 1 means
+    nothing else in this set of filenames agrees with it (which isn't
+    necessarily wrong -- a library can easily have exactly one book by
+    a given author -- just unconfirmed by this signal alone)."""
+    from collections import Counter
+    counts: Counter[str] = Counter()
+    for stem in filenames:
+        parsed = parse_filename(stem, pattern)
+        if parsed and parsed.get(field):
+            counts[parsed[field]] += 1
+    return dict(counts)
+
+
+def sibling_epub_stems(book_path: str) -> list[str]:
+    """Filename stems (no extension) of every .epub file sharing
+    `book_path`'s own folder, excluding book_path itself. A cheap
+    directory listing -- doesn't open or parse any file -- used as a
+    fallback source of "other books" for field_value_counts() when the
+    CURRENTLY LOADED/selected batch is too small to show any real
+    repetition on its own (e.g. importing metadata for just one or two
+    books at a time from a folder that has many more)."""
+    directory = os.path.dirname(book_path)
+    try:
+        entries = os.listdir(directory)
+    except OSError:
+        return []
+    this_name = os.path.basename(book_path)
+    stems = []
+    for name in entries:
+        if name.lower().endswith(".epub") and name != this_name:
+            stems.append(os.path.splitext(name)[0])
+    return stems

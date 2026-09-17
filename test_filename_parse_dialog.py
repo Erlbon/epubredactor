@@ -115,10 +115,76 @@ def test_falls_back_to_last_pattern_when_nothing_matches():
     print("PASS: when nothing (history or built-in) matches anything, falls back to the last-used pattern")
 
 
+# ----------------------------------------------------------------------
+# Cross-book author/series confirmation (the "check against the folder"
+# feature): a value that repeats across other loaded books, or other
+# files in the same folder on disk, is marked "confirmed" in the
+# preview -- direct evidence a pattern assigned %authors%/%series%
+# correctly, since a real library commonly has several books sharing an
+# author or series, while %title% normally doesn't repeat at all.
+# ----------------------------------------------------------------------
+
+def test_repeated_author_in_batch_is_confirmed():
+    books = [
+        _FakeBook("/x/Terry Pratchett - Mort.epub"),
+        _FakeBook("/x/Terry Pratchett - Reaper Man.epub"),
+        _FakeBook("/x/Neil Gaiman - American Gods.epub"),
+    ]
+    with _fake_history([]):
+        dlg = FilenameParseDialog(books)
+        dlg.pattern_edit.setText("%authors% - %title%")
+    row0 = dlg.preview_table.item(0, 1).text()
+    row1 = dlg.preview_table.item(1, 1).text()
+    row2 = dlg.preview_table.item(2, 1).text()
+    assert "confirmed" in row0 and "1 other loaded book" in row0, row0
+    assert "confirmed" in row1 and "1 other loaded book" in row1, row1
+    assert "confirmed" not in row2, row2  # only Gaiman book in this batch -- nothing to confirm it
+    print("PASS: an author shared by two loaded books is marked confirmed on both; a one-off isn't")
+
+
+def test_unconfirmed_author_falls_back_to_folder():
+    tmp_dir = "/tmp/epub_test_dialog_folder_fallback2"
+    os.makedirs(tmp_dir, exist_ok=True)
+    for name in ["Terry Pratchett - Mort.epub", "Terry Pratchett - Guards Guards.epub"]:
+        open(os.path.join(tmp_dir, name), "w").close()
+
+    # Only ONE Pratchett book is actually loaded into the dialog --
+    # "Guards Guards" exists only on disk in the same folder.
+    books = [
+        _FakeBook(os.path.join(tmp_dir, "Terry Pratchett - Mort.epub")),
+        _FakeBook("/other/Neil Gaiman - American Gods.epub"),
+    ]
+    with _fake_history([]):
+        dlg = FilenameParseDialog(books)
+        dlg.pattern_edit.setText("%authors% - %title%")
+    row0 = dlg.preview_table.item(0, 1).text()
+    assert "confirmed" in row0 and "other file(s) in this folder" in row0, row0
+    print("PASS: with no support in the loaded batch, falls back to checking the rest of the folder on disk")
+
+
+def test_title_is_never_marked_confirmed():
+    # Titles are supposed to be different in every file -- repeating
+    # them isn't evidence of anything, so they're excluded on purpose.
+    books = [
+        _FakeBook("/x/Author One - Same Title.epub"),
+        _FakeBook("/x/Author Two - Same Title.epub"),
+    ]
+    with _fake_history([]):
+        dlg = FilenameParseDialog(books)
+        dlg.pattern_edit.setText("%authors% - %title%")
+    for row in range(dlg.preview_table.rowCount()):
+        text = dlg.preview_table.item(row, 1).text()
+        assert "title: confirmed" not in text, text
+    print("PASS: a repeated title is never marked confirmed, only authors/series are checked")
+
+
 if __name__ == "__main__":
     test_no_detect_from_metadata_context_menu()
     test_built_in_template_wins_with_no_history()
     test_ranked_list_sorted_best_match_first()
     test_history_pattern_labeled_differently_from_built_in()
     test_falls_back_to_last_pattern_when_nothing_matches()
+    test_repeated_author_in_batch_is_confirmed()
+    test_unconfirmed_author_falls_back_to_folder()
+    test_title_is_never_marked_confirmed()
     print("\nALL FILENAME PARSE DIALOG TESTS PASSED")
