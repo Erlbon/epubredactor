@@ -4,6 +4,16 @@ All notable changes to The ƎPUB Redactor, by version. Trimmed to new
 functionality and real fixes — cosmetic/UX-only adjustments aren't
 listed here.
 
+## 2026-09-17#05
+
+- New **Repair → Strip HTML from Description**: converts a Description
+  field that's literally raw HTML (some EPUBs' `dc:description` is a
+  publisher's marketing page copy-pasted verbatim, tags and all) into
+  clean plain text -- tags removed, entities decoded, real paragraph
+  breaks kept. Same preview-then-apply shape as Case Conversion: only
+  books whose description actually contains markup are listed, each
+  with its own checkbox, nothing changes until you click Apply.
+
 ## 2026-09-17#04
 
 - Fixed: a Description containing raw HTML with embedded newlines

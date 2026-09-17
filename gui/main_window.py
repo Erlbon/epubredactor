@@ -112,6 +112,7 @@ from gui.search_replace_dialog import FILENAME_FIELD_KEY, SearchReplaceDialog
 from gui.series_number_dialog import SeriesNumberDialog
 from gui.send_to_ereader_dialog import SendToEreaderDialog
 from gui.send_to_kobo_dialog import SendToKoboDialog
+from gui.strip_description_html_dialog import StripDescriptionHtmlDialog
 from gui.tag_panel import TagPanel
 from gui.validation_dialog import ValidationDialog
 
@@ -584,6 +585,10 @@ class MainWindow(QMainWindow):
                 self.open_nav_repair_dialog,
             ),
             MenuAction("missing_space", "Detect &Missing Spaces…", self.open_missing_space_dialog),
+            MenuAction(
+                "strip_description_html", "&Strip HTML from Description…",
+                self.open_strip_description_html_dialog,
+            ),
             Separator(),
             MenuAction(
                 "set_default_language", "Set &Blank/Unknown Language to Default…",
@@ -2533,6 +2538,35 @@ class MainWindow(QMainWindow):
             self._refresh_row_full(book)
         self._refresh_status()
         self._on_selection_changed()  # bulk-edit panel may be showing the field this just changed
+
+    # ------------------------------------------------------------------
+    # Strip HTML from Description
+    # ------------------------------------------------------------------
+
+    def open_strip_description_html_dialog(self) -> None:
+        target_books = self._selection_or_all_books()
+        if not target_books:
+            QMessageBox.information(
+                self, "No books", "Load some books first (or select the ones to check)."
+            )
+            return
+
+        dialog = StripDescriptionHtmlDialog(target_books, self)
+        if dialog.exec() != StripDescriptionHtmlDialog.DialogCode.Accepted:
+            return
+
+        changes = dialog.accepted_changes()  # book index -> new (stripped) description
+        if not changes:
+            return
+
+        affected_books = [target_books[i] for i in changes]
+        self._push_undo("Strip HTML from Description", affected_books)
+        for i, new_value in changes.items():
+            target_books[i].apply_metadata({"description": new_value})
+        for book in affected_books:
+            self._refresh_row_full(book)
+        self._refresh_status()
+        self._on_selection_changed()
 
     # ------------------------------------------------------------------
     # Author Sort Conversion
