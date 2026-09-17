@@ -51,8 +51,36 @@ _LEGACY_ALIASES = {
 
 DEFAULT_PATTERN = "%series% %series_index% - %title%"
 
+# Common real-world naming conventions, offered as ready-made starting
+# points for Parse Filename -> Metadata (see gui/filename_parse_dialog.py)
+# alongside the user's own pattern history -- checked against the actual
+# loaded filenames the same way history is, so whichever one (history or
+# built-in) genuinely fits best naturally rises to the top. Covers the
+# "standard template" shape -- author, optional bracketed series/index,
+# title, optional year -- without needing anyone to already have one
+# well-tagged book on hand to reverse-engineer a pattern from.
+SUGGESTED_PATTERNS = [
+    "%authors% - [%series% %series_index%] - %title% (%year%)",
+    "%authors% - [%series% %series_index%] - %title%",
+    "%authors% - %title% (%year%)",
+    "%authors% - %title%",
+    "%series% %series_index% - %title%",
+    "%author_sort% - %title%",
+]
+
 # Characters Windows forbids in filenames, plus control characters.
 _ILLEGAL_CHARS_RE = re.compile(r'[\\/:*?"<>|\x00-\x1f]')
+# A [...] segment (no nesting) that contains at least one %field% token
+# is an OPTIONAL block: e.g. "[%series% %series_index%]" in the standard
+# "%authors% - [%series% %series_index%] - %title%" template disappears
+# entirely -- brackets included -- for a standalone book with no series,
+# rather than rendering the literal, ugly "Author -  - Title". A bracket
+# segment with no field token inside (plain literal text someone
+# happened to wrap in brackets) is left alone; only a segment that's
+# actually ABOUT a field is ever conditional. See filename_parser.py's
+# build_parser_regex() for the matching read-direction behavior.
+_BRACKET_RE = re.compile(r"\[([^\[\]]*)\]")
+_TOKEN_IN_PATTERN_RE = re.compile(r"%(\w+)%")
 _MULTI_SPACE_RE = re.compile(r"[ \t]+")
 _REPEATED_SEPARATOR_RE = re.compile(r"(?:\s*-\s*){2,}")
 _TRIM_SEPARATORS_RE = re.compile(r"^[\s\-–—]+|[\s\-–—]+$")
@@ -129,6 +157,30 @@ def sanitize_filename(name: str) -> str:
     return name
 
 
+def _resolve_optional_brackets(pattern: str, values: dict) -> str:
+    """Replaces every [...] segment in `pattern` that contains a %field%
+    token: if every field inside resolved to an empty value, the whole
+    segment (brackets included) is dropped; otherwise the segment's own
+    tokens are substituted in place, brackets kept. See _BRACKET_RE above."""
+    def _replace(m: re.Match) -> str:
+        inner = m.group(1)
+        tokens = _TOKEN_IN_PATTERN_RE.findall(inner)
+        if not tokens:
+            return m.group(0)  # no fields inside -- ordinary literal brackets
+        substituted = inner
+        any_value = False
+        for key in tokens:
+            value = values.get(key, "")
+            if value:
+                any_value = True
+            substituted = substituted.replace(f"%{key}%", value or "")
+        # strip(): one field inside still being empty (e.g. series set
+        # but series_index blank) shouldn't leave a stray dangling space
+        # next to the bracket -- "[Saga ]" instead of "[Saga]".
+        return f"[{substituted.strip()}]" if any_value else ""
+    return _BRACKET_RE.sub(_replace, pattern)
+
+
 def render_filename(
     metadata: EpubMetadata,
     pattern: str,
@@ -141,7 +193,7 @@ def render_filename(
     every referenced field was empty).
     """
     values = placeholder_values(metadata, zero_pad_series)
-    result = pattern
+    result = _resolve_optional_brackets(pattern, values)
     for key, value in values.items():
         result = result.replace(f"%{key}%", value or "")
 
@@ -157,93 +209,6 @@ def render_filename(
         result = result[:MAX_FILENAME_LENGTH].rstrip()
 
     return result
-
-
-def _field_value_variants(key: str, value: str) -> list[str]:
-    """The distinct ways `value` might actually appear inside a rendered
-    filename -- render_filename() doesn't pass values through unmodified,
-    so a straight substring search against the raw metadata value alone
-    would miss real matches. Longest-first (the caller tries these in
-    order and stops at the first hit), duplicates removed. Covers the
-    two transformations render_filename() itself applies: zero-padding a
-    series index, and stripping characters Windows forbids in filenames."""
-    value = value.strip()
-    if not value:
-        return []
-    variants = [value]
-    if key == "series_index":
-        padded = zero_pad_series_value(value)
-        if padded != value:
-            variants.insert(0, padded)  # zero-padded is the more common convention -- try it first
-    sanitized = _ILLEGAL_CHARS_RE.sub("", value)
-    if sanitized and sanitized not in variants:
-        variants.append(sanitized)
-    return sorted(set(variants), key=len, reverse=True)
-
-
-def detect_pattern_from_metadata(metadata: EpubMetadata, filename_stem: str) -> str | None:
-    """The reverse of render_filename(): given a book's metadata and its
-    actual current filename, reconstructs the %pattern% that would have
-    produced that filename from that metadata -- by finding which field
-    values show up as substrings of the filename, in what order, and
-    treating whatever's left as literal separator text.
-
-    This only makes sense for a book whose metadata is already correct
-    -- it reverse-engineers the NAMING CONVENTION, on the assumption the
-    metadata is the ground truth the filename was (or should have been)
-    built from. Feeding it a book with bad/incorrect metadata will find
-    coincidental or nonsensical matches, if it finds anything at all.
-
-    Returns None if not even one field's value could be found in the
-    filename. Field values that are substrings of a longer, also-present
-    field value (e.g. a series title that's a prefix of the book's own
-    title) are resolved by matching the longest candidate values first,
-    so a short match never claims text that rightfully belongs to a
-    longer one.
-    """
-    filename_stem = filename_stem.strip()
-    if not filename_stem:
-        return None
-
-    values = placeholder_values(metadata)
-    candidates: list[tuple[str, str]] = []  # (field_key, value_variant), longest variant first overall
-    for key, _label in PLACEHOLDERS:
-        for variant in _field_value_variants(key, values.get(key, "")):
-            candidates.append((key, variant))
-    candidates.sort(key=lambda pair: len(pair[1]), reverse=True)
-
-    claimed = [False] * len(filename_stem)
-    spans: list[tuple[int, int, str]] = []  # (start, end, field_key)
-    matched_keys: set[str] = set()
-    for key, variant in candidates:
-        if key in matched_keys:
-            continue  # this field already matched (via an earlier, longer variant) -- don't match it twice
-        search_from = 0
-        while True:
-            idx = filename_stem.find(variant, search_from)
-            if idx == -1:
-                break
-            end = idx + len(variant)
-            if not any(claimed[idx:end]):
-                spans.append((idx, end, key))
-                for i in range(idx, end):
-                    claimed[i] = True
-                matched_keys.add(key)
-                break
-            search_from = idx + 1
-
-    if not spans:
-        return None
-
-    spans.sort()
-    parts: list[str] = []
-    last_end = 0
-    for start, end, key in spans:
-        parts.append(filename_stem[last_end:start])
-        parts.append(f"%{key}%")
-        last_end = end
-    parts.append(filename_stem[last_end:])
-    return "".join(parts)
 
 
 def unique_path(directory: str, stem: str, ext: str, taken: set[str]) -> str:

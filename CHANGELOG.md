@@ -4,6 +4,30 @@ All notable changes to The ƎPUB Redactor, by version. Trimmed to new
 functionality and real fixes — cosmetic/UX-only adjustments aren't
 listed here.
 
+## 2026-09-17#11
+
+- Reworked **Import Metadata → Parse Filename → Metadata**:
+  - Removed "Detect Pattern from This Book's Current Metadata" -- it
+    only worked when a batch happened to already contain one
+    well-tagged book to reverse-engineer a pattern from, which in
+    practice was rarely the case for the files that actually needed
+    this tool.
+  - New `[...]` optional-bracket pattern syntax: `[%series% %series_index%]`
+    (or any bracketed field) is now dropped as a whole -- brackets
+    included -- when its fields are empty, both when building
+    filenames (Rename/Export) and reading them back. Handles the
+    standard `%authors% - [%series% %series_index%] - %title%`
+    template correctly whether or not a book has a series.
+  - `%year%` now matches exactly 4 or 2 digits instead of any run of
+    digits; `%month%` matches 1-2 digits or an English month
+    name/abbreviation ("Jan", "January", any case), normalized to a
+    plain number on import.
+  - Every candidate pattern -- your own pattern history *and* a
+    handful of common built-in naming templates -- is now checked
+    against the actually-loaded filenames and offered ranked by match
+    count, best first, so a fresh perfect match no longer loses to a
+    stale, barely-matching recent pattern.
+
 ## 2026-09-17#10
 
 - New **Repair → Deduplicate Manifest IDs…**: fixes manifest `<item>`

@@ -320,6 +320,132 @@ def test_series_index_no_leading_zero_unaffected():
     print("PASS: a series index with no leading zero is left exactly as-is")
 
 
+# ----------------------------------------------------------------------
+# Optional [...] bracket segments (the "standard template")
+# ----------------------------------------------------------------------
+
+STANDARD_TEMPLATE = "%authors% - [%series% %series_index%] - %title% (%year%)"
+
+
+def test_standard_template_matches_with_series():
+    # The user's own real example: author, bracketed series+index, title, year.
+    parsed = parse_filename(
+        "Patty Jansen - [Ambassador 10] - Lost Forest Secrets (2020)", STANDARD_TEMPLATE
+    )
+    assert parsed == {
+        "authors": "Patty Jansen", "series": "Ambassador", "series_index": "10",
+        "title": "Lost Forest Secrets", "year": "2020",
+    }, parsed
+    print("PASS: the standard template matches a real author/series/title/year filename")
+
+
+def test_standard_template_matches_without_series():
+    # No bracket section at all for a standalone book -- must still
+    # match, since render_filename() would have produced exactly this
+    # (collapsed) shape for a book with no series. The bracket's own
+    # fields come back as empty strings (an unmatched optional group),
+    # same as any other field with nothing to capture -- downstream
+    # code (see FilenameParseDialog._refresh_preview) already filters
+    # those out before offering them for Apply.
+    parsed = parse_filename("Richard Swan - The Justice of Kings (2022)", STANDARD_TEMPLATE)
+    assert parsed["authors"] == "Richard Swan"
+    assert parsed["title"] == "The Justice of Kings"
+    assert parsed["year"] == "2022"
+    assert not parsed["series"]
+    assert not parsed["series_index"]
+    print("PASS: the standard template also matches a standalone book with no bracketed series section")
+
+
+def test_bracket_roundtrip_through_render_filename():
+    m = EpubMetadata()
+    m.authors = ["Patty Jansen"]
+    m.series = "Ambassador"
+    m.series_index = "10"
+    m.title = "Lost Forest Secrets"
+    m.pub_year = "2020"
+    pattern = "%authors% - [%series% %series_index%] - %title% (%year%)"
+    filename = render_filename(m, pattern)
+    assert filename == "Patty Jansen - [Ambassador 10] - Lost Forest Secrets (2020)", filename
+    parsed = parse_filename(filename, pattern)
+    assert parsed["authors"] == "Patty Jansen"
+    assert parsed["series"] == "Ambassador"
+    assert parsed["series_index"] == "10"
+    assert parsed["title"] == "Lost Forest Secrets"
+    assert parsed["year"] == "2020"
+
+    m2 = EpubMetadata()
+    m2.authors = ["Richard Swan"]
+    m2.title = "The Justice of Kings"
+    m2.pub_year = "2022"
+    filename2 = render_filename(m2, pattern)
+    assert filename2 == "Richard Swan - The Justice of Kings (2022)", filename2
+    parsed2 = parse_filename(filename2, pattern)
+    assert parsed2["authors"] == "Richard Swan"
+    assert parsed2["title"] == "The Justice of Kings"
+    assert parsed2["year"] == "2022"
+    assert not parsed2["series"]
+    print("PASS: render_filename() -> parse_filename() round trip works for both the with-series "
+          "and without-series shapes of the standard template")
+
+
+def test_bracket_with_literal_text_still_required_as_literal():
+    result = parse_filename("Book [notes]", "%title% [notes]")
+    assert result == {"title": "Book"}, result
+    assert parse_filename("Book", "%title% [notes]") is None
+    print("PASS: a [...] segment with no field inside stays required literal text when parsing too")
+
+
+# ----------------------------------------------------------------------
+# %year%/%month% smarter regex
+# ----------------------------------------------------------------------
+
+def test_year_matches_four_digits():
+    parsed = parse_filename("2020 - Title", "%year% - %title%")
+    assert parsed == {"year": "2020", "title": "Title"}, parsed
+    print("PASS: a 4-digit year is captured as a whole, not just its first 2 digits")
+
+
+def test_year_matches_two_digits():
+    parsed = parse_filename("87 - Title", "%year% - %title%")
+    assert parsed == {"year": "87", "title": "Title"}, parsed
+    print("PASS: a 2-digit year is also accepted")
+
+
+def test_year_does_not_swallow_extra_digits():
+    # A 5+ digit run isn't a plausible year -- must fail to match rather
+    # than silently accept the first 4 digits and leave one dangling.
+    assert parse_filename("20201 - Title", "%year% - %title%") is None
+    print("PASS: a year field doesn't loosely match a longer run of digits")
+
+
+def test_month_name_normalized_to_number():
+    parsed = parse_filename("2020-Jan - Title", "%year%-%month% - %title%")
+    assert parsed["month"] == "1", parsed
+    print("PASS: a text month name (\"Jan\") is normalized to its plain digit form")
+
+
+def test_month_full_name_normalized_to_number():
+    parsed = parse_filename("2020-September - Title", "%year%-%month% - %title%")
+    assert parsed["month"] == "9", parsed
+    print("PASS: a full month name (\"September\") is also normalized correctly")
+
+
+def test_month_digit_form_unaffected():
+    parsed = parse_filename("2020-07 - Title", "%year%-%month% - %title%")
+    assert parsed["month"] == "07", parsed
+    print("PASS: a digit-form month is left exactly as captured, not stripped or padded")
+
+
+def test_month_year_either_order():
+    # No special-case code needed for this -- it falls straight out of
+    # the pattern the caller writes, in whichever order they use it.
+    parsed_my = parse_filename("Jan-2020 - Title", "%month%-%year% - %title%")
+    assert parsed_my == {"month": "1", "year": "2020", "title": "Title"}, parsed_my
+    parsed_ym = parse_filename("2020-Jan - Title", "%year%-%month% - %title%")
+    assert parsed_ym == {"month": "1", "year": "2020", "title": "Title"}, parsed_ym
+    print("PASS: %month%-%year% and %year%-%month% both work, in whichever order the pattern uses")
+
+
 if __name__ == "__main__":
     test_basic_extraction()
     test_author_title_extraction()
@@ -353,4 +479,15 @@ if __name__ == "__main__":
     test_series_index_zero_alone_not_stripped_to_empty()
     test_series_index_zero_point_something_preserved()
     test_series_index_no_leading_zero_unaffected()
+    test_standard_template_matches_with_series()
+    test_standard_template_matches_without_series()
+    test_bracket_roundtrip_through_render_filename()
+    test_bracket_with_literal_text_still_required_as_literal()
+    test_year_matches_four_digits()
+    test_year_matches_two_digits()
+    test_year_does_not_swallow_extra_digits()
+    test_month_name_normalized_to_number()
+    test_month_full_name_normalized_to_number()
+    test_month_digit_form_unaffected()
+    test_month_year_either_order()
     print("\nALL FILENAME PARSER TESTS PASSED")

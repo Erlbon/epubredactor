@@ -6,7 +6,6 @@ import sys
 sys.path.insert(0, os.path.dirname(__file__))
 from core.epub_metadata import EpubMetadata  # noqa: E402
 from core.rename_pattern import (  # noqa: E402
-    detect_pattern_from_metadata,
     rename_book_file,
     render_filename,
     sanitize_filename,
@@ -197,58 +196,40 @@ def test_sanitize_trailing_dot_space():
 
 
 # ----------------------------------------------------------------------
-# detect_pattern_from_metadata
+# Optional [...] bracket segments (the "standard template" series info)
 # ----------------------------------------------------------------------
 
-def test_detect_pattern_basic():
-    m = make_meta(title="The Hobbit", series="Middle-earth", series_index="1")
-    stem = render_filename(m, "%series% %series_index% - %title%")
-    detected = detect_pattern_from_metadata(m, stem)
-    assert detected == "%series% %series_index% - %title%", detected
-    # and it should actually render back to the same filename
-    assert render_filename(m, detected) == stem
-    print("PASS: detects a straightforward pattern from metadata + filename")
+def test_bracket_segment_kept_when_series_present():
+    m = make_meta(title="The Fellowship of the Ring", authors=["J.R.R. Tolkien"],
+                   series="Lord of the Rings", series_index="1")
+    result = render_filename(m, "%authors% - [%series% %series_index%] - %title%")
+    assert result == "J.R.R. Tolkien - [Lord of the Rings 1] - The Fellowship of the Ring", result
+    print("PASS: a [...] segment with a present field renders normally, brackets included")
 
 
-def test_detect_pattern_zero_padded_series_index():
-    # Filename was rendered with zero-padding, but the metadata's own
-    # series_index is unpadded -- detection must still find the field.
-    m = make_meta(title="Book Two", series="Saga", series_index="2")
-    stem = render_filename(m, "%series% %series_index% - %title%", zero_pad_series=True)
-    assert stem == "Saga 02 - Book Two", stem
-    detected = detect_pattern_from_metadata(m, stem)
-    assert detected == "%series% %series_index% - %title%", detected
-    print("PASS: detects the series_index field even when the filename zero-pads it")
+def test_bracket_segment_dropped_when_series_absent():
+    m = make_meta(title="Standalone Book", authors=["Author X"], series="", series_index="")
+    result = render_filename(m, "%authors% - [%series% %series_index%] - %title%")
+    assert result == "Author X - Standalone Book", result
+    print("PASS: a [...] segment with no field values is dropped entirely, brackets included, "
+          "not left as a stray empty \"[]\"")
 
 
-def test_detect_pattern_sanitized_illegal_characters():
-    # Title contains a colon (illegal in a Windows filename), so
-    # render_filename() strips it -- detection must match the sanitized
-    # form, not fail just because the raw metadata value has the colon.
-    m = make_meta(title="Book: A Story", authors=["A"])
-    stem = render_filename(m, "%title%")
-    assert stem == "Book A Story", stem
-    detected = detect_pattern_from_metadata(m, stem)
-    assert detected == "%title%", detected
-    print("PASS: detects a field whose filename form had illegal characters stripped")
+def test_bracket_segment_with_no_fields_is_always_literal():
+    m = make_meta(title="Book")
+    result = render_filename(m, "%title% [notes]")
+    assert result == "Book [notes]", result
+    print("PASS: a [...] segment with no %field% token inside is always kept as plain literal text")
 
 
-def test_detect_pattern_no_match_returns_none():
-    m = make_meta(title="The Hobbit", authors=["J.R.R. Tolkien"])
-    assert detect_pattern_from_metadata(m, "Completely Unrelated Filename") is None
-    print("PASS: returns None when nothing in the filename matches the metadata")
-
-
-def test_detect_pattern_longest_match_wins_on_substring_collision():
-    # "Dune" (series) is a prefix of "Dune Messiah" (title) -- the longer
-    # title match must win, not have "Dune" get claimed by %series% first
-    # and leave "%series% Messiah" as a broken partial match.
-    m = make_meta(title="Dune Messiah", series="Dune", series_index="2")
-    stem = render_filename(m, "%title% (%series% %series_index%)")
-    assert stem == "Dune Messiah (Dune 2)", stem
-    detected = detect_pattern_from_metadata(m, stem)
-    assert detected == "%title% (%series% %series_index%)", detected
-    print("PASS: longest-match-first resolves a field value that's a substring of another field's value")
+def test_bracket_partial_fields_kept_if_any_value_present():
+    # series set but series_index blank -- the bracket segment still has
+    # SOMETHING to show, so it stays (just without the index).
+    m = make_meta(title="Novella", authors=["A"], series="Saga", series_index="")
+    result = render_filename(m, "%authors% - [%series% %series_index%] - %title%")
+    assert result == "A - [Saga] - Novella", result
+    print("PASS: a [...] segment with at least one non-empty field inside is kept, "
+          "even if another field inside it is still empty")
 
 
 # ----------------------------------------------------------------------
@@ -396,11 +377,10 @@ if __name__ == "__main__":
     test_unique_path_collision_on_disk()
     test_unique_path_collision_within_batch()
     test_sanitize_trailing_dot_space()
-    test_detect_pattern_basic()
-    test_detect_pattern_zero_padded_series_index()
-    test_detect_pattern_sanitized_illegal_characters()
-    test_detect_pattern_no_match_returns_none()
-    test_detect_pattern_longest_match_wins_on_substring_collision()
+    test_bracket_segment_kept_when_series_present()
+    test_bracket_segment_dropped_when_series_absent()
+    test_bracket_segment_with_no_fields_is_always_literal()
+    test_bracket_partial_fields_kept_if_any_value_present()
     test_validate_filename_stem_valid_name()
     test_validate_filename_stem_empty()
     test_validate_filename_stem_illegal_characters()

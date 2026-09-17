@@ -35,10 +35,60 @@ VALID_FIELD_KEYS = {key for key, _label in PLACEHOLDERS} | {"tags", "pub_year", 
 # which is ambiguous with a plain ".+?" match. Requiring the index to
 # actually look like a number resolves that ambiguity in the common case.
 _NUMERIC_FIELD_PATTERN = r"\d+(?:\.\d+)?"
-_NUMERIC_FIELDS = {"series_index", "year", "month", "day", "pub_year", "pub_month", "pub_day", "ddc"}
+_NUMERIC_FIELDS = {"series_index", "ddc"}
 _ISBN_FIELD_PATTERN = r"[\dXx\-]+"
 
+# A publication year is almost always 4 digits, occasionally 2 -- never
+# a decimal, never 1 or 3 digits. Tried longest-first (the regex engine
+# already prefers the first alternative that matches), so "2020" is
+# read as one 4-digit year rather than accidentally matching just "20".
+_YEAR_FIELD_PATTERN = r"\d{4}|\d{2}"
+_DAY_FIELD_PATTERN = r"\d{1,2}"
+
+# A month is either 1-2 digits or an English name/abbreviation -- e.g.
+# "Jan", "January", "jan.". Matched case-insensitively; parse_filename()
+# below normalizes whichever form matched to the same plain digit string
+# (no zero-padding -- "7", not "07", matching how pub_month is stored
+# elsewhere in this app; see MONTH_NAMES).
+MONTH_NAMES = {
+    "jan": "1", "january": "1",
+    "feb": "2", "february": "2",
+    "mar": "3", "march": "3",
+    "apr": "4", "april": "4",
+    "may": "5",
+    "jun": "6", "june": "6",
+    "jul": "7", "july": "7",
+    "aug": "8", "august": "8",
+    "sep": "9", "sept": "9", "september": "9",
+    "oct": "10", "october": "10",
+    "nov": "11", "november": "11",
+    "dec": "12", "december": "12",
+}
+_MONTH_NAME_ALTERNATION = "|".join(sorted(MONTH_NAMES, key=len, reverse=True))
+_MONTH_FIELD_PATTERN = rf"(?i:(?:\d{{1,2}}|{_MONTH_NAME_ALTERNATION})\.?)"
+
 _TOKEN_RE = re.compile(r"%(\w+)%")
+# A [...] segment (no nesting) containing at least one %field% token is
+# an OPTIONAL group when parsing too -- mirrors render_filename()'s own
+# _resolve_optional_brackets() in core/rename_pattern.py, so a filename
+# with no series section still matches the standard
+# "%authors% - [%series% %series_index%] - %title%" template. A bracket
+# segment with no field token inside is left as literal, required text.
+_BRACKET_RE = re.compile(r"\[([^\[\]]*)\]")
+
+
+def _field_regex(field: str) -> str:
+    if field in ("year", "pub_year"):
+        return _YEAR_FIELD_PATTERN
+    if field in ("month", "pub_month"):
+        return _MONTH_FIELD_PATTERN
+    if field in ("day", "pub_day"):
+        return _DAY_FIELD_PATTERN
+    if field in _NUMERIC_FIELDS:
+        return _NUMERIC_FIELD_PATTERN
+    if field == "isbn":
+        return _ISBN_FIELD_PATTERN
+    return ".+?"
 
 
 def _flexible_literal_regex(literal: str) -> str:
@@ -62,37 +112,94 @@ def _flexible_literal_regex(literal: str) -> str:
     return "".join(pieces)
 
 
-def build_parser_regex(pattern: str) -> re.Pattern:
-    """Compile a %field% pattern into a regex with one named group per
-    (first occurrence of a) valid field token. A field used a second time
-    in the same pattern, or an unrecognized %something%, is treated as
-    literal text to match rather than causing a crash."""
+def _compile_tokens(segment: str, seen_fields: set[str]) -> str:
+    """Compiles a pattern segment's plain %field% tokens and literal text
+    into a regex fragment -- shared by build_parser_regex() for the
+    top-level pattern and for the inside of an optional [...] group, so
+    a field inside brackets is compiled exactly the same way as one
+    outside them. `seen_fields` is shared across the whole pattern
+    (mutated in place), so a field used a second time anywhere -- inside
+    or outside brackets -- is still correctly treated as literal text to
+    match rather than a second capture group, same as always."""
     parts: list[str] = []
-    seen_fields: set[str] = set()
     last_end = 0
-
-    for m in _TOKEN_RE.finditer(pattern):
-        literal = pattern[last_end:m.start()]
+    for m in _TOKEN_RE.finditer(segment):
+        literal = segment[last_end:m.start()]
         if literal:
             parts.append(_flexible_literal_regex(literal))
 
         field = m.group(1)
         if field in VALID_FIELD_KEYS and field not in seen_fields:
-            if field in _NUMERIC_FIELDS:
-                parts.append(f"(?P<{field}>{_NUMERIC_FIELD_PATTERN})")
-            elif field == "isbn":
-                parts.append(f"(?P<{field}>{_ISBN_FIELD_PATTERN})")
-            else:
-                parts.append(f"(?P<{field}>.+?)")
+            parts.append(f"(?P<{field}>{_field_regex(field)})")
             seen_fields.add(field)
         else:
             parts.append(re.escape(m.group(0)))
 
         last_end = m.end()
 
-    trailing = pattern[last_end:]
+    trailing = segment[last_end:]
     if trailing:
         parts.append(_flexible_literal_regex(trailing))
+    return "".join(parts)
+
+
+# A run of punctuation/whitespace immediately after a bracket's closing
+# "]" -- stops at the first letter/digit/underscore or the start of the
+# next %field%/[ -- folded INTO the same optional group as the bracket
+# itself (see build_parser_regex()'s docstring for why).
+_TRAILING_SEPARATOR_RE = re.compile(r"[^%\[\w]*")
+
+
+def build_parser_regex(pattern: str) -> re.Pattern:
+    """Compile a %field% pattern into a regex with one named group per
+    (first occurrence of a) valid field token. A field used a second time
+    in the same pattern, or an unrecognized %something%, is treated as
+    literal text to match rather than causing a crash.
+
+    A [...] segment containing at least one %field% token compiles to an
+    OPTIONAL group (mirrors render_filename()'s own bracket handling in
+    core/rename_pattern.py) -- a filename with no series section still
+    matches "%authors% - [%series% %series_index%] - %title%". A bracket
+    segment with no field token inside compiles as ordinary, required
+    literal text instead.
+
+    The separator text immediately following the closing "]" (e.g. the
+    " - " between the bracket and %title%) is folded into the SAME
+    optional group as the bracket, rather than staying separately
+    required -- render_filename() collapses "Author -  - Title" (an
+    empty bracket leaves two adjacent separators) down to a single
+    "Author - Title", so the leading separator before the bracket
+    reads as the one connecting %authors% directly to %title% when
+    there's no series, and the trailing one only appears alongside the
+    bracket. Matching has to accept both actual shapes, not just the
+    one with a series."""
+    parts: list[str] = []
+    seen_fields: set[str] = set()
+    last_end = 0
+
+    for m in _BRACKET_RE.finditer(pattern):
+        literal_before = pattern[last_end:m.start()]
+        if literal_before:
+            parts.append(_compile_tokens(literal_before, seen_fields))
+
+        inner = m.group(1)
+        if _TOKEN_RE.search(inner):
+            after_start = m.end()
+            sep_match = _TRAILING_SEPARATOR_RE.match(pattern, after_start)
+            after_end = sep_match.end() if sep_match else after_start
+            trailing_literal = pattern[after_start:after_end]
+            group = r"\[" + _compile_tokens(inner, seen_fields) + r"\]"
+            if trailing_literal:
+                group += _compile_tokens(trailing_literal, seen_fields)
+            parts.append(f"(?:{group})?")
+            last_end = after_end
+        else:
+            parts.append(re.escape(m.group(0)))  # plain literal brackets, required as typed
+            last_end = m.end()
+
+    trailing = pattern[last_end:]
+    if trailing:
+        parts.append(_compile_tokens(trailing, seen_fields))
 
     return re.compile("^" + "".join(parts) + "$")
 
@@ -114,6 +221,19 @@ def _strip_series_index_leading_zeros(value: str) -> str:
     return value.lstrip("0") or "0"
 
 
+def _normalize_month(value: str) -> str:
+    """A month captured as a name ("Jan", "January") becomes its plain
+    digit string ("1"), unpadded, matching how pub_month is stored
+    everywhere else in this app. A digit month is returned unchanged --
+    a trailing "." (e.g. from "Jan." consuming the period as part of the
+    match) is stripped first either way, since it's not meaningful on a
+    digit value and would otherwise block the name lookup."""
+    v = value.strip().rstrip(".")
+    if not v:
+        return v
+    return MONTH_NAMES.get(v.lower(), v)
+
+
 def parse_filename(filename_stem: str, pattern: str) -> dict[str, str] | None:
     """Extract field values from a filename (without extension) using
     `pattern`. Returns None if the filename doesn't match the pattern's
@@ -125,6 +245,9 @@ def parse_filename(filename_stem: str, pattern: str) -> dict[str, str] | None:
     result = {key: (value or "").strip() for key, value in match.groupdict().items()}
     if "series_index" in result:
         result["series_index"] = _strip_series_index_leading_zeros(result["series_index"])
+    for key in ("month", "pub_month"):
+        if key in result:
+            result[key] = _normalize_month(result[key])
     return result
 
 

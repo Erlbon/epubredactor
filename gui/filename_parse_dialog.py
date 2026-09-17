@@ -7,6 +7,16 @@ from metadata, this extracts metadata FROM a filename using the same
 history with Rename/Export via gui/app_settings -- if you've already
 described your naming convention there, it's the natural pattern to
 parse back with too.
+
+Every candidate pattern -- your own history AND a handful of common
+built-in naming templates (core.rename_pattern.SUGGESTED_PATTERNS) -- is
+checked against the actual loaded filenames and offered ranked by how
+many it matches, best first. This replaced an earlier "detect the
+pattern from one already-correctly-tagged book" feature: in practice
+there's rarely a conveniently well-tagged book sitting in the very
+batch that needs fixing, so it added a manual step that usually had
+nothing to work with. Matching a batch of filenames against known-good
+templates needs nothing pre-existing to work from at all.
 """
 
 from __future__ import annotations
@@ -26,7 +36,6 @@ from PyQt6.QtWidgets import (
     QListWidget,
     QListWidgetItem,
     QMenu,
-    QMessageBox,
     QPushButton,
     QTableWidget,
     QTableWidgetItem,
@@ -34,13 +43,8 @@ from PyQt6.QtWidgets import (
 )
 
 from core.epub_metadata import EpubBook
-from core.filename_parser import (
-    best_matching_pattern,
-    count_matching_filenames,
-    parse_filename,
-    parsed_to_metadata_kwargs,
-)
-from core.rename_pattern import DEFAULT_PATTERN, PLACEHOLDERS, detect_pattern_from_metadata
+from core.filename_parser import count_matching_filenames, parse_filename, parsed_to_metadata_kwargs
+from core.rename_pattern import DEFAULT_PATTERN, PLACEHOLDERS, SUGGESTED_PATTERNS
 from gui import app_settings
 
 # Same narrow "▼" style used for every other field-side menu button in
@@ -73,23 +77,27 @@ class FilenameParseDialog(QDialog):
         outer.addLayout(layout, 2)
         layout.addWidget(QLabel(
             f"Applies to {len(self.books)} book(s). Only fields present in the pattern "
-            "are extracted and offered; everything else is left untouched. Right-click a "
-            "book below with already-correct metadata to detect its naming pattern."
+            "are extracted and offered; everything else is left untouched. Patterns below "
+            "are ranked by how many of these filenames they actually match, best first -- "
+            "including a few common naming templates tried automatically alongside your own "
+            "pattern history."
         ))
 
         pattern_row = QHBoxLayout()
         pattern_row.addWidget(QLabel("Pattern:"))
         # Rather than just reusing whatever pattern was used last (which
         # could easily be from a completely different batch of books),
-        # check every pattern in history against THESE filenames and
-        # start with whichever one actually fits best -- falling back to
-        # the last-used pattern only if nothing in history matches
-        # anything here. See _refresh_preview() for the "auto-detected"
-        # status message this produces on first load.
-        detected = best_matching_pattern(self._filename_stems, app_settings.load_pattern_history())
-        if detected:
-            starting_pattern = detected[0]
-            self._auto_detected_pattern = detected[0]
+        # check every candidate -- pattern history AND the built-in
+        # suggested templates -- against THESE filenames and start with
+        # whichever one actually fits best, falling back to the
+        # last-used pattern only if nothing matches anything here. See
+        # _refresh_preview() for the "auto-detected" status message this
+        # produces on first load.
+        scored_candidates = self._scored_candidates()
+        best = scored_candidates[0] if scored_candidates else None
+        if best and best[1] > 0:
+            starting_pattern = best[0]
+            self._auto_detected_pattern = best[0]
         else:
             starting_pattern = app_settings.load_last_pattern(DEFAULT_PATTERN)
             self._auto_detected_pattern = None
@@ -121,8 +129,6 @@ class FilenameParseDialog(QDialog):
         self.preview_table.setHorizontalHeaderLabels(["Book", "Extracted fields", "Apply"])
         self.preview_table.setEditTriggers(QAbstractItemView.EditTrigger.NoEditTriggers)
         self.preview_table.horizontalHeader().setSectionResizeMode(EXTRACTED_COL, QHeaderView.ResizeMode.Stretch)
-        self.preview_table.setContextMenuPolicy(Qt.ContextMenuPolicy.CustomContextMenu)
-        self.preview_table.customContextMenuRequested.connect(self._show_preview_context_menu)
         layout.addWidget(self.preview_table, 1)
 
         self.status_label = QLabel("")
@@ -168,7 +174,7 @@ class FilenameParseDialog(QDialog):
         than off to the side under the button, which meant a bigger jump
         for your eye to follow every time."""
         menu = QMenu(self)
-        for pattern, label in self._pattern_history_labels():
+        for pattern, label in self._candidate_pattern_labels():
             action = menu.addAction(label)
             if pattern is None:
                 action.setEnabled(False)
@@ -181,7 +187,7 @@ class FilenameParseDialog(QDialog):
         """Same content and ordering as the "▼" button's menu, just
         always visible instead of needing that button clicked first."""
         self.recent_list.clear()
-        for pattern, label in self._pattern_history_labels():
+        for pattern, label in self._candidate_pattern_labels():
             item = QListWidgetItem(label)
             if pattern is None:
                 item.setFlags(item.flags() & ~Qt.ItemFlag.ItemIsSelectable & ~Qt.ItemFlag.ItemIsEnabled)
@@ -189,20 +195,39 @@ class FilenameParseDialog(QDialog):
                 item.setData(Qt.ItemDataRole.UserRole, pattern)
             self.recent_list.addItem(item)
 
-    def _pattern_history_labels(self) -> list[tuple[str | None, str]]:
-        """(pattern, display label) pairs for every pattern in history,
-        each labeled with how many of the currently loaded filenames it
-        actually matches -- shared by the menu and the always-visible
-        list below the field, so both stay in sync automatically. A
-        pattern of None marks a disabled placeholder entry (shown when
-        there's no history yet), not a real, pickable pattern."""
+    def _scored_candidates(self) -> list[tuple[str, int, bool]]:
+        """(pattern, match_count, is_from_history) for every pattern
+        worth offering -- the user's own pattern history plus a handful
+        of common built-in naming templates (SUGGESTED_PATTERNS) not
+        already in that history -- each checked against the CURRENTLY
+        LOADED filenames and sorted by match count, best first. Ties
+        keep their original relative order (Python's sort is stable),
+        which is history before built-ins, and within each, the order
+        they were already in (most-recent-first for history) -- so a
+        built-in template only actually outranks something from history
+        when it genuinely fits these files better, not merely because
+        it's listed first."""
         history = app_settings.load_pattern_history()
-        if not history:
+        combined = [(p, True) for p in history] + [(p, False) for p in SUGGESTED_PATTERNS if p not in history]
+        scored = [
+            (pattern, count_matching_filenames(self._filename_stems, pattern), is_history)
+            for pattern, is_history in combined
+        ]
+        scored.sort(key=lambda t: t[1], reverse=True)
+        return scored
+
+    def _candidate_pattern_labels(self) -> list[tuple[str | None, str]]:
+        """(pattern, display label) pairs, ranked best-match-first -- see
+        _scored_candidates(). A pattern of None marks a disabled
+        placeholder entry (shown only when there's nothing to offer at
+        all), not a real, pickable pattern."""
+        scored = self._scored_candidates()
+        if not scored:
             return [(None, "(no recent patterns yet)")]
         labels = []
-        for pattern in history:
-            count = count_matching_filenames(self._filename_stems, pattern)
-            labels.append((pattern, f"{pattern}   \u2014   {count}/{len(self.books)} match"))
+        for pattern, count, is_history in scored:
+            suffix = "" if is_history else "  (built-in template)"
+            labels.append((pattern, f"{pattern}   \u2014   {count}/{len(self.books)} match{suffix}"))
         return labels
 
     def _on_recent_list_clicked(self, item: QListWidgetItem) -> None:
@@ -212,41 +237,6 @@ class FilenameParseDialog(QDialog):
 
     def _on_recent_picked(self, pattern: str) -> None:
         self.pattern_edit.setText(pattern)
-
-    def _show_preview_context_menu(self, pos) -> None:
-        row = self.preview_table.rowAt(pos.y())
-        if row < 0:
-            return
-        menu = QMenu(self)
-        action = menu.addAction("Detect Pattern from This Book's Current Metadata")
-        action.triggered.connect(lambda: self._detect_pattern_from_row(row))
-        menu.exec(self.preview_table.viewport().mapToGlobal(pos))
-
-    def _detect_pattern_from_row(self, row: int) -> None:
-        # Only makes sense for a book the user already knows/trusts has
-        # correct metadata -- it reverse-engineers the NAMING CONVENTION
-        # from the assumption the metadata is ground truth, so running it
-        # on a book with bad/incorrect metadata would just find
-        # coincidental or meaningless matches. That's a judgment call
-        # only the person can make (which is why this is a manual,
-        # per-book right-click action rather than something run
-        # automatically across every loaded book), so this deliberately
-        # doesn't try to guess which book is trustworthy on its own.
-        book = self.books[row]
-        stem = self._filename_stems[row]
-        detected = detect_pattern_from_metadata(book.metadata, stem)
-        if not detected:
-            QMessageBox.information(
-                self, "No Pattern Detected",
-                f'None of "{os.path.basename(book.path)}"\'s metadata field values were found '
-                "in its filename, so no pattern could be reconstructed from it.",
-            )
-            return
-        self.pattern_edit.setText(detected)
-        self._auto_detected_pattern = None  # this came from metadata, not pattern history -- don't relabel it as that
-        self.status_label.setText(
-            f'Pattern detected from "{os.path.basename(book.path)}"\'s current metadata: {detected}'
-        )
 
     def _refresh_preview(self) -> None:
         pattern = self.pattern_edit.text()
@@ -279,7 +269,7 @@ class FilenameParseDialog(QDialog):
         self.preview_table.resizeColumnsToContents()
         if self._auto_detected_pattern and pattern == self._auto_detected_pattern:
             self.status_label.setText(
-                f"Auto-detected from your pattern history: {matched_count} of {len(self.books)} "
+                f"Best-matching pattern selected automatically: {matched_count} of {len(self.books)} "
                 "filename(s) match this pattern."
             )
         else:
