@@ -4,6 +4,31 @@ All notable changes to The ƎPUB Redactor, by version. Trimmed to new
 functionality and real fixes — cosmetic/UX-only adjustments aren't
 listed here.
 
+## 2026-09-17#07
+
+- Fixed: several batch operations (Undo/Redo, Search/Replace, Number
+  Series, Rebuild Manifest, Repair Navigation, Validate/Fix Issues, Set
+  Blank/Unknown Language to Default, and more -- 14 places in total)
+  refreshed each affected book's row one at a time in a way that
+  re-scanned the *entire table* per book to find it, an O(n^2) cost for
+  any operation touching a large share of a large library. Fixed with a
+  proper bulk refresh that builds the row lookup once for the whole
+  batch. This was the real cause behind reports of the app freezing
+  during otherwise-ordinary batch edits on a large library.
+- Fixed: 9 dialogs (Strip HTML from Description, Case Conversion,
+  Author Sort Conversion, Compress Images, Rebuild Manifest, Detect
+  Missing Spaces, Repair Navigation, Validate/Fix Issues, Regenerate
+  Junk Covers) had no progress feedback at all while scanning a large
+  library -- the window could look frozen with no indication anything
+  was happening. All now show progress, consistent with the rest of
+  the app.
+- Fixed: identifying a book's cover as "Junk" re-hashed the full cover
+  image synchronously on the main thread, once per book, on every
+  table rebuild -- for a large library with real cover art, several
+  real seconds of hashing blocked the UI on every Save/Undo/Refresh.
+  Now computed off the main thread the same way cover icon decoding
+  already was (bumped `redactor_common` to `2026-09-17-02`).
+
 ## 2026-09-17#05
 
 - New **Repair → Strip HTML from Description**: converts a Description

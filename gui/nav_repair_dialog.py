@@ -30,6 +30,7 @@ from PyQt6.QtWidgets import (
 )
 
 from core.epub_metadata import EpubBook
+from redactor_common.gui.progress import run_with_progress
 
 BOOK_COL, ISSUES_COL, APPLY_COL = range(3)
 
@@ -83,12 +84,17 @@ class NavRepairDialog(QDialog):
     def _scan(self) -> None:
         self._issues = {}
         rows = []
-        for i, book in enumerate(self.books):
+
+        def _step(book: EpubBook, i: int) -> None:
             broken_guide = [href for _type, _title, href in book.find_broken_guide_references()]
             orphans = book.find_orphaned_files()
             if broken_guide or orphans:
                 self._issues[i] = (broken_guide, orphans)
                 rows.append(i)
+
+        run_with_progress(
+            self, self.books, _step, "Checking navigation…", cancellable=False, update_every=25,
+        )
 
         self.table.setRowCount(len(rows))
         for row, book_index in enumerate(rows):

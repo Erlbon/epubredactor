@@ -30,6 +30,7 @@ from PyQt6.QtWidgets import (
 )
 
 from core.epub_metadata import EpubBook
+from redactor_common.gui.progress import run_with_progress
 
 BOOK_COL, IMAGES_COL, APPLY_COL = range(3)
 
@@ -104,11 +105,16 @@ class CompressImagesDialog(QDialog):
     def _scan(self) -> None:
         self._images = {}
         rows = []
-        for i, book in enumerate(self.books):
+
+        def _step(book: EpubBook, i: int) -> None:
             images = book.find_compressible_images()
             if images:
                 self._images[i] = images
                 rows.append(i)
+
+        run_with_progress(
+            self, self.books, _step, "Scanning for images…", cancellable=False, update_every=25,
+        )
 
         self.table.setRowCount(len(rows))
         for row, book_index in enumerate(rows):

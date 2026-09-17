@@ -73,6 +73,7 @@ from redactor_common.core.save_errors import describe_save_error
 from redactor_common.core.undo import UndoManager
 from redactor_common.gui.action_factory import make_action
 from redactor_common.gui.progress import run_with_progress
+from redactor_common.gui.async_hash_cache import AsyncHashCache
 from redactor_common.gui.async_icon_cache import AsyncIconCache
 from redactor_common.gui.quick_series_number import prompt_and_generate_series_numbers
 from redactor_common.gui.menu_builder import MenuAction, MenuItems, Separator, Submenu, build_menu_bar
@@ -251,6 +252,20 @@ class MainWindow(QMainWindow):
         # right after loading, an O(n^2) cost that dominated "Updating
         # list" time for anything but a small library.
         self._filename_item_by_book: dict[EpubBook, QTableWidgetItem] = {}
+        self._cover_hash_cache = AsyncHashCache(parent=self)
+        self._cover_hash_cache.hash_ready.connect(self._on_cover_hash_ready)
+        # book -> its current JUNK_COVER_COL QTableWidgetItem -- same
+        # reasoning and same lifecycle as _filename_item_by_book above,
+        # for the same reason: computing a book's cover_hash (needed for
+        # the Junk Cover check) is real SHA-256 work over the full cover
+        # image, once per book, every table rebuild -- for a large
+        # library with real cover art that was several real seconds of
+        # synchronous hashing, found profiling a reported "Updating list
+        # is still slow" regression after the O(n^2) row-lookup fix
+        # above had already landed. AsyncHashCache moves the hash itself
+        # off the main thread the same way AsyncIconCache already does
+        # for cover decoding.
+        self._junk_cover_item_by_book: dict[EpubBook, QTableWidgetItem] = {}
         # Cached in memory rather than re-reading app_settings on every
         # row paint (_populate_row runs once per book, potentially
         # thousands of times per rebuild) -- reloaded from disk only when
@@ -1018,10 +1033,14 @@ class MainWindow(QMainWindow):
         full table rebuild, which would lose the current selection and
         sort order.
 
-        Guarded by _updating_table: without it, each item.setText() below
-        would itself fire _on_item_changed, which unconditionally pushes
-        to the undo stack -- turning one refresh into a cascade of bogus
-        undo entries for every field column."""
+        For refreshing MANY books at once, use _refresh_rows_full()
+        instead -- this re-derives its row via _find_row_for_book()'s
+        O(row count) scan on every call, which is fine for the
+        occasional single-book refresh this is designed for, but
+        becomes an O(n^2) cost called once per book in a loop over a
+        large batch (the exact shape of bug _on_cover_icon_ready() had
+        before it was fixed to use a cached book->item lookup instead --
+        found here the same way, profiling a reported freeze)."""
         row = self._find_row_for_book(book)
         if row is None:
             return
@@ -1029,6 +1048,39 @@ class MainWindow(QMainWindow):
         self._updating_table = True
         was_sorting = self.table.isSortingEnabled()
         self.table.setSortingEnabled(False)
+        self._refresh_row_cells(row, book)
+        self.table.setSortingEnabled(was_sorting)
+        self._updating_table = was_updating
+
+    def _refresh_rows_full(self, books: list[EpubBook]) -> None:
+        """Bulk version of _refresh_row_full(): refreshes every book in
+        `books`' row in O(len(books) + row count) total, by building the
+        book->row map ONCE via _rows_by_book() rather than paying
+        _find_row_for_book()'s O(row count) scan again for every single
+        book. Prefer this over a loop of _refresh_row_full() calls
+        whenever `books` could be a large batch (not just one or two) --
+        see its own docstring."""
+        if not books:
+            return
+        was_updating = self._updating_table
+        self._updating_table = True
+        was_sorting = self.table.isSortingEnabled()
+        self.table.setSortingEnabled(False)
+        rows_by_book = self._rows_by_book()
+        for book in books:
+            row = rows_by_book.get(book)
+            if row is not None:
+                self._refresh_row_cells(row, book)
+        self.table.setSortingEnabled(was_sorting)
+        self._updating_table = was_updating
+
+    def _refresh_row_cells(self, row: int, book: EpubBook) -> None:
+        """The actual per-row refresh logic shared by _refresh_row_full()
+        and _refresh_rows_full() -- assumes the caller already knows
+        `row` and has set up the _updating_table guard (without it, each
+        item.setText() below would itself fire _on_item_changed, which
+        unconditionally pushes to the undo stack -- turning one refresh
+        into a cascade of bogus undo entries for every field column)."""
         path_item = self.table.item(row, PATH_COL)
         if path_item is not None:
             path_item.setText(os.path.dirname(book.path))
@@ -1046,8 +1098,6 @@ class MainWindow(QMainWindow):
         self._update_status_cell(row, book)
         self._update_junk_cover_cell(row, book)
         self._set_row_dirty_style(row, book.dirty)
-        self.table.setSortingEnabled(was_sorting)
-        self._updating_table = was_updating
 
     # ------------------------------------------------------------------
     # Undo
@@ -1089,8 +1139,7 @@ class MainWindow(QMainWindow):
         affected = self.undo_manager.undo(self._restore_book, self._snapshot_book)
         if not affected:
             return
-        for book in affected:
-            self._refresh_row_full(book)
+        self._refresh_rows_full(affected)
         self._refresh_status()
         self._on_selection_changed()  # cover preview / bulk-edit fields may need refreshing
         self.undo_act.setEnabled(self.undo_manager.can_undo())
@@ -1100,8 +1149,7 @@ class MainWindow(QMainWindow):
         affected = self.undo_manager.redo(self._restore_book, self._snapshot_book)
         if not affected:
             return
-        for book in affected:
-            self._refresh_row_full(book)
+        self._refresh_rows_full(affected)
         self._refresh_status()
         self._on_selection_changed()
         self.undo_act.setEnabled(self.undo_manager.can_undo())
@@ -1299,6 +1347,7 @@ class MainWindow(QMainWindow):
         self.table.setSortingEnabled(False)  # avoid reorder-mid-populate
         self.table.setRowCount(len(self.books))
         self._filename_item_by_book = {}  # repopulated fresh below, in _populate_row()
+        self._junk_cover_item_by_book = {}  # ditto
 
         # A plain, uninterrupted loop here blocks the whole UI thread
         # until every row is built -- fine for a handful of books, but
@@ -1482,6 +1531,7 @@ class MainWindow(QMainWindow):
         junk_item = QTableWidgetItem("")
         junk_item.setFlags(junk_item.flags() & ~Qt.ItemFlag.ItemIsEditable)
         self.table.setItem(row, JUNK_COVER_COL, junk_item)
+        self._junk_cover_item_by_book[book] = junk_item
         self._update_junk_cover_cell(row, book)
 
         self._set_row_dirty_style(row, book.dirty)
@@ -1524,10 +1574,44 @@ class MainWindow(QMainWindow):
         return cover_hash is not None and cover_hash in self._junk_cover_hashes
 
     def _update_junk_cover_cell(self, row: int, book: EpubBook) -> None:
+        """Sets the Junk Cover cell from a cached hash if book's cover
+        hasn't changed since it was last hashed, or a neutral (not
+        flagged) state plus a background hash request otherwise -- see
+        redactor_common.gui.async_hash_cache's module docstring. The
+        real result for a genuine miss arrives later, via
+        _on_cover_hash_ready(), updating this cell alone. Mirrors
+        _apply_cover_icon()'s exact shape for the exact same reason:
+        SHA-256-hashing every book's full cover image synchronously,
+        once per book, on every table rebuild, is real, avoidable cost
+        for a large library."""
         item = self.table.item(row, JUNK_COVER_COL)
         if item is None:
             return
-        is_junk = self._book_is_junk_cover(book)
+        if not book.cover_bytes:
+            self._apply_junk_cover_style(item, False)
+            return
+        cached = self._cover_hash_cache.get_cached_hash(book, book.cover_bytes)
+        if cached is not None:
+            book.set_cached_cover_hash(book.cover_bytes, cached)  # keep EpubBook's own sync cache warm too
+            self._apply_junk_cover_style(item, cached in self._junk_cover_hashes)
+            return
+        self._apply_junk_cover_style(item, False)  # neutral until the background hash finishes
+        self._cover_hash_cache.request(book, book.cover_bytes, book.cover_bytes)
+
+    def _on_cover_hash_ready(self, book: EpubBook, digest: str) -> None:
+        """A background cover hash (queued by _update_junk_cover_cell's
+        cache-miss path) has finished. Sets ONLY this book's Junk Cover
+        cell, applied directly to the item captured in
+        _junk_cover_item_by_book at population time -- same reasoning
+        as _on_cover_icon_ready() for not re-deriving the row."""
+        if digest:
+            book.set_cached_cover_hash(book.cover_bytes, digest)
+        item = self._junk_cover_item_by_book.get(book)
+        if item is not None:
+            self._apply_junk_cover_style(item, bool(digest) and digest in self._junk_cover_hashes)
+
+    @staticmethod
+    def _apply_junk_cover_style(item: QTableWidgetItem, is_junk: bool) -> None:
         item.setText("Junk" if is_junk else "")
         if is_junk:
             item.setToolTip(
@@ -1743,8 +1827,7 @@ class MainWindow(QMainWindow):
             self._push_undo("Search & Replace", affected_books)
             for i, new_value in changes.items():
                 target_books[i].apply_metadata({field_key: new_value})
-            for book in affected_books:
-                self._refresh_row_full(book)
+            self._refresh_rows_full(affected_books)
             self._refresh_status()
             self._on_selection_changed()  # bulk-edit panel may be showing a field this just changed
 
@@ -1945,7 +2028,16 @@ class MainWindow(QMainWindow):
         preview/apply flow as Operations > Generate Cover from Metadata
         (gui/cover_generator_dialog.py), just pre-filtered to books
         currently flagged, rather than the current selection."""
-        target_books = [b for b in self.books if not b.load_error and self._book_is_junk_cover(b)]
+        target_books: list[EpubBook] = []
+
+        def _step(book: EpubBook, _index: int) -> None:
+            if not book.load_error and self._book_is_junk_cover(book):
+                target_books.append(book)
+
+        run_with_progress(
+            self, self.books, _step, "Checking flagged covers…",
+            cancellable=False, update_every=25,
+        )
         if not target_books:
             QMessageBox.information(
                 self, "No junk covers flagged",
@@ -2372,8 +2464,7 @@ class MainWindow(QMainWindow):
             target_books[row].apply_metadata(fields)
         for row, (image_bytes, mime) in cover_changes.items():
             target_books[row].set_cover(image_bytes, mime)
-        for book in affected_books:
-            self._refresh_row_full(book)
+        self._refresh_rows_full(affected_books)
 
         self._refresh_status()
         self._on_selection_changed()  # bulk-edit panel may be showing a field this just changed
@@ -2401,8 +2492,7 @@ class MainWindow(QMainWindow):
         pushed to Undo -- see EpubBook.apply_fixes for why."""
         dialog = ValidationDialog(books, self)
         dialog.exec()  # fixes (if any) are applied live inside the dialog
-        for book in books:
-            self._refresh_row_full(book)
+        self._refresh_rows_full(books)
         self._refresh_status()
         self._on_selection_changed()  # a language/id fix can affect a bulk-edit panel field
 
@@ -2430,8 +2520,7 @@ class MainWindow(QMainWindow):
         self._push_undo("Parse filename to metadata", affected_books)
         for i, field_values in changes.items():
             target_books[i].apply_metadata(field_values)
-        for book in affected_books:
-            self._refresh_row_full(book)
+        self._refresh_rows_full(affected_books)
         self._refresh_status()
         self._on_selection_changed()  # bulk-edit panel was showing stale data for these fields
 
@@ -2459,8 +2548,7 @@ class MainWindow(QMainWindow):
         self._push_undo("Scan content for metadata", affected_books)
         for i, field_values in changes.items():
             target_books[i].apply_metadata(field_values)
-        for book in affected_books:
-            self._refresh_row_full(book)
+        self._refresh_rows_full(affected_books)
         self._refresh_status()
         self._on_selection_changed()  # bulk-edit panel was showing stale data for these fields
         QMessageBox.information(
@@ -2501,8 +2589,7 @@ class MainWindow(QMainWindow):
         self._push_undo("Look up via Calibre", affected_books)
         for i, field_values in changes.items():
             target_books[i].apply_metadata(field_values)
-        for book in affected_books:
-            self._refresh_row_full(book)
+        self._refresh_rows_full(affected_books)
         self._refresh_status()
         self._on_selection_changed()  # bulk-edit panel was showing stale data for these fields
         QMessageBox.information(
@@ -2534,8 +2621,7 @@ class MainWindow(QMainWindow):
         self._push_undo("Case conversion", affected_books)
         for i, new_value in changes.items():
             target_books[i].apply_metadata({field_key: new_value})
-        for book in affected_books:
-            self._refresh_row_full(book)
+        self._refresh_rows_full(affected_books)
         self._refresh_status()
         self._on_selection_changed()  # bulk-edit panel may be showing the field this just changed
 
@@ -2563,8 +2649,7 @@ class MainWindow(QMainWindow):
         self._push_undo("Strip HTML from Description", affected_books)
         for i, new_value in changes.items():
             target_books[i].apply_metadata({"description": new_value})
-        for book in affected_books:
-            self._refresh_row_full(book)
+        self._refresh_rows_full(affected_books)
         self._refresh_status()
         self._on_selection_changed()
 
@@ -2593,8 +2678,7 @@ class MainWindow(QMainWindow):
         self._push_undo("Author Sort conversion", affected_books)
         for i, new_value in changes.items():
             target_books[i].apply_metadata({field_key: new_value})
-        for book in affected_books:
-            self._refresh_row_full(book)
+        self._refresh_rows_full(affected_books)
         self._refresh_status()
         self._on_selection_changed()  # bulk-edit panel may be showing the field this just changed
 
@@ -2627,7 +2711,7 @@ class MainWindow(QMainWindow):
         total_removed = 0
         for book in affected_books:
             total_removed += len(book.rebuild_manifest())
-            self._refresh_row_full(book)
+        self._refresh_rows_full(affected_books)
         self._refresh_status()
         self._on_selection_changed()
         QMessageBox.information(
@@ -2686,8 +2770,7 @@ class MainWindow(QMainWindow):
             self, affected_books, _step, "Compressing images…",
             threshold=1, label_for=lambda book: f"Compressing: {os.path.basename(book.path)}",
         )
-        for book in affected_books:
-            self._refresh_row_full(book)
+        self._refresh_rows_full(affected_books)
         self._refresh_status()
         self._on_selection_changed()
 
@@ -2729,12 +2812,19 @@ class MainWindow(QMainWindow):
         # Undo, same convention as Rebuild Manifest. The dialog's own
         # upfront listing is the safeguard instead.
         affected_books = [dialog.books[i] for i in indices]
-        total_guide_refs = 0
-        total_orphans = 0
-        for book in affected_books:
-            total_guide_refs += len(book.repair_guide_references())
-            total_orphans += len(book.remove_orphaned_files())
-            self._refresh_row_full(book)
+        totals = {"guide_refs": 0, "orphans": 0}
+
+        def _step(book: EpubBook, _index: int) -> None:
+            totals["guide_refs"] += len(book.repair_guide_references())
+            totals["orphans"] += len(book.remove_orphaned_files())
+
+        run_with_progress(
+            self, affected_books, _step, "Repairing navigation…",
+            cancellable=False, update_every=25,
+        )
+        total_guide_refs = totals["guide_refs"]
+        total_orphans = totals["orphans"]
+        self._refresh_rows_full(affected_books)
         self._refresh_status()
         self._on_selection_changed()
         QMessageBox.information(
@@ -2768,8 +2858,7 @@ class MainWindow(QMainWindow):
         self._push_undo("Detect Missing Spaces", affected_books)
         for book, field_key, new_value in changes:
             book.apply_metadata({field_key: new_value})
-        for book in affected_books:
-            self._refresh_row_full(book)
+        self._refresh_rows_full(affected_books)
         self._refresh_status()
         self._on_selection_changed()
 
@@ -2812,9 +2901,16 @@ class MainWindow(QMainWindow):
             return
 
         code = app_settings.load_blank_language_default_code()
-        affected_books = [
-            b for b in target_books if is_blank_or_unknown_language(b.metadata.language)
-        ]
+        affected_books: list[EpubBook] = []
+
+        def _scan_step(book: EpubBook, _index: int) -> None:
+            if is_blank_or_unknown_language(book.metadata.language):
+                affected_books.append(book)
+
+        run_with_progress(
+            self, target_books, _scan_step, "Checking languages…",
+            cancellable=False, update_every=25,
+        )
         if not affected_books:
             QMessageBox.information(
                 self, "Nothing to Do",
@@ -2825,8 +2921,7 @@ class MainWindow(QMainWindow):
         self._push_undo("Set default language", affected_books)
         for book in affected_books:
             book.apply_metadata({"language": code})
-        for book in affected_books:
-            self._refresh_row_full(book)
+        self._refresh_rows_full(affected_books)
         self._refresh_status()
         self._on_selection_changed()
         QMessageBox.information(
@@ -2865,8 +2960,7 @@ class MainWindow(QMainWindow):
         self._push_undo("Number series", target_books)
         for i, new_value in values.items():
             target_books[i].apply_metadata({"series_index": new_value})
-        for book in target_books:
-            self._refresh_row_full(book)
+        self._refresh_rows_full(target_books)
         self._refresh_status()
         self._on_selection_changed()  # bulk-edit panel may be showing the Series # field
 
@@ -2890,8 +2984,7 @@ class MainWindow(QMainWindow):
         self._push_undo("Number series", target_books)
         for book, new_value in zip(target_books, values):
             book.apply_metadata({"series_index": new_value})
-        for book in target_books:
-            self._refresh_row_full(book)
+        self._refresh_rows_full(target_books)
         self._refresh_status()
         self._on_selection_changed()  # bulk-edit panel may be showing the Series # field
 
@@ -3004,8 +3097,7 @@ class MainWindow(QMainWindow):
             target_books[row].apply_metadata(fields)
         for row, (image_bytes, mime) in cover_changes.items():
             target_books[row].set_cover(image_bytes, mime)
-        for book in affected_books:
-            self._refresh_row_full(book)
+        self._refresh_rows_full(affected_books)
 
         self._refresh_status()
         self._on_selection_changed()  # bulk-edit panel may be showing a field this just changed

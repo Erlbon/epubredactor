@@ -27,6 +27,7 @@ from PyQt6.QtWidgets import (
 from core.case_conversion import CASE_CONVERSIONS, apply_case_conversion
 from core.epub_metadata import EpubBook
 from core.fields import FIELDS
+from redactor_common.gui.progress import run_with_progress
 
 BOOK_COL, OLD_COL, NEW_COL, APPLY_COL = range(4)
 
@@ -92,13 +93,18 @@ class CaseConversionDialog(QDialog):
         self._new_values = {}
 
         rows_to_show: list[tuple[int, str, str]] = []
-        for i, book in enumerate(self.books):
+
+        def _step(book: EpubBook, i: int) -> None:
             if book.load_error:
-                continue
+                return
             old_value = getattr(book.metadata, field_key, "") or ""
             new_value = apply_case_conversion(old_value, mode)
             if new_value != old_value:
                 rows_to_show.append((i, old_value, new_value))
+
+        run_with_progress(
+            self, self.books, _step, "Scanning…", cancellable=False, update_every=25,
+        )
 
         self.table.setRowCount(len(rows_to_show))
         for row, (book_index, old_value, new_value) in enumerate(rows_to_show):

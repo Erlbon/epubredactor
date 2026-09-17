@@ -29,6 +29,7 @@ from PyQt6.QtWidgets import (
 )
 
 from core.epub_metadata import EpubBook
+from redactor_common.gui.progress import run_with_progress
 
 BOOK_COL, MISSING_COL, APPLY_COL = range(3)
 
@@ -81,11 +82,16 @@ class ManifestRebuildDialog(QDialog):
     def _scan(self) -> None:
         self._missing = {}
         rows = []
-        for i, book in enumerate(self.books):
+
+        def _step(book: EpubBook, i: int) -> None:
             missing = book.find_missing_manifest_files()
             if missing:
                 self._missing[i] = missing
                 rows.append(i)
+
+        run_with_progress(
+            self, self.books, _step, "Checking manifests…", cancellable=False, update_every=25,
+        )
 
         self.table.setRowCount(len(rows))
         for row, book_index in enumerate(rows):

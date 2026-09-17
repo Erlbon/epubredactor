@@ -165,6 +165,48 @@ def test_wrap_mode_still_shows_raw_multiline_text():
     print("PASS: Wrap Text mode still shows the description's real newlines, unmodified")
 
 
+def test_refresh_rows_full_is_efficient_for_a_large_batch():
+    # Real bug, found profiling a reported "freezing while adding
+    # languages" complaint: several batch-apply handlers refreshed each
+    # affected book's row via a per-book loop of _refresh_row_full(),
+    # which internally re-derives its row via _find_row_for_book()'s
+    # O(row count) scan on EVERY call -- O(n^2) overall for a large
+    # batch, the exact same shape of bug _on_cover_icon_ready() had
+    # before it was fixed earlier. _refresh_rows_full() must build the
+    # book->row map via _rows_by_book() exactly ONCE for the whole
+    # batch, not call _find_row_for_book() at all.
+    window = MainWindow()
+    books = [_fake_book(f"/x/book{i}.epub", title=f"Book {i}") for i in range(200)]
+    window.books = books
+    window._rebuild_table()
+
+    rows_by_book_calls = {"n": 0}
+    find_row_calls = {"n": 0}
+    orig_rows_by_book = window._rows_by_book
+    orig_find_row = window._find_row_for_book
+
+    def counting_rows_by_book():
+        rows_by_book_calls["n"] += 1
+        return orig_rows_by_book()
+
+    def counting_find_row(book):
+        find_row_calls["n"] += 1
+        return orig_find_row(book)
+
+    window._rows_by_book = counting_rows_by_book
+    window._find_row_for_book = counting_find_row
+    try:
+        window._refresh_rows_full(books)
+    finally:
+        window._rows_by_book = orig_rows_by_book
+        window._find_row_for_book = orig_find_row
+
+    assert rows_by_book_calls["n"] == 1, rows_by_book_calls["n"]
+    assert find_row_calls["n"] == 0, find_row_calls["n"]
+    print("PASS: _refresh_rows_full() builds the row map exactly once for the whole "
+          "batch, never calling the O(row count) per-book lookup")
+
+
 if __name__ == "__main__":
     test_field_display_text_collapses_whitespace_for_multiline_in_non_wrap_modes()
     test_field_display_text_preserves_newlines_in_wrap_mode()
@@ -174,4 +216,5 @@ if __name__ == "__main__":
     test_switching_modes_round_trips_the_description_cell()
     test_switching_modes_never_mutates_metadata_or_pushes_undo()
     test_wrap_mode_still_shows_raw_multiline_text()
+    test_refresh_rows_full_is_efficient_for_a_large_batch()
     print("\nALL MAIN WINDOW TABLE TESTS PASSED")

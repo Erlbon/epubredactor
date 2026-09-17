@@ -28,6 +28,7 @@ from PyQt6.QtWidgets import (
 
 from core.description_html import strip_html
 from core.epub_metadata import EpubBook
+from redactor_common.gui.progress import run_with_progress
 
 BOOK_COL, OLD_COL, NEW_COL, APPLY_COL = range(4)
 
@@ -78,13 +79,19 @@ class StripDescriptionHtmlDialog(QDialog):
         self._new_values = {}
 
         rows_to_show: list[tuple[int, str, str]] = []
-        for i, book in enumerate(self.books):
+
+        def _step(book: EpubBook, i: int) -> None:
             if book.load_error:
-                continue
+                return
             old_value = book.metadata.description or ""
             new_value = strip_html(old_value)
             if new_value != old_value:
                 rows_to_show.append((i, old_value, new_value))
+
+        run_with_progress(
+            self, self.books, _step, "Scanning descriptions…",
+            cancellable=False, update_every=25,
+        )
 
         self.table.setRowCount(len(rows_to_show))
         for row, (book_index, old_value, new_value) in enumerate(rows_to_show):

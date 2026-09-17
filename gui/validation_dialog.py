@@ -30,6 +30,7 @@ from PyQt6.QtWidgets import (
 )
 
 from core.epub_metadata import EpubBook
+from redactor_common.gui.progress import run_with_progress
 
 STATUS_COLORS = {
     "OK": None,
@@ -80,7 +81,8 @@ class ValidationDialog(QDialog):
     def _refresh_table(self) -> None:
         self.table.setRowCount(len(self.books))
         self._checkboxes = {}
-        for row, book in enumerate(self.books):
+
+        def _step(book: EpubBook, row: int) -> None:
             self.table.setItem(row, BOOK_COL, self._readonly_item(os.path.basename(book.path)))
 
             status_item = self._readonly_item(book.validation_status)
@@ -101,6 +103,9 @@ class ValidationDialog(QDialog):
             self._checkboxes[row] = cb
             self.table.setCellWidget(row, FIX_COL, cb)
 
+        run_with_progress(
+            self, self.books, _step, "Updating list…", cancellable=False, update_every=25,
+        )
         self.table.resizeColumnsToContents()
         total_fixable = sum(1 for b in self.books if any(i.fixable for i in b.validation_issues))
         self.status_label.setText(f"{total_fixable} of {len(self.books)} book(s) have at least one fixable issue.")
@@ -113,12 +118,18 @@ class ValidationDialog(QDialog):
 
     def _apply_fixes(self) -> None:
         fixed_count = 0
-        for row, book in enumerate(self.books):
+
+        def _step(book: EpubBook, row: int) -> None:
+            nonlocal fixed_count
             cb = self._checkboxes.get(row)
             if cb is not None and cb.isChecked() and cb.isEnabled():
                 fixed = book.apply_fixes()
                 if fixed:
                     fixed_count += 1
+
+        run_with_progress(
+            self, self.books, _step, "Applying fixes…", cancellable=False, update_every=25,
+        )
         self._refresh_table()
         if fixed_count:
             self.status_label.setText(f"Applied fixes to {fixed_count} book(s). Remember to Save.")

@@ -531,6 +531,14 @@ class EpubBook:
         self._cover_hash_cache = (self.cover_bytes, digest)
         return digest
 
+    def set_cached_cover_hash(self, cover_bytes: bytes, digest: str) -> None:
+        """Primes cover_hash's own cache with an already-computed digest
+        -- used when the hash was computed elsewhere (e.g. off the main
+        thread, see gui/main_window.py's AsyncHashCache usage) instead
+        of via the cover_hash property itself, so a later synchronous
+        access doesn't redundantly re-hash the same bytes."""
+        self._cover_hash_cache = (cover_bytes, digest)
+
     # ------------------------------------------------------------------
     # Validation
     # ------------------------------------------------------------------

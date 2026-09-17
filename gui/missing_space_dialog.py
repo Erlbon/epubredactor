@@ -32,6 +32,7 @@ from PyQt6.QtWidgets import (
 
 from core.epub_metadata import EpubBook
 from core.missing_space import find_missing_spaces, suggest_fix
+from redactor_common.gui.progress import run_with_progress
 
 SCANNED_FIELDS = [("title", "Title"), ("series", "Series")]
 BOOK_COL, FIELD_COL, CURRENT_COL, SUGGESTED_COL, APPLY_COL = range(5)
@@ -88,12 +89,16 @@ class MissingSpaceDialog(QDialog):
         self._rows = {}
         found_rows = []
 
-        for book in self.books:
+        def _step(book: EpubBook, _i: int) -> None:
             for field_key, _label in SCANNED_FIELDS:
                 current = getattr(book.metadata, field_key, "") or ""
                 if find_missing_spaces(current):
                     suggested = suggest_fix(current)
                     found_rows.append((book, field_key, current, suggested))
+
+        run_with_progress(
+            self, self.books, _step, "Scanning…", cancellable=False, update_every=25,
+        )
 
         self.table.setRowCount(len(found_rows))
         for row, (book, field_key, current, suggested) in enumerate(found_rows):
