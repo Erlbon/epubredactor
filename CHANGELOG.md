@@ -4,6 +4,26 @@ All notable changes to The ƎPUB Redactor, by version. Trimmed to new
 functionality and real fixes — cosmetic/UX-only adjustments aren't
 listed here.
 
+## 2026-09-17#01
+
+- Fixed: a table row's height could go out of sync with its wrapped
+  text after resizing a column (text overlapping or getting clipped) --
+  row heights are now re-measured after every column resize. Added a
+  **Settings -> Text Wrapping** menu to choose how an over-long cell
+  value is shown: **Wrap Text** (grow the row, the previous behavior,
+  now actually working correctly), **Truncate with "..."**, or **Clip,
+  No "..."** (both keep every row a fixed single-line height instead).
+  Remembered across sessions.
+- Rename/Export: `%authors%` now joins multiple authors with `" & "`
+  in the rendered filename (`Author A & Author B`) instead of the
+  Authors field's own `"; "` separator, which read as a stray mid-
+  filename character.
+- New: **Import Metadata from Filename** can now detect the `%pattern%`
+  for you -- right-click a book whose metadata is already correct and
+  choose "Detect Pattern from This Book's Current Metadata" to
+  reverse-engineer the naming convention from it, instead of typing the
+  pattern out by hand.
+
 ## 2026-09-14#05
 
 - New **per-field overwrite review** for Look Up via Calibre, Import
