@@ -4,6 +4,28 @@ All notable changes to The ƎPUB Redactor, by version. Trimmed to new
 functionality and real fixes — cosmetic/UX-only adjustments aren't
 listed here.
 
+## 2026-09-17#09
+
+- Fixed: on a real ~15,000-book library, updating the list after
+  loading/filtering/editing could take minutes, dominated almost
+  entirely by decoding every single book's cover image into an icon on
+  every rebuild, whether or not that row was ever actually scrolled
+  into view. Two fixes, applied together:
+  - `redactor_common` now decodes covers via `QImageReader` with the
+    scaled size set up front, letting the image format's own decoder
+    downscale while decoding instead of decoding at full resolution
+    and scaling afterwards -- measured 2.67x faster per cover (bumped
+    to `2026-09-17-03`).
+  - The list now only decodes icons for rows actually visible (plus a
+    small buffer), loading more lazily as you scroll, sort, or filter.
+    Every other row shows its real icon the moment it comes into view.
+  Measured on a real 15,462-book library with real cover art: table
+  rebuild time dropped from ~126s to ~2.6s.
+  (Note for anyone tempted to "fix" this with more worker threads:
+  measured directly, PyQt6's image decoding does not release Python's
+  GIL, so `QThreadPool` worker threads add no real throughput here --
+  seven extra threads decoding covers measured within 4% of one.)
+
 ## 2026-09-17#08
 
 - New **Settings → Enable Performance Logging**: writes a timing

@@ -37,7 +37,7 @@ import sys
 import traceback
 import webbrowser
 
-from PyQt6.QtCore import QSize, Qt, QTimer
+from PyQt6.QtCore import QSize, Qt, QTimer, pyqtSignal
 from PyQt6.QtGui import QActionGroup, QColor, QGuiApplication, QIcon, QKeySequence
 from PyQt6.QtWidgets import (
     QAbstractItemView,
@@ -197,7 +197,20 @@ class BookTableWidget(QTableWidget):
     to Qt's own defaults: plain arrow keys (already move the current
     cell), and editing behavior (double-click or F2 to start, which
     still auto-commits via the standard delegate when the current cell
-    changes)."""
+    changes).
+
+    Also emits viewportResized whenever the widget's own size changes
+    (window resize, splitter drag, tag panel collapse/expand) -- lets
+    MainWindow re-check which rows are newly visible for lazy cover
+    icon loading (see _request_icons_for_visible_rows) without needing
+    to override resizeEvent itself, or having every resize path
+    remember to call something."""
+
+    viewportResized = pyqtSignal()
+
+    def resizeEvent(self, event) -> None:
+        super().resizeEvent(event)
+        self.viewportResized.emit()
 
     def keyPressEvent(self, event) -> None:
         key = event.key()
@@ -418,6 +431,23 @@ class MainWindow(QMainWindow):
         self.table.setSelectionMode(QAbstractItemView.SelectionMode.ExtendedSelection)
         self.table.setIconSize(COVER_ICON_SIZE)
         self.table.setSortingEnabled(True)  # click a header to sort by that column
+
+        # Lazy cover-icon loading: _populate_row() only ever shows an
+        # ALREADY-cached icon (see _apply_cached_cover_icon_only) and
+        # never queues a decode itself -- for a large library, decoding
+        # (or even just queueing a decode for) every book's cover
+        # up front is real, avoidable work for the thousands of rows
+        # never actually scrolled to. Instead, this timer -- restarted
+        # (debounced) by scrolling, resizing, or re-sorting the table --
+        # requests icons only for whatever's currently visible, plus a
+        # small buffer. See _request_icons_for_visible_rows().
+        self._icon_visibility_timer = QTimer(self)
+        self._icon_visibility_timer.setSingleShot(True)
+        self._icon_visibility_timer.timeout.connect(self._request_icons_for_visible_rows)
+        self.table.viewportResized.connect(self._schedule_icon_visibility_check)
+        self.table.verticalScrollBar().valueChanged.connect(self._schedule_icon_visibility_check)
+        self.table.horizontalHeader().sortIndicatorChanged.connect(self._schedule_icon_visibility_check)
+
         self._apply_text_overflow_mode(self._text_overflow_mode)
         # Strong, theme-independent selection/current-cell indicators --
         # otherwise the default look can blend into our own custom row
@@ -1411,6 +1441,12 @@ class MainWindow(QMainWindow):
         if previously_selected:
             self._select_books(previously_selected)
 
+        # Load icons for whatever ended up visible after the above
+        # (selection-restore can scroll the view) -- immediately, not
+        # via the debounce timer, so the table doesn't sit with blank
+        # icons for 150ms right after a rebuild finishes.
+        self._request_icons_for_visible_rows()
+
     def _on_column_resized(self, _logical_index, _old_size, _new_size) -> None:
         if self._updating_table:
             # The one-time auto-fit (resizeColumnsToContents(), right
@@ -1541,8 +1577,8 @@ class MainWindow(QMainWindow):
             self._filename_item_by_book[book] = name_item
             self.table.setItem(row, FILENAME_COL, name_item)
 
-        with accum.section("cover icon (_apply_cover_icon)"):
-            self._apply_cover_icon(name_item, book)
+        with accum.section("cover icon (_apply_cached_cover_icon_only)"):
+            self._apply_cached_cover_icon_only(name_item, book)
 
         with accum.section("status cell"):
             status_item = QTableWidgetItem(book.validation_status)
@@ -1632,13 +1668,15 @@ class MainWindow(QMainWindow):
         if not book.cover_bytes:
             self._apply_junk_cover_style(item, False)
             return
-        cached = self._cover_hash_cache.get_cached_hash(book, book.cover_bytes)
+        with self._perf_accum.section("  junk cover: get_cached_hash"):
+            cached = self._cover_hash_cache.get_cached_hash(book, book.cover_bytes)
         if cached is not None:
             book.set_cached_cover_hash(book.cover_bytes, cached)  # keep EpubBook's own sync cache warm too
             self._apply_junk_cover_style(item, cached in self._junk_cover_hashes)
             return
         self._apply_junk_cover_style(item, False)  # neutral until the background hash finishes
-        self._cover_hash_cache.request(book, book.cover_bytes, book.cover_bytes)
+        with self._perf_accum.section("  junk cover: request (queue hash)"):
+            self._cover_hash_cache.request(book, book.cover_bytes, book.cover_bytes)
 
     def _on_cover_hash_ready(self, book: EpubBook, digest: str) -> None:
         """A background cover hash (queued by _update_junk_cover_cell's
@@ -1729,6 +1767,24 @@ class MainWindow(QMainWindow):
         if len(selected) == 1:
             self.rename_single_file(selected[0])
 
+    def _apply_cached_cover_icon_only(self, item: QTableWidgetItem, book: EpubBook) -> None:
+        """Sets item's icon from cache if already decoded, or a blank
+        placeholder otherwise -- but, unlike _apply_cover_icon() below,
+        never itself queues a decode for a cache miss. Used by
+        _populate_row(), so a table rebuild never eagerly decodes
+        (or even just queues a decode for) every book's cover -- for a
+        large library, only a small fraction of rows are ever actually
+        scrolled to, so that was real, mostly-wasted work. See
+        _request_icons_for_visible_rows(), which calls the real
+        _apply_cover_icon() below, only for whatever's currently
+        visible."""
+        if not book.cover_bytes:
+            item.setIcon(QIcon())
+            return
+        with self._perf_accum.section("  cover icon: get_cached_icon"):
+            cached = self._cover_icon_cache.get_cached_icon(book, book.cover_bytes)
+        item.setIcon(cached if cached is not None else QIcon())
+
     def _apply_cover_icon(self, item: QTableWidgetItem, book: EpubBook) -> None:
         """Sets item's icon from book.cover_bytes -- from cache if
         book's cover hasn't changed since it was last computed
@@ -1739,16 +1795,70 @@ class MainWindow(QMainWindow):
         plus a background decode request otherwise -- see
         redactor_common.gui.async_icon_cache's module docstring. The
         real icon for a genuine miss arrives later, via
-        _on_cover_icon_ready(), updating this cell alone."""
+        _on_cover_icon_ready(), updating this cell alone. Only called
+        for rows _request_icons_for_visible_rows() has determined are
+        actually visible -- see _apply_cached_cover_icon_only() above
+        for the (never-decode-queueing) version _populate_row() uses
+        for every row regardless of visibility."""
         if not book.cover_bytes:
             item.setIcon(QIcon())
             return
-        cached = self._cover_icon_cache.get_cached_icon(book, book.cover_bytes)
+        with self._perf_accum.section("  cover icon: get_cached_icon"):
+            cached = self._cover_icon_cache.get_cached_icon(book, book.cover_bytes)
         if cached is not None:
             item.setIcon(cached)
             return
         item.setIcon(QIcon())
-        self._cover_icon_cache.request(book, book.cover_bytes, book.cover_bytes)
+        with self._perf_accum.section("  cover icon: request (queue decode)"):
+            self._cover_icon_cache.request(book, book.cover_bytes, book.cover_bytes)
+
+    def _schedule_icon_visibility_check(self, *_args) -> None:
+        """Restarts the debounce timer for _request_icons_for_visible_rows()
+        -- connected to scrolling, resizing, and re-sorting the table,
+        all of which fire many times in quick succession (e.g. every
+        pixel of a scroll-wheel tick), so this only actually runs once
+        that's settled for a moment. `*_args` absorbs whichever signal
+        arguments the caller happens to pass (row/column/order for
+        sortIndicatorChanged, a plain scrollbar value for valueChanged,
+        nothing for viewportResized) -- none of them matter here, the
+        handler always just re-checks the CURRENT visible range fresh."""
+        self._icon_visibility_timer.start(150)
+
+    def _request_icons_for_visible_rows(self) -> None:
+        """Queues a real icon decode (see _apply_cover_icon) only for
+        the rows currently visible in the table's viewport, plus a
+        small buffer above/below so a modest scroll doesn't show blank
+        icons for a moment. This is the actual lazy-loading mechanism:
+        a huge library's "Updating list" cost used to include decoding
+        every single book's cover up front, dominating the whole
+        operation, when a user can only ever look at a couple dozen
+        rows at a time regardless of library size. Safe to call
+        repeatedly for the same rows -- a book whose icon is already
+        cached just gets that same icon re-applied (cheap); one still
+        mid-decode gets a harmless duplicate request at worst, since
+        AsyncIconCache has no separate "already in flight" tracking of
+        its own, but the 150ms debounce keeps that rare in practice."""
+        if self.table.rowCount() == 0:
+            return
+        viewport_height = self.table.viewport().height()
+        first_row = self.table.rowAt(0)
+        last_row = self.table.rowAt(max(0, viewport_height - 1))
+        if first_row == -1:
+            first_row = 0
+        if last_row == -1:
+            last_row = self.table.rowCount() - 1
+        buffer_rows = 15
+        first_row = max(0, first_row - buffer_rows)
+        last_row = min(self.table.rowCount() - 1, last_row + buffer_rows)
+        for row in range(first_row, last_row + 1):
+            if self.table.isRowHidden(row):
+                continue
+            book = self._book_for_row(row)
+            if book is None or book.load_error:
+                continue
+            item = self.table.item(row, FILENAME_COL)
+            if item is not None:
+                self._apply_cover_icon(item, book)
 
     def _on_cover_icon_ready(self, book: EpubBook, icon: QIcon) -> None:
         """A background cover decode (queued by _apply_cover_icon's
@@ -3321,6 +3431,7 @@ class MainWindow(QMainWindow):
                 continue
             haystack = f"{os.path.basename(book.path)} {book.metadata.title}".lower()
             self.table.setRowHidden(row, text not in haystack)
+        self._schedule_icon_visibility_check()  # filtering changes which rows are actually visible
 
     def _count_dirty(self) -> int:
         return sum(1 for b in self.books if b.dirty)

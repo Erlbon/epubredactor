@@ -10,3 +10,4 @@ dist/
 # unhandled exception -- per-machine, not something to ship in the repo.
 epubredactor_settings.ini
 epubredactor_crash.log
+epubredactor_perf.log
