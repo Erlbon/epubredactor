@@ -4,6 +4,35 @@ All notable changes to The ƎPUB Redactor, by version. Trimmed to new
 functionality and real fixes — cosmetic/UX-only adjustments aren't
 listed here.
 
+## 2026-09-17#02
+
+- New **Repair** menu, split out of Operations: Validate/Fix Issues,
+  Rebuild Manifest, and Detect Missing Spaces moved here, alongside two
+  new actions below.
+- New **Repair Navigation**: removes broken EPUB2 `<guide>` references
+  and archive files present but referenced by no manifest item
+  ("orphaned" files). Doesn't touch NCX/NAV document content itself
+  (duplicate TOC entries, duplicate element ids, cross-document
+  fragment links) -- a separate, larger undertaking for later.
+- New **Set Blank/Unknown Language to Default**: fills in a chosen
+  language for every book in the working set with no language set (or
+  a placeholder like "unknown") -- applies immediately, no per-book
+  review. **Settings → Blank Language Default** controls the target
+  language and can disable the action outright.
+- Fixed: saving no longer silently drops a book's author role
+  information -- every author is now written with `opf:role="aut"`.
+- New **Operations → Compress Images (Lossy)**: re-encodes JPEG
+  images at a chosen quality to shrink the archive, at a real quality
+  cost -- separate from Polish Book's existing lossless compression.
+- Fixed: opening a large library could be noticeably slower than it
+  needed to be on a fresh install (no saved column widths yet) -- a
+  debounced row-height reflow (see 2026-09-17#01) was firing during the
+  table's own one-time column auto-fit after loading, adding an
+  unnecessary full-table re-measure pass right when it mattered most.
+- `build_exe.bat` no longer waits for a keypress after a successful
+  build (error paths still do, so a double-clicked build's error stays
+  visible).
+
 ## 2026-09-17#01
 
 - Fixed: a table row's height could go out of sync with its wrapped
