@@ -50,12 +50,17 @@ _NUMERIC_FIELD_PATTERN = r"\d+(?:\.\d+)?"
 _NUMERIC_FIELDS = {"ddc"}
 _ISBN_FIELD_PATTERN = r"[\dXx\-]+"
 
-# A series index is almost always a small number, 0-999 -- 1-3 digits,
-# optionally with a decimal sub-index ("5.5" for a novella between two
-# main entries). Bounded to 3 digits specifically so it can never be
-# confused with a 4-digit year -- a bare number in a filename can be
-# told apart by shape alone: 4 digits is a year, 1-3 is a series index.
-_SERIES_INDEX_FIELD_PATTERN = r"\d{1,3}(?:\.\d+)?"
+# A series index is almost always a small number, 0-999 -- 1-3 digits
+# (bounded specifically so it can never be confused with a 4-digit year
+# -- a bare number in a filename can be told apart by shape alone: 4
+# digits is a year, 1-3 is a series index) -- optionally followed by
+# EITHER a decimal sub-index ("5.5" for a novella between two main
+# entries) OR a dash-separated range ("1-6" for an omnibus edition
+# collecting several books in one file), and optionally a trailing "."
+# either way (ordinal-style "5.", "1-6."). See
+# _strip_series_index_leading_zeros() for how each shape is cleaned up
+# after capture.
+_SERIES_INDEX_FIELD_PATTERN = r"\d{1,3}(?:\.\d+|-\d{1,3})?\.?"
 
 # A publication year is almost always 4 digits, occasionally 2 -- never
 # a decimal, never 1 or 3 digits. Tried longest-first (the regex engine
@@ -246,15 +251,27 @@ def build_parser_regex(pattern: str) -> re.Pattern:
 
 
 def _strip_series_index_leading_zeros(value: str) -> str:
-    """Strips leading zeros from the integer part of a series index,
-    preserving any decimal part exactly ("03.5" -> "3.5", "007" -> "7",
-    "0" -> "0"). Filenames often zero-pad a series index purely for
-    correct sort order ("Book 03"), but that padding isn't meaningful
-    metadata -- it's a filename-ordering artifact, not part of the
-    actual series number, so it shouldn't carry over into the field
-    value itself."""
+    """Cleans up a captured series index, handling all three shapes it
+    can take:
+    - plain/zero-padded integer: "007" -> "7"
+    - decimal sub-index for a novella between two main entries,
+      preserved exactly: "03.5" -> "3.5" (only the integer part padded)
+    - dash-separated range for an omnibus edition: "01-06" -> "1-6"
+      (each side stripped independently)
+    Also drops a trailing "." either way (ordinal-style "5." -> "5",
+    "01-06." -> "1-6") -- not meaningful on its own, same reasoning as
+    the zero-padding itself: a filename-formatting artifact, not part
+    of the actual series number."""
     if not value:
         return value
+    value = value.rstrip(".")
+    if not value:
+        return value
+    if "-" in value:
+        left, sep, right = value.partition("-")
+        left = left.lstrip("0") or "0"
+        right = right.lstrip("0") or "0"
+        return f"{left}{sep}{right}"
     if "." in value:
         int_part, sep, frac_part = value.partition(".")
         stripped = int_part.lstrip("0") or "0"

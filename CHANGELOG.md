@@ -4,6 +4,17 @@ All notable changes to The ƎPUB Redactor, by version. Trimmed to new
 functionality and real fixes — cosmetic/UX-only adjustments aren't
 listed here.
 
+## 2026-09-17#16
+
+- `%series_index%` in **Parse Filename → Metadata** now also accepts:
+  - An ordinal-style trailing period ("5." -> "5").
+  - A dash-separated range for an omnibus edition collecting several
+    books in one file ("1-6" -> "1-6", kept as-is; "01-06" -> "1-6",
+    each side's leading zeros stripped independently). The normal
+    " - " field separator (with spaces) still works exactly as before
+    -- the range only kicks in when the dash sits directly against the
+    digits with no space, matching the real omnibus convention.
+
 ## 2026-09-17#15
 
 - Fixed: Parse Filename → Metadata's intro text was missing

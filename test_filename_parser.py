@@ -483,6 +483,49 @@ def test_series_index_bounded_to_0_999_distinct_from_year():
     print("PASS: series_index matches up to 3 digits (0-999) but not a bare 4-digit number like a year")
 
 
+def test_series_index_trailing_period_stripped():
+    parsed = parse_filename("Series 5. - Title", "%series% %series_index% - %title%")
+    assert parsed["series_index"] == "5", parsed
+    print("PASS: an ordinal-style trailing period (\"5.\") is stripped, leaving just \"5\"")
+
+
+def test_series_index_zero_padded_trailing_period_stripped():
+    parsed = parse_filename("Series 05. - Title", "%series% %series_index% - %title%")
+    assert parsed["series_index"] == "5", parsed
+    print("PASS: leading zeros and a trailing period both get cleaned up together (\"05.\" -> \"5\")")
+
+
+def test_series_index_omnibus_range():
+    parsed = parse_filename("Series 1-6 - Title", "%series% %series_index% - %title%")
+    assert parsed["series_index"] == "1-6", parsed
+    print("PASS: a dash-separated range (\"1-6\") is captured whole, for an omnibus edition")
+
+
+def test_series_index_omnibus_range_zero_padded():
+    parsed = parse_filename("Series 01-06 - Title", "%series% %series_index% - %title%")
+    assert parsed["series_index"] == "1-6", parsed
+    print("PASS: leading zeros on each side of an omnibus range are stripped independently (\"01-06\" -> \"1-6\")")
+
+
+def test_series_index_omnibus_range_with_trailing_period():
+    parsed = parse_filename("Series 1-6. - Title", "%series% %series_index% - %title%")
+    assert parsed["series_index"] == "1-6", parsed
+    print("PASS: an omnibus range can also have a trailing period (\"1-6.\" -> \"1-6\")")
+
+
+def test_series_index_range_does_not_break_the_usual_dash_separator():
+    # The pattern's own " - " separator (with spaces) must still work
+    # normally and not get swallowed into a bogus "range" -- the range
+    # syntax only kicks in when the dash sits directly against the
+    # digits with no space, same as the real omnibus convention.
+    parsed = parse_filename("Lord of the Rings 1 - The Fellowship of the Ring",
+                             "%series% %series_index% - %title%")
+    assert parsed == {
+        "series": "Lord of the Rings", "series_index": "1", "title": "The Fellowship of the Ring",
+    }, parsed
+    print("PASS: a normal \" - \" separator still works correctly, not mistaken for a range")
+
+
 # ----------------------------------------------------------------------
 # Optional [...] bracket segments (the "standard template")
 # ----------------------------------------------------------------------
@@ -678,6 +721,12 @@ if __name__ == "__main__":
     test_series_index_zero_point_something_preserved()
     test_series_index_no_leading_zero_unaffected()
     test_series_index_bounded_to_0_999_distinct_from_year()
+    test_series_index_trailing_period_stripped()
+    test_series_index_zero_padded_trailing_period_stripped()
+    test_series_index_omnibus_range()
+    test_series_index_omnibus_range_zero_padded()
+    test_series_index_omnibus_range_with_trailing_period()
+    test_series_index_range_does_not_break_the_usual_dash_separator()
     test_standard_template_matches_with_series()
     test_standard_template_matches_without_series()
     test_bracket_roundtrip_through_render_filename()
