@@ -244,6 +244,17 @@ class EpubBook:
         self.cover_changed = False
         self.cover_removed = False
 
+        # Archive paths staged for removal by remove_orphaned_files() (see
+        # Repair -> Repair Navigation), applied on the next save() the
+        # same way cover_removed is -- only cleared once actually written
+        # to this book's own path, not on a "Save As Copy" to elsewhere.
+        self._orphan_files_to_remove: set[str] = set()
+
+        # archive_path -> new bytes, staged by stage_image_replacement()
+        # (see Operations -> Compress Images (Lossy)), applied on the next
+        # save() the same way cover_changed is.
+        self._image_replacements: dict[str, bytes] = {}
+
         # Validation state, recomputed on load and after apply_fixes().
         self.validation_issues: list[ValidationIssue] = []
         self.validation_status: str = "OK"
@@ -803,6 +814,171 @@ class EpubBook:
         return removed_hrefs
 
     # ------------------------------------------------------------------
+    # Navigation repair: broken <guide> references and orphaned (on-disk
+    # but referenced by no manifest item) files. Deliberately narrower
+    # than a full navigation repair -- NCX/NAV *document content* itself
+    # (duplicate TOC entries, duplicate element ids and the cross-document
+    # fragment links that point at them) isn't touched here, only what's
+    # safely verifiable from the OPF + archive file listing alone, same
+    # scoping philosophy as _validate() above. See
+    # gui/nav_repair_dialog.py for the review step before anything's
+    # actually removed.
+    # ------------------------------------------------------------------
+
+    def find_broken_guide_references(self) -> list[tuple[str, str, str]]:
+        """(type, title, href) for every EPUB2-style <guide><reference>
+        whose href doesn't resolve to a file that actually exists in the
+        archive. Read-only, opens the archive fresh so it reflects
+        current on-disk state."""
+        try:
+            with zipfile.ZipFile(self.path, "r") as zf:
+                names = set(zf.namelist())
+        except (zipfile.BadZipFile, KeyError, OSError):
+            return []
+        root = self._opf_tree.getroot()
+        guide = root.find("opf:guide", namespaces=NS)
+        if guide is None:
+            return []
+        opf_dir = posixpath.dirname(self.opf_path)
+        broken = []
+        for ref in guide.findall("opf:reference", namespaces=NS):
+            raw_href = ref.get("href") or ""
+            href = raw_href.split("#", 1)[0]  # a #fragment doesn't affect whether the FILE exists
+            if not href:
+                continue
+            archive_path = posixpath.normpath(posixpath.join(opf_dir, href)) if opf_dir else href
+            if archive_path not in names:
+                broken.append((ref.get("type") or "", ref.get("title") or "", raw_href))
+        return broken
+
+    def repair_guide_references(self, hrefs: set[str] | None = None) -> list[str]:
+        """Removes <guide><reference> entries whose href is in `hrefs` --
+        or, if None, every one find_broken_guide_references() currently
+        reports. Returns the hrefs actually removed. Marks the book
+        dirty. Not pushed to Undo by the caller, same convention as
+        rebuild_manifest(): a structural repair, not user-authored
+        content -- the dialog's own upfront listing is the safeguard."""
+        root = self._opf_tree.getroot()
+        guide = root.find("opf:guide", namespaces=NS)
+        if guide is None:
+            return []
+        if hrefs is None:
+            hrefs = {href for _t, _title, href in self.find_broken_guide_references()}
+        if not hrefs:
+            return []
+        removed = []
+        for ref in list(guide.findall("opf:reference", namespaces=NS)):
+            href = ref.get("href") or ""
+            if href in hrefs:
+                removed.append(href)
+                guide.remove(ref)
+        if removed:
+            if not guide.findall("opf:reference", namespaces=NS):
+                root.remove(guide)  # an empty <guide/> left behind isn't useful
+            self.dirty = True
+        return removed
+
+    def find_orphaned_files(self) -> list[str]:
+        """Archive paths present in the zip but referenced by no manifest
+        item -- excludes mimetype, META-INF/*, the OPF file itself, and
+        directory entries. Read-only, opens the archive fresh."""
+        try:
+            with zipfile.ZipFile(self.path, "r") as zf:
+                names = set(zf.namelist())
+        except (zipfile.BadZipFile, KeyError, OSError):
+            return []
+        root = self._opf_tree.getroot()
+        manifest = root.find("opf:manifest", namespaces=NS)
+        opf_dir = posixpath.dirname(self.opf_path)
+        referenced: set[str] = set()
+        if manifest is not None:
+            for item in manifest.findall("opf:item", namespaces=NS):
+                href = item.get("href")
+                if href:
+                    archive_path = posixpath.normpath(posixpath.join(opf_dir, href)) if opf_dir else href
+                    referenced.add(archive_path)
+        orphans = []
+        for name in sorted(names):
+            if name.endswith("/"):
+                continue  # directory entry
+            if name in ("mimetype", self.opf_path) or name.startswith("META-INF/"):
+                continue
+            if name not in referenced:
+                orphans.append(name)
+        return orphans
+
+    def remove_orphaned_files(self, paths: set[str] | None = None) -> list[str]:
+        """Stages removal of `paths` (or, if None, every path
+        find_orphaned_files() currently reports) from the archive on the
+        next save(). Returns the paths actually staged. Marks the book
+        dirty."""
+        if paths is None:
+            paths = set(self.find_orphaned_files())
+        paths = {p for p in paths if p}
+        if not paths:
+            return []
+        self._orphan_files_to_remove.update(paths)
+        self.dirty = True
+        return sorted(paths)
+
+    # ------------------------------------------------------------------
+    # Lossy image compression (see Operations -> Compress Images (Lossy)):
+    # re-encoding is real image work (needs Qt's QImage), which lives in
+    # gui/image_compress.py -- this app's own "core/ has no Qt" split
+    # (see core/cover_generator.py vs gui/cover_render.py for the same
+    # pattern). This side only knows which manifest images are eligible
+    # and how to stage/apply the resulting bytes.
+    # ------------------------------------------------------------------
+
+    def find_compressible_images(self, media_types: set[str] | None = None) -> list[tuple[str, int]]:
+        """(archive_path, current_size_bytes) for every manifest image
+        whose media-type is in `media_types` (default: just JPEG -- see
+        gui/image_compress.py for why PNG isn't included). Read-only,
+        opens the archive fresh."""
+        media_types = media_types or {"image/jpeg"}
+        try:
+            with zipfile.ZipFile(self.path, "r") as zf:
+                sizes = {info.filename: info.file_size for info in zf.infolist()}
+        except (zipfile.BadZipFile, KeyError, OSError):
+            return []
+        root = self._opf_tree.getroot()
+        manifest = root.find("opf:manifest", namespaces=NS)
+        if manifest is None:
+            return []
+        opf_dir = posixpath.dirname(self.opf_path)
+        results = []
+        for item in manifest.findall("opf:item", namespaces=NS):
+            media_type = (item.get("media-type") or "").strip().lower()
+            href = item.get("href")
+            if media_type not in media_types or not href:
+                continue
+            archive_path = posixpath.normpath(posixpath.join(opf_dir, href)) if opf_dir else href
+            if archive_path in sizes:
+                results.append((archive_path, sizes[archive_path]))
+        return results
+
+    def read_archive_file(self, archive_path: str) -> Optional[bytes]:
+        """Raw bytes of one archive member as they currently stand --
+        reflecting any staged-but-unsaved image replacement, since a
+        caller re-compressing on top of an already-staged result (e.g.
+        re-running with a different quality before saving) should work
+        from that, not the original on-disk bytes. None if the path
+        doesn't exist in the archive."""
+        if archive_path in self._image_replacements:
+            return self._image_replacements[archive_path]
+        try:
+            with zipfile.ZipFile(self.path, "r") as zf:
+                return zf.read(archive_path)
+        except (zipfile.BadZipFile, KeyError, OSError):
+            return None
+
+    def stage_image_replacement(self, archive_path: str, new_bytes: bytes) -> None:
+        """Stages `new_bytes` to replace `archive_path`'s content on the
+        next save(). Marks the book dirty."""
+        self._image_replacements[archive_path] = new_bytes
+        self.dirty = True
+
+    # ------------------------------------------------------------------
     # Writing metadata back into the in-memory OPF tree
     # ------------------------------------------------------------------
 
@@ -851,11 +1027,21 @@ class EpubBook:
             for el in md.findall("dc:creator", namespaces=NS):
                 md.remove(el)
             opf_file_as_attr = f"{{{nsmap_opf}}}file-as"
+            opf_role_attr = f"{{{nsmap_opf}}}role"
             for i, name in enumerate(authors):
                 el = etree.SubElement(md, f"{{{nsmap_dc}}}creator")
                 el.text = name
                 if i < len(author_sort) and author_sort[i]:
                     el.set(opf_file_as_attr, author_sort[i])
+                # Every name in this app's own Authors field is a genuine
+                # author (unlike, say, a translator or illustrator, which
+                # this app has no separate field for) -- MARC relator
+                # code "aut" is the correct role for all of them. Without
+                # this, a book that had genuine role distinctions (e.g. a
+                # translator correctly marked opf:role="trl") would have
+                # that lost on save, since dc:creator is always rebuilt
+                # from scratch here rather than patched in place.
+                el.set(opf_role_attr, "aut")
 
         set_dc_single("title", self.metadata.title)
         set_creators(self.metadata.authors, self.metadata.author_sort)
@@ -938,6 +1124,8 @@ class EpubBook:
 
         self._write_isbn(md)
         self._write_cover(md, file_ops)
+        file_ops["remove"].update(self._orphan_files_to_remove)
+        file_ops["add"].update(self._image_replacements)
 
         new_opf_bytes = etree.tostring(
             self._opf_tree, xml_declaration=True, encoding="UTF-8", standalone=True
@@ -1116,3 +1304,5 @@ class EpubBook:
             self.dirty = False
             self.cover_changed = False
             self.cover_removed = False
+            self._orphan_files_to_remove = set()
+            self._image_replacements = {}

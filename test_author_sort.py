@@ -165,6 +165,23 @@ def test_primary_author_only_sort_set():
     print("PASS: setting sort-name for only the first of several authors works cleanly")
 
 
+def test_save_writes_role_aut_for_every_author():
+    # Every name in this app's Authors list is a genuine author (there's
+    # no separate translator/illustrator field), so opf:role="aut" should
+    # be stamped on every dc:creator written, whether or not the source
+    # book had a role attribute at all.
+    path = os.path.join(TEST_DIR, "role.epub")
+    build(path, OPF_NO_SORT)  # Jane Doe, no file-as, no role
+    b = EpubBook(path)
+    b.apply_metadata({"authors_str": "Jane Doe; John Smith"})
+    out = os.path.join(TEST_DIR, "role_saved.epub")
+    b.save(out)
+    with zipfile.ZipFile(out) as zf:
+        opf = zf.read("OEBPS/content.opf").decode()
+        assert opf.count('opf:role="aut"') == 2, opf
+    print("PASS: save() writes opf:role=\"aut\" for every author")
+
+
 if __name__ == "__main__":
     test_read_existing_file_as()
     test_no_file_as_present()
@@ -172,4 +189,5 @@ if __name__ == "__main__":
     test_multi_author_alignment()
     test_clearing_author_sort_removes_attribute()
     test_primary_author_only_sort_set()
+    test_save_writes_role_aut_for_every_author()
     print("\nALL AUTHOR SORT TESTS PASSED")

@@ -22,3 +22,18 @@ DEFAULT_LANGUAGES: list[tuple[str, str]] = [
     ("sv", "Swedish"),
     ("da", "Danish"),
 ]
+
+# Values that mean "no real language was ever set" -- not just an empty
+# string, but the handful of placeholder values conversion tools and
+# earlier hand-edits commonly leave behind instead of leaving the field
+# genuinely blank. "und" is ISO 639-2's own actual code for "undetermined",
+# so it counts too. Deliberately NOT a general BCP-47 validator -- this
+# only recognizes known placeholders, it doesn't judge whether some other
+# value is a *valid* language code.
+_BLANK_OR_UNKNOWN_LANGUAGE_VALUES = {
+    "", "unknown", "und", "unk", "n/a", "na", "none", "not set", "unspecified",
+}
+
+
+def is_blank_or_unknown_language(value: str) -> bool:
+    return (value or "").strip().lower() in _BLANK_OR_UNKNOWN_LANGUAGE_VALUES

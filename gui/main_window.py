@@ -64,6 +64,7 @@ from PyQt6.QtWidgets import (
 
 from core.epub_metadata import EpubBook, EpubError
 from core.fields import FIELDS, NUMERIC_FIELD_KEYS
+from core.languages import is_blank_or_unknown_language
 from core.rename_pattern import rename_book_file, render_filename, unique_path
 from core.sigil_tools import DOWNLOAD_URL as SIGIL_DOWNLOAD_URL
 from core.sigil_tools import SigilLaunchError, find_sigil
@@ -90,18 +91,22 @@ from gui import app_settings
 from redactor_common.gui.about_dialog import AboutDialog, ChangelogDialog, CreditsDialog
 from redactor_common.core.version import REDACTOR_COMMON_REPO_URL, REDACTOR_COMMON_VERSION
 from gui.author_sort_dialog import AuthorSortDialog
+from gui.blank_language_default_dialog import BlankLanguageDefaultDialog
 from gui.calibre_lookup_dialog import CalibreLookupDialog
 from gui.case_conversion_dialog import CaseConversionDialog
 from gui.column_settings_dialog import ColumnSettingsDialog
+from gui.compress_images_dialog import CompressImagesDialog, format_size
 from gui.content_scan_dialog import ContentScanDialog
 from gui.cover_generator_dialog import CoverGeneratorDialog
 from gui.cover_render import generate_cover_image
 from gui.ebook_convert_dialog import EbookConvertDialog
 from gui.filename_parse_dialog import FilenameParseDialog
 from gui.google_books_dialog import GoogleBooksDialog
+from gui.image_compress import recompress_jpeg
 from gui.manage_list_dialog import ManageListDialog
 from gui.manifest_rebuild_dialog import ManifestRebuildDialog
 from gui.missing_space_dialog import MissingSpaceDialog
+from gui.nav_repair_dialog import NavRepairDialog
 from gui.open_library_dialog import OpenLibraryDialog
 from gui.polish_book_dialog import PolishBookDialog
 from gui.rename_dialog import RenameDialog
@@ -514,10 +519,11 @@ class MainWindow(QMainWindow):
                     "search_replace", "&Search/Replace…", self.open_search_replace_dialog,
                     shortcut=shortcuts.SEARCH_REPLACE,
                 ),
-                MenuAction("validate", "&Validate / Fix Issues…", self.open_validation_dialog),
-                MenuAction("rebuild_manifest", "Re&build Manifest…", self.open_manifest_rebuild_dialog),
-                MenuAction("missing_space", "Detect &Missing Spaces…", self.open_missing_space_dialog),
                 MenuAction("polish_book", "&Polish Book…", self.open_polish_book_dialog),
+                MenuAction(
+                    "compress_images_lossy", "&Compress Images (Lossy)…",
+                    self.open_compress_images_dialog,
+                ),
                 Separator(),
                 MenuAction("undo", "&Undo", self.on_undo, shortcut=shortcuts.UNDO,
                            tooltip="Undo the last change (in-memory edits only, up to 5 steps back)"),
@@ -528,6 +534,10 @@ class MainWindow(QMainWindow):
                 MenuAction("column_settings", "Add/Remove &Columns…", self.open_column_settings_dialog),
                 MenuAction("language_settings", "Add/Remove &Languages…", self.open_language_settings_dialog),
                 MenuAction("genre_settings", "Add/Remove &Genres…", self.open_genre_settings_dialog),
+                MenuAction(
+                    "blank_language_default", "&Blank Language Default…",
+                    self.open_blank_language_default_settings,
+                ),
                 Submenu("&Text Wrapping", [
                     MenuAction(
                         "text_wrap_mode_wrap", "&Wrap Text (grow row height)",
@@ -549,6 +559,28 @@ class MainWindow(QMainWindow):
                 MenuAction("credits", "&Credits…", self.open_credits_dialog),
             ],
         }
+        # Repair: batch operations specifically for books that arrive with
+        # structural or metadata damage (most often from older files that
+        # have been through several lossy format conversions) -- kept
+        # separate from Operations, which is everyday field editing, since
+        # this category kept growing (Validate/Fix Issues, Rebuild
+        # Manifest, Missing Space detection, and now Nav/Manifest Repair
+        # and the blank-language default) and deserved its own place
+        # rather than continuing to pile into one menu.
+        repair_items = [
+            MenuAction("validate", "&Validate / Fix Issues…", self.open_validation_dialog),
+            MenuAction("rebuild_manifest", "Re&build Manifest…", self.open_manifest_rebuild_dialog),
+            MenuAction(
+                "repair_navigation", "Repair &Navigation…",
+                self.open_nav_repair_dialog,
+            ),
+            MenuAction("missing_space", "Detect &Missing Spaces…", self.open_missing_space_dialog),
+            Separator(),
+            MenuAction(
+                "set_default_language", "Set &Blank/Unknown Language to Default…",
+                self.set_blank_languages_to_default,
+            ),
+        ]
         kobo_items = [
             MenuAction("send_to_kobo_usb", "Send to &Kobo (USB)…", self.open_send_to_kobo_dialog),
             MenuAction(
@@ -556,7 +588,9 @@ class MainWindow(QMainWindow):
                 self.open_send_to_ereader_dialog,
             ),
         ]
-        actions = build_menu_bar(self, specs, extra_menus=[("Kobo", 3, kobo_items)])
+        actions = build_menu_bar(
+            self, specs, extra_menus=[("Repair", 3, repair_items), ("Kobo", 4, kobo_items)]
+        )
 
         # Back-compat: the rest of this file (toolbar, context menus)
         # references these as self.<x>_act attributes directly.
@@ -574,6 +608,8 @@ class MainWindow(QMainWindow):
         self.undo_act.setEnabled(False)
         self.redo_act = actions["redo"]
         self.redo_act.setEnabled(False)
+        self.set_default_language_act = actions["set_default_language"]
+        self._update_blank_language_default_action_state()
 
         # Mutually exclusive radio-style trio for the Text Wrapping
         # submenu, checked to match whatever mode _build_ui already
@@ -1012,6 +1048,7 @@ class MainWindow(QMainWindow):
             "cover_mime": book.cover_mime,
             "cover_changed": book.cover_changed,
             "cover_removed": book.cover_removed,
+            "image_replacements": dict(book._image_replacements),
         }
 
     @staticmethod
@@ -1022,6 +1059,7 @@ class MainWindow(QMainWindow):
         book.cover_mime = snapshot["cover_mime"]
         book.cover_changed = snapshot["cover_changed"]
         book.cover_removed = snapshot["cover_removed"]
+        book._image_replacements = snapshot["image_replacements"]
 
     def _push_undo(self, label: str, books: list[EpubBook]) -> None:
         """Call BEFORE mutating `books`."""
@@ -1295,6 +1333,21 @@ class MainWindow(QMainWindow):
             self._select_books(previously_selected)
 
     def _on_column_resized(self, _logical_index, _old_size, _new_size) -> None:
+        if self._updating_table:
+            # The one-time auto-fit (resizeColumnsToContents(), right
+            # after populating the table) also fires this signal, once
+            # per column -- not a real user resize, and importantly not
+            # one that needs a row-height reflow either: auto-fit only
+            # ever WIDENS columns to fit their content, which can't make
+            # a cell wrap onto MORE lines than it already needed, only
+            # fewer. Scheduling a full-table resizeRowsToContents() here
+            # anyway was a real perf regression on a large library (every
+            # auto-fit column triggers this once, debounced into exactly
+            # one full-table re-measure pass either way, but on a huge
+            # table even one pass is a real, previously non-existent cost
+            # right after loading) -- skip it, matching the same guard
+            # that already skips saving column widths here.
+            return
         # Narrowing a column can change how much (if any) of a cell's text
         # wraps or gets clipped, which changes how tall its row needs to
         # be -- reflow row heights to match, debounced so a click-drag
@@ -1302,8 +1355,6 @@ class MainWindow(QMainWindow):
         # mouse movement. Restarted (not just started) on every event, so
         # it fires once when dragging actually stops.
         self._row_reflow_timer.start(120)
-        if self._updating_table:
-            return  # the one-time auto-fit above also fires this signal; not a real user resize
         widths = {i: self.table.columnWidth(i) for i in range(self.table.columnCount())}
         app_settings.save_column_widths(widths)
 
@@ -2497,6 +2548,114 @@ class MainWindow(QMainWindow):
         )
 
     # ------------------------------------------------------------------
+    # Compress Images (Lossy)
+    # ------------------------------------------------------------------
+
+    def open_compress_images_dialog(self) -> None:
+        target_books = self._selection_or_all_books()
+        if not target_books:
+            QMessageBox.information(
+                self, "No books", "Load some books first (or select the ones to compress)."
+            )
+            return
+
+        dialog = CompressImagesDialog(target_books, self)
+        if dialog.exec() != CompressImagesDialog.DialogCode.Accepted:
+            return
+
+        indices = dialog.accepted_book_indices()
+        if not indices:
+            return
+
+        quality = dialog.quality()
+        affected_books = [dialog.books[i] for i in indices]
+        self._push_undo("Compress images (lossy)", affected_books)
+
+        totals = {"compressed": 0, "skipped": 0, "original_bytes": 0, "new_bytes": 0}
+
+        def _step(book: EpubBook, _index: int) -> None:
+            for archive_path, _size in book.find_compressible_images():
+                data = book.read_archive_file(archive_path)
+                if data is None:
+                    totals["skipped"] += 1
+                    continue
+                new_data = recompress_jpeg(data, quality)
+                # Only keep it if it's actually smaller -- a JPEG that's
+                # already efficient at this quality (or a fully-opaque
+                # decode/re-encode round trip that happened to grow) is
+                # left untouched rather than "compressed" into something
+                # bigger.
+                if new_data is None or len(new_data) >= len(data):
+                    totals["skipped"] += 1
+                    continue
+                book.stage_image_replacement(archive_path, new_data)
+                totals["original_bytes"] += len(data)
+                totals["new_bytes"] += len(new_data)
+                totals["compressed"] += 1
+
+        run_with_progress(
+            self, affected_books, _step, "Compressing images…",
+            threshold=1, label_for=lambda book: f"Compressing: {os.path.basename(book.path)}",
+        )
+        for book in affected_books:
+            self._refresh_row_full(book)
+        self._refresh_status()
+        self._on_selection_changed()
+
+        if totals["compressed"] == 0:
+            QMessageBox.information(
+                self, "Nothing Compressed",
+                "No image ended up smaller at this quality -- nothing was changed.",
+            )
+            return
+        saved = totals["original_bytes"] - totals["new_bytes"]
+        skip_note = f" ({totals['skipped']} image(s) left unchanged)" if totals["skipped"] else ""
+        QMessageBox.information(
+            self, "Images Compressed",
+            f"Compressed {totals['compressed']} image(s) across {len(affected_books)} book(s), "
+            f"saving {format_size(saved)}{skip_note}. Remember to save.",
+        )
+
+    # ------------------------------------------------------------------
+    # Repair Navigation
+    # ------------------------------------------------------------------
+
+    def open_nav_repair_dialog(self) -> None:
+        target_books = self._selection_or_all_books()
+        if not target_books:
+            QMessageBox.information(
+                self, "No books", "Load some books first (or select the ones to check)."
+            )
+            return
+
+        dialog = NavRepairDialog(target_books, self)
+        if dialog.exec() != NavRepairDialog.DialogCode.Accepted:
+            return
+
+        indices = dialog.accepted_book_indices()
+        if not indices:
+            return
+
+        # Structural repair, not user-authored content -- not pushed to
+        # Undo, same convention as Rebuild Manifest. The dialog's own
+        # upfront listing is the safeguard instead.
+        affected_books = [dialog.books[i] for i in indices]
+        total_guide_refs = 0
+        total_orphans = 0
+        for book in affected_books:
+            total_guide_refs += len(book.repair_guide_references())
+            total_orphans += len(book.remove_orphaned_files())
+            self._refresh_row_full(book)
+        self._refresh_status()
+        self._on_selection_changed()
+        QMessageBox.information(
+            self, "Navigation Repaired",
+            f"Removed {total_guide_refs} broken guide reference(s) and staged "
+            f"{total_orphans} orphaned file(s) for removal across {len(affected_books)} "
+            f"book(s). Remember to save.",
+        )
+
+    # ------------------------------------------------------------------
     # Detect Missing Spaces
     # ------------------------------------------------------------------
 
@@ -2524,6 +2683,67 @@ class MainWindow(QMainWindow):
             self._refresh_row_full(book)
         self._refresh_status()
         self._on_selection_changed()
+
+    # ------------------------------------------------------------------
+    # Blank/Unknown Language Default
+    # ------------------------------------------------------------------
+
+    def open_blank_language_default_settings(self) -> None:
+        dialog = BlankLanguageDefaultDialog(
+            app_settings.load_blank_language_default_enabled(),
+            app_settings.load_blank_language_default_code(),
+            app_settings.load_languages(),
+            self,
+        )
+        if dialog.exec() != BlankLanguageDefaultDialog.DialogCode.Accepted:
+            return
+        app_settings.save_blank_language_default_enabled(dialog.result_enabled())
+        app_settings.save_blank_language_default_code(dialog.result_code())
+        self._update_blank_language_default_action_state()
+
+    def _update_blank_language_default_action_state(self) -> None:
+        enabled = app_settings.load_blank_language_default_enabled()
+        self.set_default_language_act.setEnabled(enabled)
+        self.set_default_language_act.setToolTip(
+            "" if enabled else "Disabled in Settings → Blank Language Default"
+        )
+
+    def set_blank_languages_to_default(self) -> None:
+        # No per-book review step, unlike every other batch operation in
+        # this app -- a deliberate exception (see app_settings' own note
+        # on the setting this reads), which is exactly why the Settings
+        # -> Blank Language Default toggle exists: disabling it there
+        # disables this QAction outright, so it can't be clicked by
+        # accident by anyone who doesn't want that risk at all.
+        target_books = self._selection_or_all_books()
+        if not target_books:
+            QMessageBox.information(
+                self, "No books", "Load some books first (or select the ones to set)."
+            )
+            return
+
+        code = app_settings.load_blank_language_default_code()
+        affected_books = [
+            b for b in target_books if is_blank_or_unknown_language(b.metadata.language)
+        ]
+        if not affected_books:
+            QMessageBox.information(
+                self, "Nothing to Do",
+                "None of the selected book(s) have a blank or unrecognized language.",
+            )
+            return
+
+        self._push_undo("Set default language", affected_books)
+        for book in affected_books:
+            book.apply_metadata({"language": code})
+        for book in affected_books:
+            self._refresh_row_full(book)
+        self._refresh_status()
+        self._on_selection_changed()
+        QMessageBox.information(
+            self, "Language Set",
+            f'Set {len(affected_books)} book(s) with a blank or unrecognized language to "{code}".',
+        )
 
     # ------------------------------------------------------------------
     # Number Series

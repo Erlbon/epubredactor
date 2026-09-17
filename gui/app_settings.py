@@ -609,3 +609,39 @@ def load_text_overflow_mode() -> str:
 def save_text_overflow_mode(mode: str) -> None:
     if mode in TEXT_OVERFLOW_MODES:
         _settings().setValue(_TEXT_OVERFLOW_MODE_KEY, mode)
+
+
+# ------------------------------------------------------------------
+# Blank/Unknown Language default (Repair -> Set Blank/Unknown Language
+# to Default) -- a deliberate exception to this app's usual
+# "preview + per-book checkbox before Apply" pattern (see
+# core.languages.is_blank_or_unknown_language and MainWindow.
+# set_blank_languages_to_default): applies immediately across the
+# working set with no review step, so an explicit enable/disable is
+# offered here for anyone who doesn't want that risk at all -- e.g. a
+# library where a blank language is a deliberate "not yet determined"
+# marker, not just an oversight.
+# ------------------------------------------------------------------
+
+_BLANK_LANGUAGE_DEFAULT_ENABLED_KEY = "language/blank_default_enabled"
+_BLANK_LANGUAGE_DEFAULT_CODE_KEY = "language/blank_default_code"
+DEFAULT_BLANK_LANGUAGE_CODE = "en"
+
+
+def load_blank_language_default_enabled() -> bool:
+    return _settings().value(_BLANK_LANGUAGE_DEFAULT_ENABLED_KEY, True, type=bool)
+
+
+def save_blank_language_default_enabled(enabled: bool) -> None:
+    _settings().setValue(_BLANK_LANGUAGE_DEFAULT_ENABLED_KEY, bool(enabled))
+
+
+def load_blank_language_default_code() -> str:
+    code = _settings().value(_BLANK_LANGUAGE_DEFAULT_CODE_KEY, DEFAULT_BLANK_LANGUAGE_CODE, type=str)
+    return code.strip() or DEFAULT_BLANK_LANGUAGE_CODE
+
+
+def save_blank_language_default_code(code: str) -> None:
+    code = code.strip()
+    if code:
+        _settings().setValue(_BLANK_LANGUAGE_DEFAULT_CODE_KEY, code)
