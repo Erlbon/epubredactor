@@ -11,22 +11,20 @@ from __future__ import annotations
 
 import os
 
-from PyQt6.QtCore import Qt
 from PyQt6.QtWidgets import (
-    QApplication,
     QComboBox,
     QDialog,
     QDialogButtonBox,
     QLabel,
     QListWidget,
     QMessageBox,
-    QProgressDialog,
     QPushButton,
     QVBoxLayout,
 )
 
 from core.epub_metadata import EpubBook
 from core.kobo_usb import KoboSendError, find_connected_kobos, send_to_kobo
+from redactor_common.gui.progress import run_with_progress
 
 
 class SendToKoboDialog(QDialog):
@@ -95,25 +93,21 @@ class SendToKoboDialog(QDialog):
         if not kobo_root:
             return
 
-        progress = QProgressDialog("Sending to Kobo…", "Cancel", 0, len(self.books), self)
-        progress.setWindowModality(Qt.WindowModality.WindowModal)
-        progress.setMinimumDuration(0)
-
         sent = 0
         errors: list[str] = []
-        for i, book in enumerate(self.books):
-            if progress.wasCanceled():
-                break
-            progress.setValue(i)
-            progress.setLabelText(f"Sending: {os.path.basename(book.path)}")
-            QApplication.processEvents()
+
+        def _step(book: EpubBook, _index: int) -> None:
+            nonlocal sent
             try:
                 send_to_kobo(kobo_root, book.path)
                 sent += 1
             except KoboSendError as exc:
                 errors.append(f"{os.path.basename(book.path)}: {exc}")
 
-        progress.setValue(len(self.books))
+        run_with_progress(
+            self, self.books, _step, "Sending to Kobo…", threshold=1,
+            label_for=lambda book: f"Sending: {os.path.basename(book.path)}",
+        )
         self._sent_count = sent
 
         if errors:

@@ -23,13 +23,11 @@ from PyQt6.QtCore import QSize, Qt
 from PyQt6.QtGui import QIcon, QPixmap
 from PyQt6.QtWidgets import (
     QAbstractItemView,
-    QApplication,
     QCheckBox,
     QDialog,
     QDialogButtonBox,
     QHeaderView,
     QLabel,
-    QProgressDialog,
     QTableWidget,
     QTableWidgetItem,
     QVBoxLayout,
@@ -37,6 +35,7 @@ from PyQt6.QtWidgets import (
 
 from core.epub_metadata import EpubBook
 from redactor_common.core.error_summary import summarize_errors
+from redactor_common.gui.progress import run_with_progress
 from core.open_library_lookup import (
     OpenLibraryLookupError,
     download_cover_image,
@@ -100,21 +99,13 @@ class OpenLibraryDialog(QDialog):
 
     def _run_search(self) -> None:
         self.table.setRowCount(len(self.books))
-        progress = QProgressDialog("Searching Open Library…", "Cancel", 0, len(self.books), self)
-        progress.setWindowModality(Qt.WindowModality.WindowModal)
-        progress.setMinimumDuration(0)
-
         found_count = 0
         errors: list[str] = []
+        processed_count = 0
 
-        for row, book in enumerate(self.books):
-            if progress.wasCanceled():
-                self.table.setRowCount(row)
-                break
-            progress.setValue(row)
-            progress.setLabelText(f"Searching: {os.path.basename(book.path)}")
-            QApplication.processEvents()
-
+        def _step(book: EpubBook, row: int) -> None:
+            nonlocal found_count, processed_count
+            processed_count = row + 1
             self.table.setItem(row, BOOK_COL, self._readonly_item(os.path.basename(book.path)))
             cover_item = self._readonly_item("")
             self.table.setItem(row, COVER_COL, cover_item)
@@ -163,7 +154,12 @@ class OpenLibraryDialog(QDialog):
             self._checkboxes[row] = cb
             self.table.setCellWidget(row, APPLY_COL, cb)
 
-        progress.setValue(len(self.books))
+        completed = run_with_progress(
+            self, self.books, _step, "Searching Open Library…", threshold=1,
+            label_for=lambda book: f"Searching: {os.path.basename(book.path)}",
+        )
+        if not completed:
+            self.table.setRowCount(processed_count)
         self.table.resizeColumnsToContents()
 
         msg = f"Found something for {found_count} of {len(self.books)} book(s)."

@@ -27,7 +27,6 @@ import webbrowser
 from PyQt6.QtCore import Qt
 from PyQt6.QtWidgets import (
     QAbstractItemView,
-    QApplication,
     QCheckBox,
     QDialog,
     QDialogButtonBox,
@@ -36,7 +35,6 @@ from PyQt6.QtWidgets import (
     QHeaderView,
     QLabel,
     QMessageBox,
-    QProgressDialog,
     QPushButton,
     QTableWidget,
     QTableWidgetItem,
@@ -47,6 +45,7 @@ from core.calibre_lookup import CalibreLookupError, fetch_metadata
 from core.calibre_tools import DOWNLOAD_URL, find_tool
 from core.epub_metadata import EpubBook
 from redactor_common.core.error_summary import summarize_errors
+from redactor_common.gui.progress import run_with_progress
 from gui import app_settings
 
 BOOK_COL, FOUND_COL, APPLY_COL = range(3)
@@ -171,20 +170,14 @@ class CalibreLookupDialog(QDialog):
         self.table.setRowCount(len(self.books))
         self._checkboxes = {}
         self._results = {}
-        progress = QProgressDialog("Looking up metadata via Calibre…", "Cancel", 0, len(self.books), self)
-        progress.setWindowModality(Qt.WindowModality.WindowModal)
-        progress.setMinimumDuration(0)
 
         found_count = 0
         errors: list[str] = []
-        for row, book in enumerate(self.books):
-            if progress.wasCanceled():
-                self.table.setRowCount(row)
-                break
-            progress.setValue(row)
-            progress.setLabelText(f"Looking up: {os.path.basename(book.path)}")
-            QApplication.processEvents()
+        processed_count = 0
 
+        def _step(book: EpubBook, row: int) -> None:
+            nonlocal found_count, processed_count
+            processed_count = row + 1
             self.table.setItem(row, BOOK_COL, self._readonly_item(os.path.basename(book.path)))
 
             fields = {}
@@ -212,7 +205,12 @@ class CalibreLookupDialog(QDialog):
             self._checkboxes[row] = cb
             self.table.setCellWidget(row, APPLY_COL, cb)
 
-        progress.setValue(len(self.books))
+        completed = run_with_progress(
+            self, self.books, _step, "Looking up metadata via Calibre…", threshold=1,
+            label_for=lambda book: f"Looking up: {os.path.basename(book.path)}",
+        )
+        if not completed:
+            self.table.setRowCount(processed_count)
         self.table.resizeColumnsToContents()
 
         msg = f"Found something for {found_count} of {len(self.books)} book(s)."

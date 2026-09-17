@@ -45,7 +45,11 @@ def _fake_book(path: str = "/x/fake.epub", **metadata_kwargs) -> EpubBook:
     """Bypasses EpubBook.__init__ (which loads a real zip file) --
     every attribute any code path under test actually reads is set
     directly instead, same bypass-__new__ approach cbzredactor's own
-    equivalent test file uses for CbzBook."""
+    equivalent test file uses for CbzBook. Keep this in sync with
+    EpubBook.__init__ -- a new instance attribute there needs adding
+    here too, or any code path that reads it raises AttributeError
+    (hit twice already: _orphan_files_to_remove/_image_replacements,
+    then _cover_hash_cache)."""
     book = EpubBook.__new__(EpubBook)
     book.path = path
     book.load_error = None
@@ -55,6 +59,7 @@ def _fake_book(path: str = "/x/fake.epub", **metadata_kwargs) -> EpubBook:
     book.cover_mime = ""
     book.cover_changed = False
     book.cover_removed = False
+    book._cover_hash_cache = None
     book._orphan_files_to_remove = set()
     book._image_replacements = {}
     book.validation_issues = []

@@ -4,6 +4,24 @@ All notable changes to The ƎPUB Redactor, by version. Trimmed to new
 functionality and real fixes — cosmetic/UX-only adjustments aren't
 listed here.
 
+## 2026-09-17#03
+
+- Fixed: "Updating list" (rebuilding the table after loading, saving,
+  undoing, or deleting) could be dramatically slower than it needed to
+  be for a large library -- an async cover-icon callback was scanning
+  every row to find the one it applied to, once per book, an O(n^2)
+  cost that dominated everything else combined (measured: ~21.5s for
+  5000 books, down to ~1.5s after the fix; scales linearly now instead
+  of quadratically).
+- Fixed: checking whether a book's cover is flagged "Junk" re-hashed
+  the full cover image on every table rebuild, for every book with a
+  cover -- now cached, only re-hashed when the cover actually changes.
+- Fixed: the "Loading books…"/lookup/scan/polish/etc. progress dialogs
+  could visibly jump around in size as filenames of very different
+  lengths scrolled through their label text. Fixed at the shared
+  `redactor_common` level (bumped to `2026-09-17#01`) -- every progress
+  dialog across the app now holds a steady width.
+
 ## 2026-09-17#02
 
 - New **Repair** menu, split out of Operations: Validate/Fix Issues,

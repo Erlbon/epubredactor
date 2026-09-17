@@ -41,7 +41,6 @@ from PyQt6.QtCore import QSize, Qt, QTimer
 from PyQt6.QtGui import QActionGroup, QColor, QGuiApplication, QIcon, QKeySequence
 from PyQt6.QtWidgets import (
     QAbstractItemView,
-    QApplication,
     QFileDialog,
     QHeaderView,
     QInputDialog,
@@ -50,7 +49,6 @@ from PyQt6.QtWidgets import (
     QListView,
     QMainWindow,
     QMessageBox,
-    QProgressDialog,
     QSizePolicy,
     QSplitter,
     QStatusBar,
@@ -241,6 +239,17 @@ class MainWindow(QMainWindow):
         self.undo_manager = UndoManager(max_entries=UNDO_MAX_ENTRIES)
         self._cover_icon_cache = AsyncIconCache(COVER_ICON_SIZE, parent=self)
         self._cover_icon_cache.icon_ready.connect(self._on_cover_icon_ready)
+        # book -> its current FILENAME_COL QTableWidgetItem, rebuilt fresh
+        # in _rebuild_table() and kept in sync by _populate_row() -- lets
+        # _on_cover_icon_ready() apply an async decode result in O(1)
+        # instead of _find_row_for_book()'s O(row count) scan. That scan
+        # is fine for an occasional single-book lookup (still used by
+        # _refresh_row_full()), but _on_cover_icon_ready() fires once PER
+        # BOOK as each background decode completes -- for a large library
+        # that's thousands of independent O(row count) scans in a burst
+        # right after loading, an O(n^2) cost that dominated "Updating
+        # list" time for anything but a small library.
+        self._filename_item_by_book: dict[EpubBook, QTableWidgetItem] = {}
         # Cached in memory rather than re-reading app_settings on every
         # row paint (_populate_row runs once per book, potentially
         # thousands of times per rebuild) -- reloaded from disk only when
@@ -1208,22 +1217,11 @@ class MainWindow(QMainWindow):
         if not new_paths:
             return
 
-        progress = None
-        if len(new_paths) >= LOAD_PROGRESS_THRESHOLD:
-            progress = QProgressDialog("Loading books…", "Cancel", 0, len(new_paths), self)
-            progress.setWindowModality(Qt.WindowModality.WindowModal)
-            progress.setMinimumDuration(0)
-
         added = 0
         failed = []
-        for i, path in enumerate(new_paths):
-            if progress is not None:
-                if progress.wasCanceled():
-                    break
-                progress.setValue(i)
-                progress.setLabelText(f"Loading: {os.path.basename(path)}")
-                QApplication.processEvents()
 
+        def _step(path: str, _index: int) -> None:
+            nonlocal added
             try:
                 book = EpubBook(path)
             except Exception:  # noqa: BLE001 - a single unusually-broken file must never take down the whole batch
@@ -1234,14 +1232,17 @@ class MainWindow(QMainWindow):
                 # yet anticipate, so one file can't crash loading for
                 # every other file in the same batch.
                 failed.append((path, traceback.format_exc(limit=2)))
-                continue
+                return
             self.books.append(book)
             if book.load_error:
                 failed.append((path, book.load_error))
             added += 1
 
-        if progress is not None:
-            progress.setValue(len(new_paths))
+        run_with_progress(
+            self, new_paths, _step, "Loading books…",
+            threshold=LOAD_PROGRESS_THRESHOLD,
+            label_for=lambda path: f"Loading: {os.path.basename(path)}",
+        )
 
         if added:
             self._rebuild_table()
@@ -1292,6 +1293,7 @@ class MainWindow(QMainWindow):
         was_sorting = self.table.isSortingEnabled()
         self.table.setSortingEnabled(False)  # avoid reorder-mid-populate
         self.table.setRowCount(len(self.books))
+        self._filename_item_by_book = {}  # repopulated fresh below, in _populate_row()
 
         # A plain, uninterrupted loop here blocks the whole UI thread
         # until every row is built -- fine for a handful of books, but
@@ -1302,20 +1304,10 @@ class MainWindow(QMainWindow):
         # a decision that's already been made (files already loaded,
         # already saved, already deleted, ...), not an operation there's
         # any reason to interrupt partway through.
-        progress = None
-        if len(self.books) >= REBUILD_PROGRESS_THRESHOLD:
-            progress = QProgressDialog("Updating list…", None, 0, len(self.books), self)
-            progress.setWindowModality(Qt.WindowModality.WindowModal)
-            progress.setMinimumDuration(0)
-
-        for row, book in enumerate(self.books):
-            self._populate_row(row, book)
-            if progress is not None and row % 50 == 0:
-                progress.setValue(row)
-                QApplication.processEvents()
-
-        if progress is not None:
-            progress.setValue(len(self.books))
+        run_with_progress(
+            self, self.books, lambda book, row: self._populate_row(row, book), "Updating list…",
+            threshold=REBUILD_PROGRESS_THRESHOLD, cancellable=False, update_every=50,
+        )
 
         if not self._columns_sized and self.books:
             # Only ever auto-fits once, the very first time real content
@@ -1395,6 +1387,7 @@ class MainWindow(QMainWindow):
         name_item.setFlags(name_item.flags() & ~Qt.ItemFlag.ItemIsEditable)
         name_item.setToolTip(book.path)
         name_item.setData(Qt.ItemDataRole.UserRole, book)
+        self._filename_item_by_book[book] = name_item
         self._apply_cover_icon(name_item, book)
         self.table.setItem(row, FILENAME_COL, name_item)
 
@@ -1566,17 +1559,17 @@ class MainWindow(QMainWindow):
 
     def _on_cover_icon_ready(self, book: EpubBook, icon: QIcon) -> None:
         """A background cover decode (queued by _apply_cover_icon's
-        cache-miss path) has finished. Sets ONLY this book's icon, on
-        whichever row it currently occupies, if any -- never a
-        rebuild, never any other cell. _find_row_for_book() re-derives
-        the row fresh rather than trusting one captured at request
-        time, since Qt's own column-sort can reorder rows on its own,
-        with no callback into any of this project's code, while a
-        decode is still in flight."""
-        row = self._find_row_for_book(book)
-        if row is None:
-            return  # removed, or no longer loaded, since the request was made
-        item = self.table.item(row, FILENAME_COL)
+        cache-miss path) has finished. Sets ONLY this book's icon, never
+        a rebuild, never any other cell. Applied directly to the item
+        object captured in _filename_item_by_book at population time,
+        not re-looked-up by row -- Qt's own column-sort reorders items
+        between rows without any callback into this project's code, but
+        the ITEM object itself is the same object throughout a sort (Qt
+        moves item pointers between row slots, it doesn't recreate
+        them), so setIcon() on the captured reference always lands on
+        whichever row this book currently occupies, correctly, without
+        needing to re-derive that row at all."""
+        item = self._filename_item_by_book.get(book)
         if item is not None:
             item.setIcon(icon)
 

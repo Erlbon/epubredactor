@@ -16,9 +16,7 @@ from __future__ import annotations
 
 import os
 
-from PyQt6.QtCore import Qt
 from PyQt6.QtWidgets import (
-    QApplication,
     QDialog,
     QDialogButtonBox,
     QFileDialog,
@@ -26,13 +24,13 @@ from PyQt6.QtWidgets import (
     QLabel,
     QListWidget,
     QMessageBox,
-    QProgressDialog,
     QPushButton,
     QVBoxLayout,
 )
 
 from core.calibre_tools import find_tool
 from core.ebook_convert import EbookConvertError, SUPPORTED_SOURCE_EXTENSIONS, convert_to_epub
+from redactor_common.gui.progress import run_with_progress
 from core.rename_pattern import unique_path
 from gui import app_settings
 
@@ -154,21 +152,11 @@ class EbookConvertDialog(QDialog):
     def _run_conversion(self) -> None:
         if not self._source_paths:
             return
-        progress = QProgressDialog("Converting to EPUB…", "Cancel", 0, len(self._source_paths), self)
-        progress.setWindowModality(Qt.WindowModality.WindowModal)
-        progress.setMinimumDuration(0)
-
         succeeded: list[str] = []
         errors: list[str] = []
         taken: set[str] = set()
 
-        for i, source in enumerate(self._source_paths):
-            if progress.wasCanceled():
-                break
-            progress.setValue(i)
-            progress.setLabelText(f"Converting: {os.path.basename(source)}")
-            QApplication.processEvents()
-
+        def _step(source: str, _index: int) -> None:
             directory = os.path.dirname(source)
             stem = os.path.splitext(os.path.basename(source))[0]
             output_path = unique_path(directory, stem, ".epub", taken)
@@ -179,7 +167,10 @@ class EbookConvertDialog(QDialog):
             except EbookConvertError as exc:
                 errors.append(f"{os.path.basename(source)}: {exc}")
 
-        progress.setValue(len(self._source_paths))
+        run_with_progress(
+            self, self._source_paths, _step, "Converting to EPUB…", threshold=1,
+            label_for=lambda source: f"Converting: {os.path.basename(source)}",
+        )
         self._converted_paths = succeeded
 
         if errors:

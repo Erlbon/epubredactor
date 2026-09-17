@@ -23,9 +23,7 @@ from __future__ import annotations
 import os
 import webbrowser
 
-from PyQt6.QtCore import Qt
 from PyQt6.QtWidgets import (
-    QApplication,
     QCheckBox,
     QComboBox,
     QDialog,
@@ -35,7 +33,6 @@ from PyQt6.QtWidgets import (
     QHBoxLayout,
     QLabel,
     QMessageBox,
-    QProgressDialog,
     QPushButton,
     QRadioButton,
     QVBoxLayout,
@@ -45,6 +42,7 @@ from core.calibre_tools import DOWNLOAD_URL, find_tool
 from core.ebook_polish import EbookPolishError, PolishOptions, polish_book
 from core.epub_metadata import EpubBook
 from core.rename_pattern import unique_path
+from redactor_common.gui.progress import run_with_progress
 from gui import app_settings
 
 HYPHENS_DONT_CHANGE, HYPHENS_ADD, HYPHENS_REMOVE = "Don't change", "Add", "Remove"
@@ -227,22 +225,12 @@ class PolishBookDialog(QDialog):
             QMessageBox.information(self, "Choose a folder", "Choose an output folder first.")
             return
 
-        progress = QProgressDialog("Polishing\u2026", "Cancel", 0, len(self.eligible_books), self)
-        progress.setWindowModality(Qt.WindowModality.WindowModal)
-        progress.setMinimumDuration(0)
-
         succeeded_in_place: list[EpubBook] = []
         succeeded_export_paths: list[str] = []
         errors: list[str] = []
         taken: set[str] = set()
 
-        for i, book in enumerate(self.eligible_books):
-            if progress.wasCanceled():
-                break
-            progress.setValue(i)
-            progress.setLabelText(f"Polishing: {os.path.basename(book.path)}")
-            QApplication.processEvents()
-
+        def _step(book: EpubBook, _index: int) -> None:
             tmp_path = None
             try:
                 if self.export_radio.isChecked():
@@ -267,7 +255,10 @@ class PolishBookDialog(QDialog):
                     except OSError:
                         pass
 
-        progress.setValue(len(self.eligible_books))
+        run_with_progress(
+            self, self.eligible_books, _step, "Polishing\u2026", threshold=1,
+            label_for=lambda book: f"Polishing: {os.path.basename(book.path)}",
+        )
         self._polished_in_place = succeeded_in_place
         self._exported_paths = succeeded_export_paths
 

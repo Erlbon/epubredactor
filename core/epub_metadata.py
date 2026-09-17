@@ -243,6 +243,7 @@ class EpubBook:
         self.cover_mime: str = ""
         self.cover_changed = False
         self.cover_removed = False
+        self._cover_hash_cache: Optional[tuple[bytes, str]] = None  # see cover_hash property
 
         # Archive paths staged for removal by remove_orphaned_files() (see
         # Repair -> Repair Navigation), applied on the next save() the
@@ -507,10 +508,28 @@ class EpubBook:
         share the exact same cover image (e.g. a broken converter's
         generic placeholder, reused byte-for-byte across many books),
         regardless of filename or path. Used by the Junk Cover flag (see
-        gui/main_window.py); None if there's no cover to hash."""
+        gui/main_window.py); None if there's no cover to hash.
+
+        Cached by cover_bytes IDENTITY (not content) -- cover_bytes is
+        reassigned, never mutated in place, whenever a cover actually
+        changes (see set_cover()/remove_cover() above), so comparing
+        `is` against the exact bytes object this was last computed from
+        is a safe and much cheaper cache key than re-hashing potentially
+        large image bytes on every access. The cache tuple holds that
+        same bytes object, so there's no id() reuse risk -- as long as
+        the cache entry exists, the object it points at can't be
+        garbage-collected and its id reassigned to something else.
+        Matters in practice: the Junk Cover column checks this once per
+        book on every single table rebuild (Save, Undo, Delete, Refresh,
+        load) -- without caching, that's a fresh SHA-256 over every
+        book's full cover image, every time."""
         if not self.cover_bytes:
             return None
-        return hashlib.sha256(self.cover_bytes).hexdigest()
+        if self._cover_hash_cache is not None and self._cover_hash_cache[0] is self.cover_bytes:
+            return self._cover_hash_cache[1]
+        digest = hashlib.sha256(self.cover_bytes).hexdigest()
+        self._cover_hash_cache = (self.cover_bytes, digest)
+        return digest
 
     # ------------------------------------------------------------------
     # Validation
