@@ -6,15 +6,26 @@ filename, this turns a filename BACK into metadata field values, using
 the same %placeholder% pattern syntax.
 
 How it works: the pattern is compiled into a regex, where each %field%
-token becomes a named capture group and everything else (spaces, dashes,
-punctuation) is treated as literal text that must match exactly. This
-works well for patterns with clear separators between fields (which is
-the normal case -- e.g. "%series% %series_index% - %title%"), but is
-inherently ambiguous for adjacent fields with no separator between them,
-or when a field's own value happens to contain the literal text used as
-a separator elsewhere in the pattern. There's no way around that with a
-plain pattern-matching approach; it's a limitation worth knowing about
-rather than something to silently paper over.
+token becomes a named capture group and everything else (dashes,
+punctuation) is treated as literal text that must match exactly --
+except whitespace, which is never required or exact: a space in the
+pattern matches any amount of whitespace in the filename, including
+none at all (see _flexible_literal_regex()). A (...)/[...]/{...} group
+containing a %field% token is optional as a whole (see
+build_parser_regex()), which is how "the standard template" tolerates a
+missing series or year without needing two different patterns for
+"with" and "without". A BARE field with no wrapper of its own stays
+required, deliberately -- see _compile_tokens()'s docstring for why
+that one's not just an oversight.
+
+This works well for patterns with clear separators between fields
+(which is the normal case -- e.g. "%series% %series_index% - %title%"),
+but is inherently ambiguous for adjacent fields with no separator
+between them, or when a field's own value happens to contain the
+literal text used as a separator elsewhere in the pattern. There's no
+way around that with a plain pattern-matching approach; it's a
+limitation worth knowing about rather than something to silently paper
+over.
 """
 
 from __future__ import annotations
@@ -35,8 +46,15 @@ VALID_FIELD_KEYS = {key for key, _label in PLACEHOLDERS} | {"tags", "pub_year", 
 # which is ambiguous with a plain ".+?" match. Requiring the index to
 # actually look like a number resolves that ambiguity in the common case.
 _NUMERIC_FIELD_PATTERN = r"\d+(?:\.\d+)?"
-_NUMERIC_FIELDS = {"series_index", "ddc"}
+_NUMERIC_FIELDS = {"ddc"}
 _ISBN_FIELD_PATTERN = r"[\dXx\-]+"
+
+# A series index is almost always a small number, 0-999 -- 1-3 digits,
+# optionally with a decimal sub-index ("5.5" for a novella between two
+# main entries). Bounded to 3 digits specifically so it can never be
+# confused with a 4-digit year -- a bare number in a filename can be
+# told apart by shape alone: 4 digits is a year, 1-3 is a series index.
+_SERIES_INDEX_FIELD_PATTERN = r"\d{1,3}(?:\.\d+)?"
 
 # A publication year is almost always 4 digits, occasionally 2 -- never
 # a decimal, never 1 or 3 digits. Tried longest-first (the regex engine
@@ -68,14 +86,16 @@ _MONTH_NAME_ALTERNATION = "|".join(sorted(MONTH_NAMES, key=len, reverse=True))
 _MONTH_FIELD_PATTERN = rf"(?i:(?:\d{{1,2}}|{_MONTH_NAME_ALTERNATION})\.?)"
 
 _TOKEN_RE = re.compile(r"%(\w+)%")
-# A [...] segment (no nesting) containing at least one %field% token is
-# an OPTIONAL group when parsing too -- mirrors render_filename()'s own
-# _resolve_optional_brackets() in core/rename_pattern.py, so a filename
-# with no series section still matches the standard
-# "%authors% - [%series% %series_index%] - %title%" template. A bracket
-# segment with no field token inside is left as literal, required text.
-_BRACKET_RE = re.compile(r"\[([^\[\]]*)\]")
-
+# A (...)/[...]/{...} segment (no nesting) containing at least one
+# %field% token is an OPTIONAL group when parsing too -- mirrors
+# render_filename()'s own _resolve_optional_brackets() in
+# core/rename_pattern.py, so a filename with no series section still
+# matches the standard "%authors% - [%series% %series_index%] -
+# %title% (%year%)" template. All three wrapper styles are recognized
+# so "(%year%)" is just as optional as "[%series%]" without needing to
+# rewrite anyone's existing pattern. A wrapper segment with no field
+# token inside is left as literal, required text.
+_OPTIONAL_GROUP_RE = re.compile(r"\[([^\[\]]*)\]|\(([^()]*)\)|\{([^{}]*)\}")
 
 def _field_regex(field: str) -> str:
     if field in ("year", "pub_year"):
@@ -84,6 +104,8 @@ def _field_regex(field: str) -> str:
         return _MONTH_FIELD_PATTERN
     if field in ("day", "pub_day"):
         return _DAY_FIELD_PATTERN
+    if field == "series_index":
+        return _SERIES_INDEX_FIELD_PATTERN
     if field in _NUMERIC_FIELDS:
         return _NUMERIC_FIELD_PATTERN
     if field == "isbn":
@@ -94,33 +116,55 @@ def _field_regex(field: str) -> str:
 def _flexible_literal_regex(literal: str) -> str:
     """Converts a literal (non-placeholder) pattern-text segment into a
     regex fragment where any run of whitespace matches any run of
-    whitespace in the filename -- one space in the pattern still
-    matches one space, but also two, three, or a stray tab, rather than
-    requiring the exact same character-for-character spacing. Real
-    filenames often pick up an extra or missing space somewhere (a
-    double space from a rename tool, inconsistent spacing around a
-    dash), and that shouldn't break matching altogether when the
+    whitespace in the filename -- OR NONE AT ALL. Spaces don't count as
+    meaningful characters of their own: one space in the pattern
+    matches one space in the filename, but also two, three, a stray
+    tab, or nothing there at all. Real filenames often pick up an extra
+    or missing space somewhere (a double space from a rename tool,
+    inconsistent spacing around a dash, no space at all around a
+    slash), and that shouldn't break matching altogether when the
     surrounding text is otherwise a clean match. Non-whitespace
     characters are still escaped and matched exactly -- this doesn't
     loosen anything about the literal punctuation/text itself, only
-    how much whitespace is required where the pattern already has some."""
+    whitespace around it."""
     pieces = []
     for chunk in re.split(r"(\s+)", literal):
         if not chunk:
             continue
-        pieces.append(r"\s+" if chunk.isspace() else re.escape(chunk))
+        pieces.append(r"\s*" if chunk.isspace() else re.escape(chunk))
     return "".join(pieces)
+
+
+# A run of punctuation/whitespace immediately after a wrapper group's
+# closing char -- stops at the first letter/digit/underscore or the
+# start of the next %field%/wrapper -- folded INTO the same optional
+# group as the wrapper itself (see build_parser_regex()'s docstring for
+# why).
+_TRAILING_SEPARATOR_RE = re.compile(r"[^%\[({\w]*")
 
 
 def _compile_tokens(segment: str, seen_fields: set[str]) -> str:
     """Compiles a pattern segment's plain %field% tokens and literal text
     into a regex fragment -- shared by build_parser_regex() for the
-    top-level pattern and for the inside of an optional [...] group, so
-    a field inside brackets is compiled exactly the same way as one
-    outside them. `seen_fields` is shared across the whole pattern
-    (mutated in place), so a field used a second time anywhere -- inside
-    or outside brackets -- is still correctly treated as literal text to
-    match rather than a second capture group, same as always."""
+    top-level pattern and for the inside of an optional wrapper group,
+    so a field inside one is compiled exactly the same way as one
+    outside. `seen_fields` is shared across the whole pattern (mutated
+    in place), so a field used a second time anywhere is still
+    correctly treated as literal text to match rather than a second
+    capture group, same as always.
+
+    A bare (unwrapped) field is always REQUIRED, even one like
+    %series_index% or %year% whose own shape is distinctive -- wrapping
+    such a field in its own optional group individually (tried during
+    development) turns out to be actively harmful next to a greedy
+    ".+?" neighbor: with nothing forcing that neighbor to stop early,
+    the regex engine happily skips the now-optional numeric field
+    entirely and lets the neighbor swallow everything, silently
+    misparsing files that DO have that field. Wrap a field in (), [] or
+    {} (see build_parser_regex()) to make it genuinely optional --
+    that's unambiguous, since the wrapper's own required-or-absent
+    punctuation gives the regex engine something concrete to anchor on
+    either way, instead of only a vague shape hint."""
     parts: list[str] = []
     last_end = 0
     for m in _TOKEN_RE.finditer(segment):
@@ -143,58 +187,54 @@ def _compile_tokens(segment: str, seen_fields: set[str]) -> str:
     return "".join(parts)
 
 
-# A run of punctuation/whitespace immediately after a bracket's closing
-# "]" -- stops at the first letter/digit/underscore or the start of the
-# next %field%/[ -- folded INTO the same optional group as the bracket
-# itself (see build_parser_regex()'s docstring for why).
-_TRAILING_SEPARATOR_RE = re.compile(r"[^%\[\w]*")
-
-
 def build_parser_regex(pattern: str) -> re.Pattern:
     """Compile a %field% pattern into a regex with one named group per
     (first occurrence of a) valid field token. A field used a second time
     in the same pattern, or an unrecognized %something%, is treated as
     literal text to match rather than causing a crash.
 
-    A [...] segment containing at least one %field% token compiles to an
-    OPTIONAL group (mirrors render_filename()'s own bracket handling in
-    core/rename_pattern.py) -- a filename with no series section still
-    matches "%authors% - [%series% %series_index%] - %title%". A bracket
-    segment with no field token inside compiles as ordinary, required
-    literal text instead.
+    A (...)/[...]/{...} segment containing at least one %field% token
+    compiles to an OPTIONAL group (mirrors render_filename()'s own
+    wrapper handling in core/rename_pattern.py) -- a filename with no
+    series section still matches "%authors% - [%series% %series_index%]
+    - %title%". A wrapper segment with no field token inside compiles as
+    ordinary, required literal text instead. A BARE field (no wrapper of
+    its own) is always required -- see _compile_tokens()'s docstring for
+    why that's deliberate, not an oversight.
 
-    The separator text immediately following the closing "]" (e.g. the
-    " - " between the bracket and %title%) is folded into the SAME
-    optional group as the bracket, rather than staying separately
-    required -- render_filename() collapses "Author -  - Title" (an
-    empty bracket leaves two adjacent separators) down to a single
-    "Author - Title", so the leading separator before the bracket
-    reads as the one connecting %authors% directly to %title% when
-    there's no series, and the trailing one only appears alongside the
-    bracket. Matching has to accept both actual shapes, not just the
-    one with a series."""
+    The separator text immediately following a wrapper group's closing
+    character (e.g. the " - " between "]" and %title%) is folded into
+    the SAME optional group as the wrapper, rather than staying
+    separately required -- render_filename() collapses "Author -  -
+    Title" (an empty bracket leaves two adjacent separators) down to a
+    single "Author - Title", so the leading separator before the
+    wrapper reads as the one connecting %authors% directly to %title%
+    when there's no series, and the trailing one only appears alongside
+    the wrapper. Matching has to accept both actual shapes, not just
+    the one with a series."""
     parts: list[str] = []
     seen_fields: set[str] = set()
     last_end = 0
 
-    for m in _BRACKET_RE.finditer(pattern):
+    for m in _OPTIONAL_GROUP_RE.finditer(pattern):
         literal_before = pattern[last_end:m.start()]
         if literal_before:
             parts.append(_compile_tokens(literal_before, seen_fields))
 
-        inner = m.group(1)
+        open_ch, close_ch = m.group(0)[0], m.group(0)[-1]
+        inner = next(g for g in m.groups() if g is not None)
         if _TOKEN_RE.search(inner):
             after_start = m.end()
             sep_match = _TRAILING_SEPARATOR_RE.match(pattern, after_start)
             after_end = sep_match.end() if sep_match else after_start
             trailing_literal = pattern[after_start:after_end]
-            group = r"\[" + _compile_tokens(inner, seen_fields) + r"\]"
+            group = re.escape(open_ch) + _compile_tokens(inner, seen_fields) + re.escape(close_ch)
             if trailing_literal:
                 group += _compile_tokens(trailing_literal, seen_fields)
             parts.append(f"(?:{group})?")
             last_end = after_end
         else:
-            parts.append(re.escape(m.group(0)))  # plain literal brackets, required as typed
+            parts.append(re.escape(m.group(0)))  # plain literal wrapper, required as typed
             last_end = m.end()
 
     trailing = pattern[last_end:]

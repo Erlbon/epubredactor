@@ -4,6 +4,26 @@ All notable changes to The ƎPUB Redactor, by version. Trimmed to new
 functionality and real fixes — cosmetic/UX-only adjustments aren't
 listed here.
 
+## 2026-09-17#12
+
+- **Parse Filename → Metadata** patterns are more forgiving:
+  - Spaces no longer count as meaningful characters -- a space in a
+    pattern matches any amount of whitespace in the filename,
+    including none at all (a missing space used to make the whole
+    pattern fail to match).
+  - `(...)` and `{...}` now work as optional groups exactly like
+    `[...]` already did, so `(%year%)` in the built-in suggested
+    templates is optional without needing to be rewritten with
+    brackets.
+  - `%series_index%` is now bounded to 0-999 (1-3 digits), distinct in
+    shape from a 4-digit year.
+  - (A bare, unwrapped field -- %year% with no surrounding punctuation
+    of its own -- stays required by design: making it silently
+    optional turned out to let it get skipped entirely next to a
+    greedy neighbor like %series%, silently misparsing files that
+    genuinely had that field. Wrap it in `()`, `[]` or `{}` to make it
+    optional -- that's unambiguous.)
+
 ## 2026-09-17#11
 
 - Reworked **Import Metadata → Parse Filename → Metadata**:

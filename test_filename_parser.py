@@ -116,18 +116,19 @@ def test_double_space_in_filename_still_matches():
     print("PASS: a doubled space around a literal separator no longer breaks the match")
 
 
-def test_missing_space_not_tolerated_by_design():
-    """The flexible-whitespace fix only loosens how MUCH whitespace is
-    required where the pattern already has some (one-or-more, not an
-    exact count) -- it deliberately does NOT also allow zero whitespace
-    where the pattern expects some. Doing that too would make an
-    ordinary "%field% %field%" pattern (very common in this app)
-    genuinely ambiguous about where one field ends and the next
-    begins, which is a real regression risk the reported "extra space"
-    complaint doesn't call for."""
+def test_missing_space_now_tolerated():
+    """Spaces don't count as meaningful characters of their own -- a
+    space in the pattern matches a space in the filename, but also NO
+    space at all, not just "one or more." Superseded the earlier,
+    stricter design (a missing space used to be rejected outright) at
+    the user's explicit request: real filenames are inconsistent enough
+    about spacing that treating a missing space as a hard failure was
+    more often an annoyance than a useful safeguard."""
     result = parse_filename("Jane Doe -My Book", "%authors% - %title%")
-    assert result is None
-    print("PASS: a missing space where the pattern expects one is still not matched, by design")
+    assert result is not None
+    assert result["authors"] == "Jane Doe"
+    assert result["title"] == "My Book"
+    print("PASS: a missing space where the pattern expects one is now tolerated, not rejected")
 
 
 def test_tab_or_mixed_whitespace_matches():
@@ -320,6 +321,18 @@ def test_series_index_no_leading_zero_unaffected():
     print("PASS: a series index with no leading zero is left exactly as-is")
 
 
+def test_series_index_bounded_to_0_999_distinct_from_year():
+    # A series index is 1-3 digits, never 4 -- so it can never be
+    # confused with a 4-digit year purely by shape. Tested against the
+    # field alone (anchored both ends) rather than inside a bigger
+    # pattern, since a neighboring ".+?" field can otherwise backtrack
+    # to absorb a stray digit and mask what the field's own regex would
+    # or wouldn't accept on its own.
+    assert parse_filename("999", "%series_index%") == {"series_index": "999"}
+    assert parse_filename("2020", "%series_index%") is None
+    print("PASS: series_index matches up to 3 digits (0-999) but not a bare 4-digit number like a year")
+
+
 # ----------------------------------------------------------------------
 # Optional [...] bracket segments (the "standard template")
 # ----------------------------------------------------------------------
@@ -395,6 +408,30 @@ def test_bracket_with_literal_text_still_required_as_literal():
     print("PASS: a [...] segment with no field inside stays required literal text when parsing too")
 
 
+def test_parens_and_braces_are_optional_wrappers_too():
+    # Not just [...] -- (...) and {...} work exactly the same way, so
+    # SUGGESTED_PATTERNS' own "(%year%)" is optional without needing to
+    # be rewritten with brackets.
+    pattern = "%title% (%year%)"
+    assert parse_filename("Dune (1965)", pattern) == {"title": "Dune", "year": "1965"}
+    assert parse_filename("Dune", pattern) == {"title": "Dune", "year": ""}
+    pattern_braces = "%title% {%year%}"
+    assert parse_filename("Dune {1965}", pattern_braces) == {"title": "Dune", "year": "1965"}
+    assert parse_filename("Dune", pattern_braces) == {"title": "Dune", "year": ""}
+    print("PASS: (...) and {...} are optional wrappers exactly like [...]")
+
+
+def test_bare_field_with_no_wrapper_stays_required():
+    # Deliberate: a field with NO wrapper of its own is always required,
+    # even a distinctively-shaped one like %year% -- see _compile_tokens()'s
+    # docstring for why making a bare field optional turned out to be
+    # unsafe next to a greedy neighbor.
+    result = parse_filename("Dune", "%title% %year%")
+    assert result is None
+    print("PASS: a bare (unwrapped) field with no match in the filename fails, by design -- "
+          "wrap it to make it optional")
+
+
 # ----------------------------------------------------------------------
 # %year%/%month% smarter regex
 # ----------------------------------------------------------------------
@@ -457,7 +494,7 @@ if __name__ == "__main__":
     test_roundtrip_with_isbn_and_year()
     test_extra_whitespace_trimmed()
     test_double_space_in_filename_still_matches()
-    test_missing_space_not_tolerated_by_design()
+    test_missing_space_now_tolerated()
     test_tab_or_mixed_whitespace_matches()
     test_leading_trailing_filename_whitespace_stripped()
     test_no_whitespace_boundary_still_requires_no_whitespace_flexibility()
@@ -479,10 +516,13 @@ if __name__ == "__main__":
     test_series_index_zero_alone_not_stripped_to_empty()
     test_series_index_zero_point_something_preserved()
     test_series_index_no_leading_zero_unaffected()
+    test_series_index_bounded_to_0_999_distinct_from_year()
     test_standard_template_matches_with_series()
     test_standard_template_matches_without_series()
     test_bracket_roundtrip_through_render_filename()
     test_bracket_with_literal_text_still_required_as_literal()
+    test_parens_and_braces_are_optional_wrappers_too()
+    test_bare_field_with_no_wrapper_stays_required()
     test_year_matches_four_digits()
     test_year_matches_two_digits()
     test_year_does_not_swallow_extra_digits()

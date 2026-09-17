@@ -70,16 +70,18 @@ SUGGESTED_PATTERNS = [
 
 # Characters Windows forbids in filenames, plus control characters.
 _ILLEGAL_CHARS_RE = re.compile(r'[\\/:*?"<>|\x00-\x1f]')
-# A [...] segment (no nesting) that contains at least one %field% token
-# is an OPTIONAL block: e.g. "[%series% %series_index%]" in the standard
-# "%authors% - [%series% %series_index%] - %title%" template disappears
-# entirely -- brackets included -- for a standalone book with no series,
-# rather than rendering the literal, ugly "Author -  - Title". A bracket
-# segment with no field token inside (plain literal text someone
-# happened to wrap in brackets) is left alone; only a segment that's
+# A (...)/[...]/{...} segment (no nesting) that contains at least one
+# %field% token is an OPTIONAL block: e.g. "[%series% %series_index%]"
+# in the standard "%authors% - [%series% %series_index%] - %title%
+# (%year%)" template disappears entirely -- wrapper characters included
+# -- for a standalone book with no series, rather than rendering the
+# literal, ugly "Author -  - Title". All three wrapper styles work the
+# same way, so "(%year%)" is just as optional as "[%series%]". A
+# wrapper segment with no field token inside (plain literal text someone
+# happened to wrap in punctuation) is left alone; only a segment that's
 # actually ABOUT a field is ever conditional. See filename_parser.py's
 # build_parser_regex() for the matching read-direction behavior.
-_BRACKET_RE = re.compile(r"\[([^\[\]]*)\]")
+_OPTIONAL_GROUP_RE = re.compile(r"\[([^\[\]]*)\]|\(([^()]*)\)|\{([^{}]*)\}")
 _TOKEN_IN_PATTERN_RE = re.compile(r"%(\w+)%")
 _MULTI_SPACE_RE = re.compile(r"[ \t]+")
 _REPEATED_SEPARATOR_RE = re.compile(r"(?:\s*-\s*){2,}")
@@ -158,15 +160,17 @@ def sanitize_filename(name: str) -> str:
 
 
 def _resolve_optional_brackets(pattern: str, values: dict) -> str:
-    """Replaces every [...] segment in `pattern` that contains a %field%
-    token: if every field inside resolved to an empty value, the whole
-    segment (brackets included) is dropped; otherwise the segment's own
-    tokens are substituted in place, brackets kept. See _BRACKET_RE above."""
+    """Replaces every (...)/[...]/{...} segment in `pattern` that contains
+    a %field% token: if every field inside resolved to an empty value,
+    the whole segment (wrapper characters included) is dropped;
+    otherwise the segment's own tokens are substituted in place, the
+    same wrapper characters kept. See _OPTIONAL_GROUP_RE above."""
     def _replace(m: re.Match) -> str:
-        inner = m.group(1)
+        open_ch, close_ch = m.group(0)[0], m.group(0)[-1]
+        inner = next(g for g in m.groups() if g is not None)
         tokens = _TOKEN_IN_PATTERN_RE.findall(inner)
         if not tokens:
-            return m.group(0)  # no fields inside -- ordinary literal brackets
+            return m.group(0)  # no fields inside -- ordinary literal text
         substituted = inner
         any_value = False
         for key in tokens:
@@ -176,9 +180,9 @@ def _resolve_optional_brackets(pattern: str, values: dict) -> str:
             substituted = substituted.replace(f"%{key}%", value or "")
         # strip(): one field inside still being empty (e.g. series set
         # but series_index blank) shouldn't leave a stray dangling space
-        # next to the bracket -- "[Saga ]" instead of "[Saga]".
-        return f"[{substituted.strip()}]" if any_value else ""
-    return _BRACKET_RE.sub(_replace, pattern)
+        # next to the wrapper -- "[Saga ]" instead of "[Saga]".
+        return f"{open_ch}{substituted.strip()}{close_ch}" if any_value else ""
+    return _OPTIONAL_GROUP_RE.sub(_replace, pattern)
 
 
 def render_filename(
