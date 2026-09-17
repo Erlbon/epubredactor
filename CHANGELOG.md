@@ -4,6 +4,20 @@ All notable changes to The ƎPUB Redactor, by version. Trimmed to new
 functionality and real fixes — cosmetic/UX-only adjustments aren't
 listed here.
 
+## 2026-09-17#04
+
+- Fixed: a Description containing raw HTML with embedded newlines
+  (e.g. imported verbatim as `<div>\n<p>...</p>\n<p></p>...`) could
+  still blow a row up to several lines tall even in a "fixed row
+  height" Text Wrapping mode (Truncate/Clip). Qt renders a literal
+  newline in cell text as a real line break regardless of the word-wrap
+  setting -- word wrap alone only controls whether one long line breaks
+  to fit the column width. Truncate/Clip now collapse a Description's
+  embedded newlines for display; Wrap Text still shows them as real
+  paragraph breaks, same as a spreadsheet's own wrap-text behavior
+  would. Only ever affects what's shown in the table -- the book's
+  actual Description is never touched by this.
+
 ## 2026-09-17#03
 
 - Fixed: "Updating list" (rebuilding the table after loading, saving,

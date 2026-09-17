@@ -1033,11 +1033,11 @@ class MainWindow(QMainWindow):
             name_item.setText(os.path.basename(book.path))
             name_item.setToolTip(book.path)
             self._apply_cover_icon(name_item, book)
-        for i, (key, _label, _multiline) in enumerate(FIELDS):
+        for i, (key, _label, multiline) in enumerate(FIELDS):
             col = FIRST_FIELD_COL + i
             item = self.table.item(row, col)
             if item is not None:
-                item.setText(getattr(book.metadata, key, ""))
+                item.setText(self._field_display_text(getattr(book.metadata, key, ""), multiline))
         self._update_status_cell(row, book)
         self._update_junk_cover_cell(row, book)
         self._set_row_dirty_style(row, book.dirty)
@@ -1369,6 +1369,7 @@ class MainWindow(QMainWindow):
         self.table.setTextElideMode(
             Qt.TextElideMode.ElideNone if mode == "clip" else Qt.TextElideMode.ElideRight
         )
+        self._refresh_multiline_field_cells()
         self._reflow_table_rows()
 
     def set_text_overflow_mode(self, mode: str) -> None:
@@ -1376,6 +1377,67 @@ class MainWindow(QMainWindow):
         remembers it for next launch."""
         self._apply_text_overflow_mode(mode)
         app_settings.save_text_overflow_mode(mode)
+
+    def _refresh_multiline_field_cells(self) -> None:
+        """Re-derives every multiline field's (currently just
+        Description) displayed cell text for the CURRENT text-overflow
+        mode -- whether embedded newlines are collapsed for display
+        depends on the mode (see _field_display_text), unlike every
+        other field's display text, which doesn't. Always re-read fresh
+        from book.metadata rather than transformed from whatever's
+        currently shown, so switching Wrap -> Truncate -> Wrap again
+        round-trips cleanly instead of needing to "undo" a previous
+        collapse. Cheap even for a large library: touches one column,
+        not a full rebuild.
+
+        Guarded by _updating_table, same reasoning as _refresh_row_full:
+        without it, each item.setText() below fires _on_item_changed,
+        which unconditionally writes item.text() back into
+        book.metadata AND pushes an undo entry -- silently overwriting
+        every book's real Description with the collapsed display text
+        the moment the mode changed, not just changing what's shown.
+        Real bug, caught by round-tripping Wrap -> Clip -> Wrap in
+        test_main_window_table.py and finding the metadata itself had
+        changed, not just the cell."""
+        col = None
+        for i, (key, _label, multiline) in enumerate(FIELDS):
+            if key == "description":
+                col = FIRST_FIELD_COL + i
+                break
+        if col is None:
+            return
+        was_updating = self._updating_table
+        self._updating_table = True
+        for row in range(self.table.rowCount()):
+            book = self._book_for_row(row)
+            if book is None:
+                continue
+            item = self.table.item(row, col)
+            if item is not None:
+                item.setText(self._field_display_text(book.metadata.description, multiline=True))
+        self._updating_table = was_updating
+
+    def _field_display_text(self, value: str, multiline: bool) -> str:
+        """Table-cell text for a field value. For a multiline field
+        (currently just Description), collapses embedded newlines (and
+        any other whitespace runs) to single spaces UNLESS the current
+        mode is "wrap" -- Wrap Text's whole point is showing the full
+        value, and preserving real paragraph breaks there reads better
+        (the same way a spreadsheet's own "wrap text" still respects an
+        Alt+Enter line break inside a wrapped cell). In the two
+        fixed-row-height modes (Truncate/Clip) collapsing is required,
+        not just nicer: Qt renders a literal newline in cell text as a
+        real line break regardless of the table's word-wrap setting
+        (word wrap only controls whether ONE long line breaks to fit
+        the column width, it doesn't suppress newlines already in the
+        string) -- without this, a description containing raw HTML with
+        embedded newlines between tags could blow a row's height up
+        even in a "fixed row height" mode. Only affects what's shown in
+        the table; the underlying metadata value (used for editing and
+        saving) is untouched."""
+        if multiline and self._text_overflow_mode != "wrap":
+            return " ".join(value.split())
+        return value
 
     def _populate_row(self, row: int, book: EpubBook) -> None:
         path_item = QTableWidgetItem(os.path.dirname(book.path))
@@ -1406,9 +1468,9 @@ class MainWindow(QMainWindow):
             name_item.setToolTip(f"{book.path}\nError: {book.load_error}")
             return
 
-        for i, (key, _label, _multiline) in enumerate(FIELDS):
+        for i, (key, _label, multiline) in enumerate(FIELDS):
             col = FIRST_FIELD_COL + i
-            value = getattr(book.metadata, key, "")
+            value = self._field_display_text(getattr(book.metadata, key, ""), multiline)
             item = NumericTableWidgetItem(value) if key in NUMERIC_FIELD_KEYS else QTableWidgetItem(value)
             self.table.setItem(row, col, item)
 
@@ -1637,12 +1699,12 @@ class MainWindow(QMainWindow):
             row = rows_by_book.get(book)
             if row is None:
                 continue
-            for i, (key, _label, _multiline) in enumerate(FIELDS):
+            for i, (key, _label, multiline) in enumerate(FIELDS):
                 if key in values:
                     col = FIRST_FIELD_COL + i
                     item = self.table.item(row, col)
                     if item is not None:
-                        item.setText(getattr(book.metadata, key, ""))
+                        item.setText(self._field_display_text(getattr(book.metadata, key, ""), multiline))
             self._set_row_dirty_style(row, book.dirty)
         self.table.setSortingEnabled(was_sorting)
         self._updating_table = False
