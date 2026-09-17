@@ -6,6 +6,7 @@ import sys
 sys.path.insert(0, os.path.dirname(__file__))
 from core.epub_metadata import EpubMetadata  # noqa: E402
 from core.rename_pattern import (  # noqa: E402
+    detect_pattern_from_metadata,
     rename_book_file,
     render_filename,
     sanitize_filename,
@@ -51,6 +52,17 @@ def test_authors_pattern():
     result = render_filename(m, "%authors% - %title%")
     assert result == "Frank Herbert - Dune", result
     print("PASS: author placeholder")
+
+
+def test_multiple_authors_joined_with_ampersand_in_filename():
+    # The Authors FIELD itself uses "; " (mp3tag convention, matches
+    # authors_str) -- but a filename should read "Author A & Author B",
+    # not carry the "; " straight through.
+    m = make_meta(title="Good Omens", authors=["Terry Pratchett", "Neil Gaiman"])
+    assert m.authors_str == "Terry Pratchett; Neil Gaiman", m.authors_str  # field itself unaffected
+    result = render_filename(m, "%authors% - %title%")
+    assert result == "Terry Pratchett & Neil Gaiman - Good Omens", result
+    print("PASS: multiple authors joined with & (not ;) in a rendered filename")
 
 
 def test_illegal_characters_stripped():
@@ -185,6 +197,61 @@ def test_sanitize_trailing_dot_space():
 
 
 # ----------------------------------------------------------------------
+# detect_pattern_from_metadata
+# ----------------------------------------------------------------------
+
+def test_detect_pattern_basic():
+    m = make_meta(title="The Hobbit", series="Middle-earth", series_index="1")
+    stem = render_filename(m, "%series% %series_index% - %title%")
+    detected = detect_pattern_from_metadata(m, stem)
+    assert detected == "%series% %series_index% - %title%", detected
+    # and it should actually render back to the same filename
+    assert render_filename(m, detected) == stem
+    print("PASS: detects a straightforward pattern from metadata + filename")
+
+
+def test_detect_pattern_zero_padded_series_index():
+    # Filename was rendered with zero-padding, but the metadata's own
+    # series_index is unpadded -- detection must still find the field.
+    m = make_meta(title="Book Two", series="Saga", series_index="2")
+    stem = render_filename(m, "%series% %series_index% - %title%", zero_pad_series=True)
+    assert stem == "Saga 02 - Book Two", stem
+    detected = detect_pattern_from_metadata(m, stem)
+    assert detected == "%series% %series_index% - %title%", detected
+    print("PASS: detects the series_index field even when the filename zero-pads it")
+
+
+def test_detect_pattern_sanitized_illegal_characters():
+    # Title contains a colon (illegal in a Windows filename), so
+    # render_filename() strips it -- detection must match the sanitized
+    # form, not fail just because the raw metadata value has the colon.
+    m = make_meta(title="Book: A Story", authors=["A"])
+    stem = render_filename(m, "%title%")
+    assert stem == "Book A Story", stem
+    detected = detect_pattern_from_metadata(m, stem)
+    assert detected == "%title%", detected
+    print("PASS: detects a field whose filename form had illegal characters stripped")
+
+
+def test_detect_pattern_no_match_returns_none():
+    m = make_meta(title="The Hobbit", authors=["J.R.R. Tolkien"])
+    assert detect_pattern_from_metadata(m, "Completely Unrelated Filename") is None
+    print("PASS: returns None when nothing in the filename matches the metadata")
+
+
+def test_detect_pattern_longest_match_wins_on_substring_collision():
+    # "Dune" (series) is a prefix of "Dune Messiah" (title) -- the longer
+    # title match must win, not have "Dune" get claimed by %series% first
+    # and leave "%series% Messiah" as a broken partial match.
+    m = make_meta(title="Dune Messiah", series="Dune", series_index="2")
+    stem = render_filename(m, "%title% (%series% %series_index%)")
+    assert stem == "Dune Messiah (Dune 2)", stem
+    detected = detect_pattern_from_metadata(m, stem)
+    assert detected == "%title% (%series% %series_index%)", detected
+    print("PASS: longest-match-first resolves a field value that's a substring of another field's value")
+
+
+# ----------------------------------------------------------------------
 # validate_filename_stem
 # ----------------------------------------------------------------------
 
@@ -314,6 +381,7 @@ if __name__ == "__main__":
     test_basic_render()
     test_empty_field_cleanup()
     test_authors_pattern()
+    test_multiple_authors_joined_with_ampersand_in_filename()
     test_illegal_characters_stripped()
     test_pub_date_and_ddc_placeholders()
     test_year_month_day_placeholders()
@@ -328,6 +396,11 @@ if __name__ == "__main__":
     test_unique_path_collision_on_disk()
     test_unique_path_collision_within_batch()
     test_sanitize_trailing_dot_space()
+    test_detect_pattern_basic()
+    test_detect_pattern_zero_padded_series_index()
+    test_detect_pattern_sanitized_illegal_characters()
+    test_detect_pattern_no_match_returns_none()
+    test_detect_pattern_longest_match_wins_on_substring_collision()
     test_validate_filename_stem_valid_name()
     test_validate_filename_stem_empty()
     test_validate_filename_stem_illegal_characters()

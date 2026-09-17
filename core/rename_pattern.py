@@ -91,7 +91,15 @@ def placeholder_values(metadata: EpubMetadata, zero_pad_series: bool = False) ->
     values = {
         "title": metadata.title,
         "isbn": metadata.isbn,
-        "authors": metadata.authors_str,
+        # Filenames use " & " between multiple authors rather than the
+        # "; " the Authors field itself is edited/displayed with (mp3tag
+        # convention for multi-value fields) -- "; " reads as a stray
+        # mid-filename separator, while "Author A & Author B" reads as
+        # the two co-authors it is. Built straight from the authors list
+        # rather than string-replacing authors_str, so a stray "; " or
+        # "&" that happens to be part of one author's actual name is
+        # never touched.
+        "authors": " & ".join(a for a in metadata.authors if a),
         "author_sort": metadata.author_sort_str,
         "series": metadata.series,
         "series_index": series_index,
@@ -149,6 +157,93 @@ def render_filename(
         result = result[:MAX_FILENAME_LENGTH].rstrip()
 
     return result
+
+
+def _field_value_variants(key: str, value: str) -> list[str]:
+    """The distinct ways `value` might actually appear inside a rendered
+    filename -- render_filename() doesn't pass values through unmodified,
+    so a straight substring search against the raw metadata value alone
+    would miss real matches. Longest-first (the caller tries these in
+    order and stops at the first hit), duplicates removed. Covers the
+    two transformations render_filename() itself applies: zero-padding a
+    series index, and stripping characters Windows forbids in filenames."""
+    value = value.strip()
+    if not value:
+        return []
+    variants = [value]
+    if key == "series_index":
+        padded = zero_pad_series_value(value)
+        if padded != value:
+            variants.insert(0, padded)  # zero-padded is the more common convention -- try it first
+    sanitized = _ILLEGAL_CHARS_RE.sub("", value)
+    if sanitized and sanitized not in variants:
+        variants.append(sanitized)
+    return sorted(set(variants), key=len, reverse=True)
+
+
+def detect_pattern_from_metadata(metadata: EpubMetadata, filename_stem: str) -> str | None:
+    """The reverse of render_filename(): given a book's metadata and its
+    actual current filename, reconstructs the %pattern% that would have
+    produced that filename from that metadata -- by finding which field
+    values show up as substrings of the filename, in what order, and
+    treating whatever's left as literal separator text.
+
+    This only makes sense for a book whose metadata is already correct
+    -- it reverse-engineers the NAMING CONVENTION, on the assumption the
+    metadata is the ground truth the filename was (or should have been)
+    built from. Feeding it a book with bad/incorrect metadata will find
+    coincidental or nonsensical matches, if it finds anything at all.
+
+    Returns None if not even one field's value could be found in the
+    filename. Field values that are substrings of a longer, also-present
+    field value (e.g. a series title that's a prefix of the book's own
+    title) are resolved by matching the longest candidate values first,
+    so a short match never claims text that rightfully belongs to a
+    longer one.
+    """
+    filename_stem = filename_stem.strip()
+    if not filename_stem:
+        return None
+
+    values = placeholder_values(metadata)
+    candidates: list[tuple[str, str]] = []  # (field_key, value_variant), longest variant first overall
+    for key, _label in PLACEHOLDERS:
+        for variant in _field_value_variants(key, values.get(key, "")):
+            candidates.append((key, variant))
+    candidates.sort(key=lambda pair: len(pair[1]), reverse=True)
+
+    claimed = [False] * len(filename_stem)
+    spans: list[tuple[int, int, str]] = []  # (start, end, field_key)
+    matched_keys: set[str] = set()
+    for key, variant in candidates:
+        if key in matched_keys:
+            continue  # this field already matched (via an earlier, longer variant) -- don't match it twice
+        search_from = 0
+        while True:
+            idx = filename_stem.find(variant, search_from)
+            if idx == -1:
+                break
+            end = idx + len(variant)
+            if not any(claimed[idx:end]):
+                spans.append((idx, end, key))
+                for i in range(idx, end):
+                    claimed[i] = True
+                matched_keys.add(key)
+                break
+            search_from = idx + 1
+
+    if not spans:
+        return None
+
+    spans.sort()
+    parts: list[str] = []
+    last_end = 0
+    for start, end, key in spans:
+        parts.append(filename_stem[last_end:start])
+        parts.append(f"%{key}%")
+        last_end = end
+    parts.append(filename_stem[last_end:])
+    return "".join(parts)
 
 
 def unique_path(directory: str, stem: str, ext: str, taken: set[str]) -> str:

@@ -35,6 +35,7 @@ DEFAULT_EREADER_SERVERS = ["https://send.djazz.se", "https://bookdrop.cc"]
 _COLUMN_WIDTHS_KEY = "table/column_widths"
 _HIDDEN_COLUMNS_KEY = "table/hidden_columns"
 _JUNK_COVER_HASHES_KEY = "covers/junk_hashes"
+_TEXT_OVERFLOW_MODE_KEY = "table/text_overflow_mode"
 
 
 def _dedupe_and_trim(history: list[str], new_pattern: str, max_history: int = _MAX_HISTORY) -> list[str]:
@@ -573,3 +574,38 @@ def load_junk_cover_hashes() -> set[str]:
 
 def save_junk_cover_hashes(hashes: set[str]) -> None:
     _settings().setValue(_JUNK_COVER_HASHES_KEY, json.dumps(sorted(hashes)))
+
+
+# ------------------------------------------------------------------
+# Table text overflow mode -- how an over-long cell value is displayed
+# when its column is too narrow to show it in full (Settings -> Text
+# Wrapping). Three modes:
+#   "wrap"     -- wrap onto multiple lines, growing the row's height to
+#                 fit (the table's row heights are reflowed to match
+#                 whenever a column is resized -- see
+#                 MainWindow._reflow_table_rows()).
+#   "ellipsis" -- single-line rows always; text too long for the column
+#                 is truncated with a trailing "…".
+#   "clip"     -- single-line rows always; text too long for the column
+#                 is hard-clipped at the column edge, no "…" shown.
+# "wrap" is the default (matches the app's pre-existing behavior), but
+# on its own that behavior is exactly what produced the "wonky line
+# height" bug: word-wrap was always on, yet nothing ever re-ran
+# resizeRowsToContents() after a column resize, so a row's height could
+# be left over/under the text it now had to show. The two single-line
+# modes exist for anyone who'd rather never see a row change height at
+# all, at the cost of not seeing a wrapped value in full.
+# ------------------------------------------------------------------
+
+TEXT_OVERFLOW_MODES = ("wrap", "ellipsis", "clip")
+DEFAULT_TEXT_OVERFLOW_MODE = "wrap"
+
+
+def load_text_overflow_mode() -> str:
+    mode = _settings().value(_TEXT_OVERFLOW_MODE_KEY, DEFAULT_TEXT_OVERFLOW_MODE, type=str)
+    return mode if mode in TEXT_OVERFLOW_MODES else DEFAULT_TEXT_OVERFLOW_MODE
+
+
+def save_text_overflow_mode(mode: str) -> None:
+    if mode in TEXT_OVERFLOW_MODES:
+        _settings().setValue(_TEXT_OVERFLOW_MODE_KEY, mode)

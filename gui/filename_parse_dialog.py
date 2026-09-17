@@ -26,6 +26,7 @@ from PyQt6.QtWidgets import (
     QListWidget,
     QListWidgetItem,
     QMenu,
+    QMessageBox,
     QPushButton,
     QTableWidget,
     QTableWidgetItem,
@@ -39,7 +40,7 @@ from core.filename_parser import (
     parse_filename,
     parsed_to_metadata_kwargs,
 )
-from core.rename_pattern import DEFAULT_PATTERN, PLACEHOLDERS
+from core.rename_pattern import DEFAULT_PATTERN, PLACEHOLDERS, detect_pattern_from_metadata
 from gui import app_settings
 
 # Same narrow "▼" style used for every other field-side menu button in
@@ -72,7 +73,8 @@ class FilenameParseDialog(QDialog):
         outer.addLayout(layout, 2)
         layout.addWidget(QLabel(
             f"Applies to {len(self.books)} book(s). Only fields present in the pattern "
-            "are extracted and offered; everything else is left untouched."
+            "are extracted and offered; everything else is left untouched. Right-click a "
+            "book below with already-correct metadata to detect its naming pattern."
         ))
 
         pattern_row = QHBoxLayout()
@@ -119,6 +121,8 @@ class FilenameParseDialog(QDialog):
         self.preview_table.setHorizontalHeaderLabels(["Book", "Extracted fields", "Apply"])
         self.preview_table.setEditTriggers(QAbstractItemView.EditTrigger.NoEditTriggers)
         self.preview_table.horizontalHeader().setSectionResizeMode(EXTRACTED_COL, QHeaderView.ResizeMode.Stretch)
+        self.preview_table.setContextMenuPolicy(Qt.ContextMenuPolicy.CustomContextMenu)
+        self.preview_table.customContextMenuRequested.connect(self._show_preview_context_menu)
         layout.addWidget(self.preview_table, 1)
 
         self.status_label = QLabel("")
@@ -208,6 +212,41 @@ class FilenameParseDialog(QDialog):
 
     def _on_recent_picked(self, pattern: str) -> None:
         self.pattern_edit.setText(pattern)
+
+    def _show_preview_context_menu(self, pos) -> None:
+        row = self.preview_table.rowAt(pos.y())
+        if row < 0:
+            return
+        menu = QMenu(self)
+        action = menu.addAction("Detect Pattern from This Book's Current Metadata")
+        action.triggered.connect(lambda: self._detect_pattern_from_row(row))
+        menu.exec(self.preview_table.viewport().mapToGlobal(pos))
+
+    def _detect_pattern_from_row(self, row: int) -> None:
+        # Only makes sense for a book the user already knows/trusts has
+        # correct metadata -- it reverse-engineers the NAMING CONVENTION
+        # from the assumption the metadata is ground truth, so running it
+        # on a book with bad/incorrect metadata would just find
+        # coincidental or meaningless matches. That's a judgment call
+        # only the person can make (which is why this is a manual,
+        # per-book right-click action rather than something run
+        # automatically across every loaded book), so this deliberately
+        # doesn't try to guess which book is trustworthy on its own.
+        book = self.books[row]
+        stem = self._filename_stems[row]
+        detected = detect_pattern_from_metadata(book.metadata, stem)
+        if not detected:
+            QMessageBox.information(
+                self, "No Pattern Detected",
+                f'None of "{os.path.basename(book.path)}"\'s metadata field values were found '
+                "in its filename, so no pattern could be reconstructed from it.",
+            )
+            return
+        self.pattern_edit.setText(detected)
+        self._auto_detected_pattern = None  # this came from metadata, not pattern history -- don't relabel it as that
+        self.status_label.setText(
+            f'Pattern detected from "{os.path.basename(book.path)}"\'s current metadata: {detected}'
+        )
 
     def _refresh_preview(self) -> None:
         pattern = self.pattern_edit.text()

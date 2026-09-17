@@ -38,7 +38,7 @@ import traceback
 import webbrowser
 
 from PyQt6.QtCore import QSize, Qt, QTimer
-from PyQt6.QtGui import QColor, QGuiApplication, QIcon, QKeySequence
+from PyQt6.QtGui import QActionGroup, QColor, QGuiApplication, QIcon, QKeySequence
 from PyQt6.QtWidgets import (
     QAbstractItemView,
     QApplication,
@@ -76,7 +76,7 @@ from redactor_common.gui.action_factory import make_action
 from redactor_common.gui.progress import run_with_progress
 from redactor_common.gui.async_icon_cache import AsyncIconCache
 from redactor_common.gui.quick_series_number import prompt_and_generate_series_numbers
-from redactor_common.gui.menu_builder import MenuAction, MenuItems, Separator, build_menu_bar
+from redactor_common.gui.menu_builder import MenuAction, MenuItems, Separator, Submenu, build_menu_bar
 from redactor_common.gui.overwrite_review_dialog import resolve_overwrite_conflicts
 from redactor_common.gui.colors import (
     DIRTY_COLOR, ERROR_COLOR, SAVE_FAILED_COLOR, DRM_COLOR, HIGHLIGHT_TEXT_COLOR,
@@ -333,6 +333,17 @@ class MainWindow(QMainWindow):
 
         self.table = BookTableWidget()
         self._default_table_font_pt = self.table.font().pointSize()
+        # Debounces row-height reflow while a column is being dragged --
+        # sectionResized fires continuously during a drag, and
+        # resizeRowsToContents() over the whole table on every single one
+        # of those events would be wasteful (and janky) for a large
+        # library. Restarted on every resize event; only actually fires
+        # once resizing has paused for a moment. See _on_column_resized
+        # and _reflow_table_rows below.
+        self._row_reflow_timer = QTimer(self)
+        self._row_reflow_timer.setSingleShot(True)
+        self._row_reflow_timer.timeout.connect(self._reflow_table_rows)
+        self._text_overflow_mode = app_settings.load_text_overflow_mode()
         headers = ["Path", "Filename", "Status"] + [label for _key, label, _m in FIELDS] + ["Junk Cover"]
         self.table.setColumnCount(len(headers))
         self.table.setHorizontalHeaderLabels(headers)
@@ -369,6 +380,7 @@ class MainWindow(QMainWindow):
         self.table.setSelectionMode(QAbstractItemView.SelectionMode.ExtendedSelection)
         self.table.setIconSize(COVER_ICON_SIZE)
         self.table.setSortingEnabled(True)  # click a header to sort by that column
+        self._apply_text_overflow_mode(self._text_overflow_mode)
         # Strong, theme-independent selection/current-cell indicators --
         # otherwise the default look can blend into our own custom row
         # colors (dirty/status highlighting) and make it hard to tell
@@ -516,6 +528,20 @@ class MainWindow(QMainWindow):
                 MenuAction("column_settings", "Add/Remove &Columns…", self.open_column_settings_dialog),
                 MenuAction("language_settings", "Add/Remove &Languages…", self.open_language_settings_dialog),
                 MenuAction("genre_settings", "Add/Remove &Genres…", self.open_genre_settings_dialog),
+                Submenu("&Text Wrapping", [
+                    MenuAction(
+                        "text_wrap_mode_wrap", "&Wrap Text (grow row height)",
+                        lambda: self.set_text_overflow_mode("wrap"), checkable=True,
+                    ),
+                    MenuAction(
+                        "text_wrap_mode_ellipsis", "&Truncate with … (fixed row height)",
+                        lambda: self.set_text_overflow_mode("ellipsis"), checkable=True,
+                    ),
+                    MenuAction(
+                        "text_wrap_mode_clip", "&Clip, No … (fixed row height)",
+                        lambda: self.set_text_overflow_mode("clip"), checkable=True,
+                    ),
+                ]),
             ],
             "Help": [
                 MenuAction("about", f"&About {APP_NAME}…", self.open_about_dialog, shortcut=shortcuts.HELP),
@@ -548,6 +574,20 @@ class MainWindow(QMainWindow):
         self.undo_act.setEnabled(False)
         self.redo_act = actions["redo"]
         self.redo_act.setEnabled(False)
+
+        # Mutually exclusive radio-style trio for the Text Wrapping
+        # submenu, checked to match whatever mode _build_ui already
+        # applied to the table from saved settings.
+        text_wrap_group = QActionGroup(self)
+        text_wrap_group.setExclusive(True)
+        for mode, key in (
+            ("wrap", "text_wrap_mode_wrap"),
+            ("ellipsis", "text_wrap_mode_ellipsis"),
+            ("clip", "text_wrap_mode_clip"),
+        ):
+            act = actions[key]
+            text_wrap_group.addAction(act)
+            act.setChecked(mode == self._text_overflow_mode)
 
     def _build_toolbar(self) -> None:
         """Slim toolbar: just the handful of most-frequent actions,
@@ -1255,10 +1295,44 @@ class MainWindow(QMainWindow):
             self._select_books(previously_selected)
 
     def _on_column_resized(self, _logical_index, _old_size, _new_size) -> None:
+        # Narrowing a column can change how much (if any) of a cell's text
+        # wraps or gets clipped, which changes how tall its row needs to
+        # be -- reflow row heights to match, debounced so a click-drag
+        # resize doesn't re-measure the whole table on every pixel of
+        # mouse movement. Restarted (not just started) on every event, so
+        # it fires once when dragging actually stops.
+        self._row_reflow_timer.start(120)
         if self._updating_table:
             return  # the one-time auto-fit above also fires this signal; not a real user resize
         widths = {i: self.table.columnWidth(i) for i in range(self.table.columnCount())}
         app_settings.save_column_widths(widths)
+
+    def _reflow_table_rows(self) -> None:
+        """Re-measures every row's height against its current content and
+        column widths -- the fix for rows whose text wraps onto more (or
+        fewer) lines than the row is currently tall enough to show
+        cleanly, e.g. after a column was resized. Cheap to call whenever
+        row heights might be stale; Qt only actually redraws what's
+        visible."""
+        self.table.resizeRowsToContents()
+
+    def _apply_text_overflow_mode(self, mode: str) -> None:
+        """Switches how an over-long cell value is shown when its column
+        is too narrow -- "wrap" (grow the row), "ellipsis" (single-line,
+        trailing "…"), or "clip" (single-line, hard cut, no "…"). See
+        app_settings.load_text_overflow_mode() for the full rationale."""
+        self._text_overflow_mode = mode
+        self.table.setWordWrap(mode == "wrap")
+        self.table.setTextElideMode(
+            Qt.TextElideMode.ElideNone if mode == "clip" else Qt.TextElideMode.ElideRight
+        )
+        self._reflow_table_rows()
+
+    def set_text_overflow_mode(self, mode: str) -> None:
+        """Settings -> Text Wrapping menu handler: applies `mode` and
+        remembers it for next launch."""
+        self._apply_text_overflow_mode(mode)
+        app_settings.save_text_overflow_mode(mode)
 
     def _populate_row(self, row: int, book: EpubBook) -> None:
         path_item = QTableWidgetItem(os.path.dirname(book.path))
