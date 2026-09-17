@@ -62,6 +62,7 @@ from PyQt6.QtWidgets import (
 
 from core.epub_metadata import EpubBook, EpubError
 from core.fields import FIELDS, NUMERIC_FIELD_KEYS
+from core import perf_log
 from core.languages import is_blank_or_unknown_language
 from core.rename_pattern import rename_book_file, render_filename, unique_path
 from core.sigil_tools import DOWNLOAD_URL as SIGIL_DOWNLOAD_URL
@@ -69,6 +70,7 @@ from core.sigil_tools import SigilLaunchError, find_sigil
 from core.sigil_tools import open_in_sigil as launch_sigil
 from core.version import APP_NAME, APP_REPO_URL, APP_VERSION, RELEASE_LABEL
 from redactor_common.core.error_summary import summarize_errors
+from redactor_common.core.os_utils import reveal_in_file_manager
 from redactor_common.core.save_errors import describe_save_error
 from redactor_common.core.undo import UndoManager
 from redactor_common.gui.action_factory import make_action
@@ -229,6 +231,11 @@ class BookTableWidget(QTableWidget):
 class MainWindow(QMainWindow):
     def __init__(self):
         super().__init__()
+        # Applied first, before anything else below runs, so a session
+        # that had this left on from before captures the very first
+        # table rebuild too -- see core/perf_log.py and Settings ->
+        # Enable Performance Logging.
+        perf_log.set_enabled(app_settings.load_perf_logging_enabled())
         self.setWindowTitle(f"{APP_NAME} ({APP_VERSION})")
         self.resize(1280, 760)
         self._center_on_screen()
@@ -252,6 +259,7 @@ class MainWindow(QMainWindow):
         # right after loading, an O(n^2) cost that dominated "Updating
         # list" time for anything but a small library.
         self._filename_item_by_book: dict[EpubBook, QTableWidgetItem] = {}
+        self._perf_accum = perf_log.Accumulator()  # real one created fresh per rebuild; this is just a safe default
         self._cover_hash_cache = AsyncHashCache(parent=self)
         self._cover_hash_cache.hash_ready.connect(self._on_cover_hash_ready)
         # book -> its current JUNK_COVER_COL QTableWidgetItem -- same
@@ -577,6 +585,15 @@ class MainWindow(QMainWindow):
                         lambda: self.set_text_overflow_mode("clip"), checkable=True,
                     ),
                 ]),
+                Separator(),
+                MenuAction(
+                    "perf_logging", "&Enable Performance Logging",
+                    self.toggle_perf_logging, checkable=True,
+                    tooltip="Logs a timing breakdown of slow operations (table rebuilds, saves) "
+                            "to a file next to the crash log, for diagnosing a slowdown that "
+                            "doesn't reproduce on a smaller library.",
+                ),
+                MenuAction("open_perf_log", "Open Performance &Log File…", self.open_perf_log_file),
             ],
             "Help": [
                 MenuAction("about", f"&About {APP_NAME}…", self.open_about_dialog, shortcut=shortcuts.HELP),
@@ -653,6 +670,9 @@ class MainWindow(QMainWindow):
             act = actions[key]
             text_wrap_group.addAction(act)
             act.setChecked(mode == self._text_overflow_mode)
+
+        self.perf_logging_act = actions["perf_logging"]
+        self.perf_logging_act.setChecked(perf_log.is_enabled())
 
     def _build_toolbar(self) -> None:
         """Slim toolbar: just the handful of most-frequent actions,
@@ -1331,6 +1351,10 @@ class MainWindow(QMainWindow):
             self.table.scrollToItem(self.table.item(first_row, FILENAME_COL))
 
     def _rebuild_table(self) -> None:
+        with perf_log.timed(f"_rebuild_table total ({len(self.books)} books)"):
+            self._rebuild_table_impl()
+
+    def _rebuild_table_impl(self) -> None:
         # Capture the current selection by BOOK IDENTITY (not row index)
         # before repopulating, and restore it after -- row indices alone
         # aren't reliable here, since sorting or a rename can shift which
@@ -1349,6 +1373,14 @@ class MainWindow(QMainWindow):
         self._filename_item_by_book = {}  # repopulated fresh below, in _populate_row()
         self._junk_cover_item_by_book = {}  # ditto
 
+        # Per-section timing across the whole populate loop below (see
+        # core/perf_log.py) -- a no-op unless Settings -> Enable
+        # Performance Logging is on. Stashed on self so _populate_row()
+        # (called once per book via the lambda below) can record into
+        # the SAME accumulator across the whole rebuild, rather than
+        # each row producing its own separate summary.
+        self._perf_accum = perf_log.Accumulator()
+
         # A plain, uninterrupted loop here blocks the whole UI thread
         # until every row is built -- fine for a handful of books, but
         # for a genuinely large library (thousands of rows) this can run
@@ -1362,6 +1394,7 @@ class MainWindow(QMainWindow):
             self, self.books, lambda book, row: self._populate_row(row, book), "Updating list…",
             threshold=REBUILD_PROGRESS_THRESHOLD, cancellable=False, update_every=50,
         )
+        self._perf_accum.dump(f"_populate_row breakdown ({len(self.books)} books)")
 
         if not self._columns_sized and self.books:
             # Only ever auto-fits once, the very first time real content
@@ -1494,47 +1527,56 @@ class MainWindow(QMainWindow):
         return value
 
     def _populate_row(self, row: int, book: EpubBook) -> None:
-        path_item = QTableWidgetItem(os.path.dirname(book.path))
-        path_item.setFlags(path_item.flags() & ~Qt.ItemFlag.ItemIsEditable)
-        path_item.setToolTip(book.path)
-        self.table.setItem(row, PATH_COL, path_item)
+        accum = self._perf_accum
+        with accum.section("path+filename cells"):
+            path_item = QTableWidgetItem(os.path.dirname(book.path))
+            path_item.setFlags(path_item.flags() & ~Qt.ItemFlag.ItemIsEditable)
+            path_item.setToolTip(book.path)
+            self.table.setItem(row, PATH_COL, path_item)
 
-        name_item = QTableWidgetItem(os.path.basename(book.path))
-        name_item.setFlags(name_item.flags() & ~Qt.ItemFlag.ItemIsEditable)
-        name_item.setToolTip(book.path)
-        name_item.setData(Qt.ItemDataRole.UserRole, book)
-        self._filename_item_by_book[book] = name_item
-        self._apply_cover_icon(name_item, book)
-        self.table.setItem(row, FILENAME_COL, name_item)
+            name_item = QTableWidgetItem(os.path.basename(book.path))
+            name_item.setFlags(name_item.flags() & ~Qt.ItemFlag.ItemIsEditable)
+            name_item.setToolTip(book.path)
+            name_item.setData(Qt.ItemDataRole.UserRole, book)
+            self._filename_item_by_book[book] = name_item
+            self.table.setItem(row, FILENAME_COL, name_item)
 
-        status_item = QTableWidgetItem(book.validation_status)
-        status_item.setFlags(status_item.flags() & ~Qt.ItemFlag.ItemIsEditable)
-        self.table.setItem(row, STATUS_COL, status_item)
-        self._update_status_cell(row, book)
+        with accum.section("cover icon (_apply_cover_icon)"):
+            self._apply_cover_icon(name_item, book)
+
+        with accum.section("status cell"):
+            status_item = QTableWidgetItem(book.validation_status)
+            status_item.setFlags(status_item.flags() & ~Qt.ItemFlag.ItemIsEditable)
+            self.table.setItem(row, STATUS_COL, status_item)
+            self._update_status_cell(row, book)
 
         if book.load_error:
-            for col in range(self.table.columnCount()):
-                item = self.table.item(row, col) or QTableWidgetItem()
-                item.setBackground(ERROR_COLOR)
-                item.setForeground(HIGHLIGHT_TEXT_COLOR)
-                item.setFlags(item.flags() & ~Qt.ItemFlag.ItemIsEditable)
-                self.table.setItem(row, col, item)
-            name_item.setToolTip(f"{book.path}\nError: {book.load_error}")
+            with accum.section("load-error row styling"):
+                for col in range(self.table.columnCount()):
+                    item = self.table.item(row, col) or QTableWidgetItem()
+                    item.setBackground(ERROR_COLOR)
+                    item.setForeground(HIGHLIGHT_TEXT_COLOR)
+                    item.setFlags(item.flags() & ~Qt.ItemFlag.ItemIsEditable)
+                    self.table.setItem(row, col, item)
+                name_item.setToolTip(f"{book.path}\nError: {book.load_error}")
             return
 
-        for i, (key, _label, multiline) in enumerate(FIELDS):
-            col = FIRST_FIELD_COL + i
-            value = self._field_display_text(getattr(book.metadata, key, ""), multiline)
-            item = NumericTableWidgetItem(value) if key in NUMERIC_FIELD_KEYS else QTableWidgetItem(value)
-            self.table.setItem(row, col, item)
+        with accum.section("field cells"):
+            for i, (key, _label, multiline) in enumerate(FIELDS):
+                col = FIRST_FIELD_COL + i
+                value = self._field_display_text(getattr(book.metadata, key, ""), multiline)
+                item = NumericTableWidgetItem(value) if key in NUMERIC_FIELD_KEYS else QTableWidgetItem(value)
+                self.table.setItem(row, col, item)
 
-        junk_item = QTableWidgetItem("")
-        junk_item.setFlags(junk_item.flags() & ~Qt.ItemFlag.ItemIsEditable)
-        self.table.setItem(row, JUNK_COVER_COL, junk_item)
-        self._junk_cover_item_by_book[book] = junk_item
-        self._update_junk_cover_cell(row, book)
+        with accum.section("junk cover cell (_update_junk_cover_cell)"):
+            junk_item = QTableWidgetItem("")
+            junk_item.setFlags(junk_item.flags() & ~Qt.ItemFlag.ItemIsEditable)
+            self.table.setItem(row, JUNK_COVER_COL, junk_item)
+            self._junk_cover_item_by_book[book] = junk_item
+            self._update_junk_cover_cell(row, book)
 
-        self._set_row_dirty_style(row, book.dirty)
+        with accum.section("dirty row styling"):
+            self._set_row_dirty_style(row, book.dirty)
 
     def _update_status_cell(self, row: int, book: EpubBook) -> None:
         item = self.table.item(row, STATUS_COL)
@@ -3235,6 +3277,34 @@ class MainWindow(QMainWindow):
     def open_credits_dialog(self) -> None:
         credits_path = resource_path("CREDITS.md")
         CreditsDialog(credits_path, self).exec()
+
+    # ------------------------------------------------------------------
+    # Performance logging (see core/perf_log.py)
+    # ------------------------------------------------------------------
+
+    def toggle_perf_logging(self) -> None:
+        enabled = self.perf_logging_act.isChecked()
+        perf_log.set_enabled(enabled)
+        app_settings.save_perf_logging_enabled(enabled)
+        if enabled:
+            QMessageBox.information(
+                self, "Performance Logging Enabled",
+                "Timing details for table rebuilds and saves will be appended to:\n\n"
+                f"{perf_log.log_path()}\n\n"
+                "Reproduce the slow operation now, then use Settings → Open "
+                "Performance Log File… to find it.",
+            )
+
+    def open_perf_log_file(self) -> None:
+        path = perf_log.log_path()
+        if not os.path.isfile(path):
+            QMessageBox.information(
+                self, "No Log Yet",
+                "No performance log exists yet. Enable Settings → Enable Performance "
+                "Logging first, then reproduce the slow operation.",
+            )
+            return
+        reveal_in_file_manager(path)
 
     # ------------------------------------------------------------------
     # Misc

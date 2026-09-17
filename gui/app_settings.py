@@ -36,6 +36,7 @@ _COLUMN_WIDTHS_KEY = "table/column_widths"
 _HIDDEN_COLUMNS_KEY = "table/hidden_columns"
 _JUNK_COVER_HASHES_KEY = "covers/junk_hashes"
 _TEXT_OVERFLOW_MODE_KEY = "table/text_overflow_mode"
+_PERF_LOGGING_ENABLED_KEY = "debug/perf_logging_enabled"
 
 
 def _dedupe_and_trim(history: list[str], new_pattern: str, max_history: int = _MAX_HISTORY) -> list[str]:
@@ -645,3 +646,19 @@ def save_blank_language_default_code(code: str) -> None:
     code = code.strip()
     if code:
         _settings().setValue(_BLANK_LANGUAGE_DEFAULT_CODE_KEY, code)
+
+
+# ------------------------------------------------------------------
+# Performance logging (Settings -> Enable Performance Logging, see
+# core/perf_log.py) -- off by default, persisted across launches so
+# turning it on once catches every rebuild in a session, not just the
+# next one, and so it stays on across restarts while diagnosing
+# something that only shows up on a real, very large library.
+# ------------------------------------------------------------------
+
+def load_perf_logging_enabled() -> bool:
+    return _settings().value(_PERF_LOGGING_ENABLED_KEY, False, type=bool)
+
+
+def save_perf_logging_enabled(enabled: bool) -> None:
+    _settings().setValue(_PERF_LOGGING_ENABLED_KEY, bool(enabled))

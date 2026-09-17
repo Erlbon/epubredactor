@@ -4,6 +4,16 @@ All notable changes to The ƎPUB Redactor, by version. Trimmed to new
 functionality and real fixes — cosmetic/UX-only adjustments aren't
 listed here.
 
+## 2026-09-17#08
+
+- New **Settings → Enable Performance Logging**: writes a timing
+  breakdown to a log file next to the crash log whenever a table
+  rebuild or save runs, sorted by which step actually took the most
+  time. For diagnosing a slowdown on a real, very large library that
+  a smaller test library doesn't reproduce -- off by default, no
+  measurable cost when disabled. **Settings → Open Performance Log
+  File…** reveals the file once something's been logged.
+
 ## 2026-09-17#07
 
 - Fixed: several batch operations (Undo/Redo, Search/Replace, Number
