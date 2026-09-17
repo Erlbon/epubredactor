@@ -241,6 +241,23 @@ def test_filename_fallback_preferred_over_metadata_fallback():
     print("PASS: the cheaper filename-based folder check is preferred over the metadata check when both would confirm")
 
 
+def test_intro_label_wraps_instead_of_widening_the_dialog():
+    # Regression guard: a QLabel without setWordWrap() wants its ENTIRE
+    # text on one line, which forces the whole dialog window to stretch
+    # to fit -- a real reported bug (the intro sentence is long enough
+    # that this made the window fill the screen width). Every label in
+    # this dialog must wrap.
+    with _fake_history([]):
+        dlg = FilenameParseDialog([_FakeBook("/x/Author - Title.epub")])
+    from PyQt6.QtWidgets import QLabel
+    labels = dlg.findChildren(QLabel)
+    intro = next(lbl for lbl in labels if lbl.text().startswith("Applies to"))
+    assert intro.wordWrap(), "the intro label must have word wrap enabled"
+    dlg.adjustSize()
+    assert dlg.sizeHint().width() < 900, dlg.sizeHint().width()
+    print("PASS: the intro label wraps, so the dialog doesn't stretch to fit it on one line")
+
+
 def test_title_is_never_marked_confirmed():
     # Titles are supposed to be different in every file -- repeating
     # them isn't evidence of anything, so they're excluded on purpose.
@@ -267,5 +284,6 @@ if __name__ == "__main__":
     test_unconfirmed_author_falls_back_to_folder_filenames()
     test_unconfirmed_author_falls_back_to_folder_metadata()
     test_filename_fallback_preferred_over_metadata_fallback()
+    test_intro_label_wraps_instead_of_widening_the_dialog()
     test_title_is_never_marked_confirmed()
     print("\nALL FILENAME PARSE DIALOG TESTS PASSED")

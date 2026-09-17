@@ -4,6 +4,13 @@ All notable changes to The ƎPUB Redactor, by version. Trimmed to new
 functionality and real fixes — cosmetic/UX-only adjustments aren't
 listed here.
 
+## 2026-09-17#15
+
+- Fixed: Parse Filename → Metadata's intro text was missing
+  `setWordWrap()`, so the dialog stretched to fit that whole (now
+  fairly long) sentence on one line instead of wrapping it -- on a
+  smaller screen this could make the window fill the entire width.
+
 ## 2026-09-17#14
 
 - Author/series confirmation (see 2026-09-17#13) improved based on

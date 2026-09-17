@@ -102,7 +102,7 @@ class FilenameParseDialog(QDialog):
 
         layout = QVBoxLayout()
         outer.addLayout(layout, 2)
-        layout.addWidget(QLabel(
+        intro_label = QLabel(
             f"Applies to {len(self.books)} book(s). Only fields present in the pattern "
             "are extracted and offered; everything else is left untouched. Patterns below "
             "are ranked by how many of these filenames they actually match, best first -- "
@@ -110,7 +110,14 @@ class FilenameParseDialog(QDialog):
             "pattern history. An extracted author or series is marked “confirmed” when the "
             "same value shows up for another loaded book, another filename in the same folder, "
             "or another file's existing metadata in that folder."
-        ))
+        )
+        # Without setWordWrap(), a QLabel's size hint wants the ENTIRE
+        # text on one line -- for a sentence this long, that forces the
+        # whole dialog (and the window itself) to stretch far wider than
+        # the screen to fit it. Every other label in this dialog already
+        # wraps; this one was just missed.
+        intro_label.setWordWrap(True)
+        layout.addWidget(intro_label)
 
         pattern_row = QHBoxLayout()
         pattern_row.addWidget(QLabel("Pattern:"))
