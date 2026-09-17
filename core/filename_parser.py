@@ -349,9 +349,22 @@ def best_matching_pattern(filenames: list[str], patterns: list[str]) -> tuple[st
     return (best, best_count) if best is not None else None
 
 
+def normalize_field_value(value: str) -> str:
+    """Case- and whitespace-insensitive comparison key for a captured
+    field value -- "Terry Pratchett", "TERRY PRATCHETT", and
+    "Terry  Pratchett" (stray double space) all normalize to the same
+    key, so two spellings of the same author/series count as agreeing
+    instead of looking like unrelated one-off values. Comparison-only:
+    callers still display/store the originally-captured value, never
+    this normalized form."""
+    return " ".join((value or "").split()).casefold()
+
+
 def field_value_counts(filenames: list[str], pattern: str, field: str) -> dict[str, int]:
-    """value -> how many of these filename stems produced that same
-    (non-empty) `field` value when parsed with `pattern`.
+    """normalized value -> how many of these filename stems produced a
+    matching (non-empty) `field` value when parsed with `pattern` --
+    see normalize_field_value() for what "matching" means here. Callers
+    must normalize their own lookup value the same way.
 
     Used to tell whether a field's role assignment is plausible without
     needing any pre-existing metadata to check against: %authors% and
@@ -367,7 +380,7 @@ def field_value_counts(filenames: list[str], pattern: str, field: str) -> dict[s
     for stem in filenames:
         parsed = parse_filename(stem, pattern)
         if parsed and parsed.get(field):
-            counts[parsed[field]] += 1
+            counts[normalize_field_value(parsed[field])] += 1
     return dict(counts)
 
 
@@ -390,3 +403,61 @@ def sibling_epub_stems(book_path: str) -> list[str]:
         if name.lower().endswith(".epub") and name != this_name:
             stems.append(os.path.splitext(name)[0])
     return stems
+
+
+# A real cost, unlike sibling_epub_stems()'s plain directory listing --
+# folder_metadata_field_counts() below actually opens each candidate
+# file to read its saved metadata, so it's capped rather than
+# exhaustive for a folder with many thousands of files (a genre-wide
+# folder, say, not just one author's). The book actually being fixed
+# almost never has good metadata to check against on its own (if it
+# did, it wouldn't need fixing) -- but plenty of OTHER, already-tagged
+# files commonly sit in the very same folder, e.g. a handful of newly
+# added, badly-named books dropped into a genre folder that's mostly
+# already curated.
+MAX_SIBLINGS_OPENED_FOR_METADATA_CHECK = 200
+
+
+def folder_metadata_field_counts(
+    directory: str, field: str, exclude_path: str | None = None,
+    limit: int = MAX_SIBLINGS_OPENED_FOR_METADATA_CHECK,
+) -> dict[str, int]:
+    """normalized value -> how many .epub files in `directory` already
+    have that (real, previously-saved) value for `field` -- "authors" or
+    "series" -- in their OWN metadata, not derived from their filename
+    at all. Opens up to `limit` files (see MAX_SIBLINGS_OPENED_FOR_
+    METADATA_CHECK) and stops there even if the folder has more.
+    A load failure on any one file is skipped, not fatal to the rest."""
+    from collections import Counter
+
+    from core.epub_metadata import EpubBook
+
+    try:
+        entries = os.listdir(directory)
+    except OSError:
+        return {}
+    exclude_name = os.path.basename(exclude_path) if exclude_path else None
+
+    counts: Counter[str] = Counter()
+    opened = 0
+    for name in entries:
+        if opened >= limit:
+            break
+        if not name.lower().endswith(".epub") or name == exclude_name:
+            continue
+        try:
+            book = EpubBook(os.path.join(directory, name))
+        except Exception:
+            continue
+        opened += 1
+        if book.load_error:
+            continue
+        if field == "authors":
+            values = [a for a in book.metadata.authors if a]
+        elif field == "series":
+            values = [book.metadata.series] if book.metadata.series else []
+        else:
+            values = []
+        for value in values:
+            counts[normalize_field_value(value)] += 1
+    return dict(counts)

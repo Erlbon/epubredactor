@@ -4,6 +4,23 @@ All notable changes to The ƎPUB Redactor, by version. Trimmed to new
 functionality and real fixes — cosmetic/UX-only adjustments aren't
 listed here.
 
+## 2026-09-17#14
+
+- Author/series confirmation (see 2026-09-17#13) improved based on
+  real-world feedback:
+  - Matching is now case- and whitespace-insensitive -- "Terry
+    Pratchett", "TERRY PRATCHETT", and "Terry  Pratchett" (stray
+    double space) all count as agreeing, instead of looking like three
+    unrelated one-off values that don't confirm each other.
+  - New third tier: when neither the loaded batch nor other filenames
+    in the same folder confirm a value, it now opens sibling `.epub`
+    files (up to 200 per folder) and checks their OWN already-saved
+    metadata -- covers the real situation where the book being fixed
+    has bad everything (name *and* metadata), but other, previously
+    curated files often sit in the very same folder. Tried last since
+    it's the most expensive check (it actually opens files, unlike the
+    other two tiers), and only after the cheaper tiers come up empty.
+
 ## 2026-09-17#13
 
 - **Parse Filename → Metadata** now cross-checks extracted authors and

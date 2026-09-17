@@ -46,6 +46,8 @@ from core.epub_metadata import EpubBook
 from core.filename_parser import (
     count_matching_filenames,
     field_value_counts,
+    folder_metadata_field_counts,
+    normalize_field_value,
     parse_filename,
     parsed_to_metadata_kwargs,
     sibling_epub_stems,
@@ -84,6 +86,13 @@ class FilenameParseDialog(QDialog):
         # while this dialog is open, even though _refresh_preview() reruns
         # on every keystroke as the pattern is edited.
         self._sibling_stems_cache: dict[str, list[str]] = {}
+        # (directory, field) -> value counts from OTHER files' own saved
+        # metadata (see folder_metadata_field_counts()) -- unlike the
+        # sibling-filename check above, this doesn't depend on the
+        # pattern text at all (it's real metadata, not re-parsed from a
+        # filename), so it's cached for the dialog's whole lifetime too,
+        # never invalidated by editing the pattern field.
+        self._folder_metadata_cache: dict[tuple[str, str], dict[str, int]] = {}
 
         self._build_ui()
         self._refresh_preview()
@@ -98,8 +107,9 @@ class FilenameParseDialog(QDialog):
             "are extracted and offered; everything else is left untouched. Patterns below "
             "are ranked by how many of these filenames they actually match, best first -- "
             "including a few common naming templates tried automatically alongside your own "
-            "pattern history. An extracted author or series is marked “confirmed” when "
-            "the same value shows up for another loaded book or another file in the same folder."
+            "pattern history. An extracted author or series is marked “confirmed” when the "
+            "same value shows up for another loaded book, another filename in the same folder, "
+            "or another file's existing metadata in that folder."
         ))
 
         pattern_row = QHBoxLayout()
@@ -265,30 +275,65 @@ class FilenameParseDialog(QDialog):
             self._sibling_stems_cache[directory] = cached
         return cached
 
+    def _folder_metadata_counts_for(self, book_path: str, field: str) -> dict[str, int]:
+        directory = os.path.dirname(book_path)
+        key = (directory, field)
+        cached = self._folder_metadata_cache.get(key)
+        if cached is None:
+            cached = folder_metadata_field_counts(directory, field, exclude_path=book_path)
+            self._folder_metadata_cache[key] = cached
+        return cached
+
     def _confirmation_note(
         self, field: str, value: str, book_path: str, pattern: str,
         batch_counts: dict[str, dict[str, int]], folder_counts_cache: dict[tuple[str, str], dict[str, int]],
     ) -> str | None:
         """Whether `value` (this row's %authors% or %series%) is
-        corroborated by any OTHER book -- first among the other books
-        already loaded into this dialog, falling back to the rest of
-        this book's own folder on disk only when the loaded batch alone
-        doesn't show it repeating. A repeating value across several
-        books is real evidence the pattern assigned this field's role
-        correctly; a one-off isn't necessarily wrong, just unconfirmed
-        by this signal, so it gets no note rather than a warning."""
-        batch_count = batch_counts.get(field, {}).get(value, 0)
+        corroborated by any OTHER book, checked in ascending order of
+        cost, stopping at the first tier that confirms it:
+
+        1. Other books already loaded into this dialog -- free, already
+           parsed for the batch as a whole.
+        2. Other filenames in this book's own folder on disk, parsed
+           with the SAME pattern -- a plain directory listing plus
+           regex, no files opened.
+        3. Other files' OWN saved metadata in that folder -- the most
+           expensive tier (actually opens each candidate epub), so it's
+           tried last and capped (see MAX_SIBLINGS_OPENED_FOR_METADATA_
+           CHECK) -- but also the most authoritative: the book actually
+           being fixed here essentially never has good metadata of its
+           own to check against (if it did, it wouldn't need this tool),
+           but nothing says every OTHER file in the same folder is in
+           that same boat -- a handful of newly added, badly-named
+           books dropped into an otherwise well-tagged genre folder is
+           exactly this situation.
+
+        Comparison is case/whitespace-insensitive (normalize_field_value)
+        throughout, so "Terry Pratchett" and "TERRY PRATCHETT" agree. A
+        repeating value is real evidence the pattern assigned this
+        field's role correctly; a one-off isn't necessarily wrong, just
+        unconfirmed by this signal, so it gets no note rather than a
+        warning."""
+        normalized = normalize_field_value(value)
+
+        batch_count = batch_counts.get(field, {}).get(normalized, 0)
         if batch_count >= 2:
             return f"{field}: confirmed, shared with {batch_count - 1} other loaded book(s)"
+
         directory = os.path.dirname(book_path)
         cache_key = (directory, field)
         if cache_key not in folder_counts_cache:
             folder_counts_cache[cache_key] = field_value_counts(
                 self._sibling_stems_for(book_path), pattern, field
             )
-        folder_count = folder_counts_cache[cache_key].get(value, 0)
+        folder_count = folder_counts_cache[cache_key].get(normalized, 0)
         if folder_count >= 1:
-            return f"{field}: confirmed, also found in {folder_count} other file(s) in this folder"
+            return f"{field}: confirmed, also found in {folder_count} other filename(s) in this folder"
+
+        metadata_count = self._folder_metadata_counts_for(book_path, field).get(normalized, 0)
+        if metadata_count >= 1:
+            return f"{field}: confirmed via existing metadata in {metadata_count} other book(s) in this folder"
+
         return None
 
     def _refresh_preview(self) -> None:

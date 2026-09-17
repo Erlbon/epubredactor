@@ -18,6 +18,7 @@ whatever a developer actually has saved locally."""
 import contextlib
 import os
 import sys
+import zipfile
 
 sys.path.insert(0, os.path.dirname(__file__))
 from PyQt6.QtWidgets import QApplication  # noqa: E402
@@ -43,6 +44,39 @@ def _fake_history(history: list[str]):
         yield
     finally:
         app_settings.load_pattern_history = original
+
+
+_TAGGED_EPUB_CONTAINER_XML = """<?xml version="1.0" encoding="UTF-8"?>
+<container version="1.0" xmlns="urn:oasis:names:tc:opendocument:xmlns:container">
+  <rootfiles>
+    <rootfile full-path="OEBPS/content.opf" media-type="application/oebps-package+xml"/>
+  </rootfiles>
+</container>
+"""
+
+
+def _build_tagged_epub(path: str, title: str, author: str) -> None:
+    """A minimal, REAL epub with actual saved metadata -- used to test
+    the "confirmed via existing metadata" folder fallback tier, which
+    needs a genuine EpubBook.metadata.authors to read, not just a
+    filename."""
+    opf = f"""<?xml version="1.0" encoding="UTF-8"?>
+<package xmlns="http://www.idpf.org/2007/opf" version="3.0" unique-identifier="BookId">
+  <metadata xmlns:dc="http://purl.org/dc/elements/1.1/" xmlns:opf="http://www.idpf.org/2007/opf">
+    <dc:identifier id="BookId">urn:uuid:{os.path.basename(path)}</dc:identifier>
+    <dc:title>{title}</dc:title>
+    <dc:language>en</dc:language>
+    <dc:creator>{author}</dc:creator>
+  </metadata>
+  <manifest><item id="chap1" href="chap1.xhtml" media-type="application/xhtml+xml"/></manifest>
+  <spine><itemref idref="chap1"/></spine>
+</package>
+"""
+    with zipfile.ZipFile(path, "w") as zf:
+        zf.writestr(zipfile.ZipInfo("mimetype"), b"application/epub+zip", zipfile.ZIP_STORED)
+        zf.writestr("META-INF/container.xml", _TAGGED_EPUB_CONTAINER_XML)
+        zf.writestr("OEBPS/content.opf", opf)
+        zf.writestr("OEBPS/chap1.xhtml", "<html><body>x</body></html>")
 
 
 def test_no_detect_from_metadata_context_menu():
@@ -142,7 +176,7 @@ def test_repeated_author_in_batch_is_confirmed():
     print("PASS: an author shared by two loaded books is marked confirmed on both; a one-off isn't")
 
 
-def test_unconfirmed_author_falls_back_to_folder():
+def test_unconfirmed_author_falls_back_to_folder_filenames():
     tmp_dir = "/tmp/epub_test_dialog_folder_fallback2"
     os.makedirs(tmp_dir, exist_ok=True)
     for name in ["Terry Pratchett - Mort.epub", "Terry Pratchett - Guards Guards.epub"]:
@@ -158,8 +192,53 @@ def test_unconfirmed_author_falls_back_to_folder():
         dlg = FilenameParseDialog(books)
         dlg.pattern_edit.setText("%authors% - %title%")
     row0 = dlg.preview_table.item(0, 1).text()
-    assert "confirmed" in row0 and "other file(s) in this folder" in row0, row0
-    print("PASS: with no support in the loaded batch, falls back to checking the rest of the folder on disk")
+    assert "confirmed" in row0 and "other filename(s) in this folder" in row0, row0
+    print("PASS: with no support in the loaded batch, falls back to checking other filenames in the folder")
+
+
+def test_unconfirmed_author_falls_back_to_folder_metadata():
+    # Neither the batch nor any OTHER filename in the folder supports
+    # this author -- but a sibling .epub with unrelated-looking filename
+    # ALREADY has it correctly tagged in its own saved metadata. This is
+    # the exact real-world case the feature is for: the book being fixed
+    # has bad everything (name AND metadata), but other, previously
+    # curated files often sit right next to it in the same folder.
+    tmp_dir = "/tmp/epub_test_dialog_metadata_fallback2"
+    os.makedirs(tmp_dir, exist_ok=True)
+    for f in os.listdir(tmp_dir):
+        os.remove(os.path.join(tmp_dir, f))
+    _build_tagged_epub(
+        os.path.join(tmp_dir, "zzz_unrelated_filename.epub"), "Guards! Guards!", "Terry Pratchett"
+    )
+
+    books = [_FakeBook(os.path.join(tmp_dir, "Terry Pratchett - Mort.epub"))]
+    with _fake_history([]):
+        dlg = FilenameParseDialog(books)
+        dlg.pattern_edit.setText("%authors% - %title%")
+    row0 = dlg.preview_table.item(0, 1).text()
+    assert "confirmed via existing metadata" in row0, row0
+    print("PASS: with no filename support anywhere, falls back to an already-tagged sibling's real metadata")
+
+
+def test_filename_fallback_preferred_over_metadata_fallback():
+    # When BOTH tier 2 (folder filenames) and tier 3 (folder metadata)
+    # could confirm a value, tier 2 wins -- it's the cheaper check, and
+    # is tried first.
+    tmp_dir = "/tmp/epub_test_dialog_tier_order"
+    os.makedirs(tmp_dir, exist_ok=True)
+    for f in os.listdir(tmp_dir):
+        os.remove(os.path.join(tmp_dir, f))
+    open(os.path.join(tmp_dir, "Terry Pratchett - Guards Guards.epub"), "w").close()
+    _build_tagged_epub(os.path.join(tmp_dir, "book2.epub"), "Small Gods", "Terry Pratchett")
+
+    books = [_FakeBook(os.path.join(tmp_dir, "Terry Pratchett - Mort.epub"))]
+    with _fake_history([]):
+        dlg = FilenameParseDialog(books)
+        dlg.pattern_edit.setText("%authors% - %title%")
+    row0 = dlg.preview_table.item(0, 1).text()
+    assert "other filename(s) in this folder" in row0, row0
+    assert "existing metadata" not in row0, row0
+    print("PASS: the cheaper filename-based folder check is preferred over the metadata check when both would confirm")
 
 
 def test_title_is_never_marked_confirmed():
@@ -185,6 +264,8 @@ if __name__ == "__main__":
     test_history_pattern_labeled_differently_from_built_in()
     test_falls_back_to_last_pattern_when_nothing_matches()
     test_repeated_author_in_batch_is_confirmed()
-    test_unconfirmed_author_falls_back_to_folder()
+    test_unconfirmed_author_falls_back_to_folder_filenames()
+    test_unconfirmed_author_falls_back_to_folder_metadata()
+    test_filename_fallback_preferred_over_metadata_fallback()
     test_title_is_never_marked_confirmed()
     print("\nALL FILENAME PARSE DIALOG TESTS PASSED")

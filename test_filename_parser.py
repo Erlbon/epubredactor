@@ -8,6 +8,8 @@ from core.filename_parser import (  # noqa: E402
     build_parser_regex,
     count_matching_filenames,
     field_value_counts,
+    folder_metadata_field_counts,
+    normalize_field_value,
     parse_filename,
     sibling_epub_stems,
 )
@@ -214,20 +216,35 @@ def test_field_value_counts_finds_repeated_authors():
         "Neil Gaiman - American Gods",
     ]
     counts = field_value_counts(filenames, "%authors% - %title%", "authors")
-    assert counts == {"Terry Pratchett": 2, "Neil Gaiman": 1}, counts
+    assert counts == {"terry pratchett": 2, "neil gaiman": 1}, counts
     print("PASS: field_value_counts() tallies how many filenames share the same author value")
 
 
 def test_field_value_counts_ignores_non_matching_filenames():
     filenames = ["Terry Pratchett - Mort", "totally unrelated", "Terry Pratchett - Reaper Man"]
     counts = field_value_counts(filenames, "%authors% - %title%", "authors")
-    assert counts == {"Terry Pratchett": 2}, counts
+    assert counts == {"terry pratchett": 2}, counts
     print("PASS: field_value_counts() skips filenames the pattern doesn't match at all")
 
 
 def test_field_value_counts_empty_list():
     assert field_value_counts([], "%authors% - %title%", "authors") == {}
     print("PASS: field_value_counts() on an empty filename list returns an empty dict, not an error")
+
+
+def test_field_value_counts_case_and_whitespace_insensitive():
+    filenames = ["TERRY PRATCHETT - Mort", "terry  pratchett - Reaper Man"]
+    counts = field_value_counts(filenames, "%authors% - %title%", "authors")
+    assert counts == {"terry pratchett": 2}, counts
+    print("PASS: field_value_counts() treats differently-cased/spaced values as the same author")
+
+
+def test_normalize_field_value():
+    assert normalize_field_value("Terry Pratchett") == "terry pratchett"
+    assert normalize_field_value("TERRY   PRATCHETT") == "terry pratchett"
+    assert normalize_field_value("  Terry Pratchett  ") == "terry pratchett"
+    assert normalize_field_value("") == ""
+    print("PASS: normalize_field_value() collapses case and whitespace differences")
 
 
 def test_sibling_epub_stems_lists_other_epubs_same_folder():
@@ -245,6 +262,97 @@ def test_sibling_epub_stems_lists_other_epubs_same_folder():
 def test_sibling_epub_stems_missing_directory_returns_empty():
     assert sibling_epub_stems("/tmp/epub_test_sibling_stems_does_not_exist/Book.epub") == []
     print("PASS: sibling_epub_stems() on a nonexistent folder returns an empty list, not an error")
+
+
+# ----------------------------------------------------------------------
+# folder_metadata_field_counts -- the most expensive tier: actually
+# opens sibling .epub files to check their OWN saved metadata, for the
+# case where the book being fixed has no good filename OR metadata of
+# its own, but another already-tagged file sits in the same folder.
+# ----------------------------------------------------------------------
+
+_METADATA_TEST_CONTAINER_XML = """<?xml version="1.0" encoding="UTF-8"?>
+<container version="1.0" xmlns="urn:oasis:names:tc:opendocument:xmlns:container">
+  <rootfiles>
+    <rootfile full-path="OEBPS/content.opf" media-type="application/oebps-package+xml"/>
+  </rootfiles>
+</container>
+"""
+
+
+def _build_tagged_epub(path, title, author, series=""):
+    import zipfile
+    series_meta = (
+        f'<meta name="calibre:series" content="{series}"/>' if series else ""
+    )
+    opf = f"""<?xml version="1.0" encoding="UTF-8"?>
+<package xmlns="http://www.idpf.org/2007/opf" version="3.0" unique-identifier="BookId">
+  <metadata xmlns:dc="http://purl.org/dc/elements/1.1/" xmlns:opf="http://www.idpf.org/2007/opf">
+    <dc:identifier id="BookId">urn:uuid:{os.path.basename(path)}</dc:identifier>
+    <dc:title>{title}</dc:title>
+    <dc:language>en</dc:language>
+    <dc:creator>{author}</dc:creator>
+    {series_meta}
+  </metadata>
+  <manifest><item id="chap1" href="chap1.xhtml" media-type="application/xhtml+xml"/></manifest>
+  <spine><itemref idref="chap1"/></spine>
+</package>
+"""
+    with zipfile.ZipFile(path, "w") as zf:
+        zf.writestr(zipfile.ZipInfo("mimetype"), b"application/epub+zip", zipfile.ZIP_STORED)
+        zf.writestr("META-INF/container.xml", _METADATA_TEST_CONTAINER_XML)
+        zf.writestr("OEBPS/content.opf", opf)
+        zf.writestr("OEBPS/chap1.xhtml", "<html><body>x</body></html>")
+
+
+def test_folder_metadata_field_counts_finds_tagged_siblings():
+    tmp_dir = "/tmp/epub_test_folder_metadata_counts"
+    os.makedirs(tmp_dir, exist_ok=True)
+    for f in os.listdir(tmp_dir):
+        os.remove(os.path.join(tmp_dir, f))
+    _build_tagged_epub(os.path.join(tmp_dir, "book1.epub"), "Mort", "Terry Pratchett", series="Discworld")
+    _build_tagged_epub(os.path.join(tmp_dir, "book2.epub"), "Guards! Guards!", "Terry Pratchett", series="Discworld")
+    _build_tagged_epub(os.path.join(tmp_dir, "book3.epub"), "American Gods", "Neil Gaiman")
+
+    author_counts = folder_metadata_field_counts(tmp_dir, "authors")
+    assert author_counts.get("terry pratchett") == 2, author_counts
+    assert author_counts.get("neil gaiman") == 1, author_counts
+
+    series_counts = folder_metadata_field_counts(tmp_dir, "series")
+    assert series_counts.get("discworld") == 2, series_counts
+    print("PASS: folder_metadata_field_counts() tallies real saved metadata from sibling epubs, "
+          "not their filenames")
+
+
+def test_folder_metadata_field_counts_excludes_given_path():
+    tmp_dir = "/tmp/epub_test_folder_metadata_counts_exclude"
+    os.makedirs(tmp_dir, exist_ok=True)
+    for f in os.listdir(tmp_dir):
+        os.remove(os.path.join(tmp_dir, f))
+    only_book = os.path.join(tmp_dir, "book1.epub")
+    _build_tagged_epub(only_book, "Mort", "Terry Pratchett")
+
+    counts = folder_metadata_field_counts(tmp_dir, "authors", exclude_path=only_book)
+    assert counts == {}, counts
+    print("PASS: folder_metadata_field_counts() excludes the book being checked itself")
+
+
+def test_folder_metadata_field_counts_missing_directory_returns_empty():
+    assert folder_metadata_field_counts("/tmp/epub_test_does_not_exist_at_all", "authors") == {}
+    print("PASS: folder_metadata_field_counts() on a nonexistent folder returns an empty dict, not an error")
+
+
+def test_folder_metadata_field_counts_respects_limit():
+    tmp_dir = "/tmp/epub_test_folder_metadata_counts_limit"
+    os.makedirs(tmp_dir, exist_ok=True)
+    for f in os.listdir(tmp_dir):
+        os.remove(os.path.join(tmp_dir, f))
+    for i in range(5):
+        _build_tagged_epub(os.path.join(tmp_dir, f"book{i}.epub"), f"Title {i}", "Some Author")
+
+    counts = folder_metadata_field_counts(tmp_dir, "authors", limit=2)
+    assert sum(counts.values()) == 2, counts
+    print("PASS: folder_metadata_field_counts() stops opening files once it hits the limit")
 
 
 def test_best_matching_pattern_tie_prefers_earlier_in_list():
@@ -549,8 +657,14 @@ if __name__ == "__main__":
     test_field_value_counts_finds_repeated_authors()
     test_field_value_counts_ignores_non_matching_filenames()
     test_field_value_counts_empty_list()
+    test_field_value_counts_case_and_whitespace_insensitive()
+    test_normalize_field_value()
     test_sibling_epub_stems_lists_other_epubs_same_folder()
     test_sibling_epub_stems_missing_directory_returns_empty()
+    test_folder_metadata_field_counts_finds_tagged_siblings()
+    test_folder_metadata_field_counts_excludes_given_path()
+    test_folder_metadata_field_counts_missing_directory_returns_empty()
+    test_folder_metadata_field_counts_respects_limit()
     test_best_matching_pattern_tie_prefers_earlier_in_list()
     test_multiword_series_disambiguated_by_numeric_index()
     test_parsed_to_metadata_kwargs_translates_multivalue_keys()
