@@ -1,9 +1,9 @@
-"""Tests for core/search_replace.py."""
+"""Tests for search/replace -- redactor_common.core.search_replace, which epub's own identical core/search_replace.py was replaced by (2026-09-23)."""
 import os
 import sys
 
 sys.path.insert(0, os.path.dirname(__file__))
-from core.search_replace import (  # noqa: E402
+from redactor_common.core.search_replace import (  # noqa: E402
     SearchReplaceError,
     apply_replace,
     would_change,

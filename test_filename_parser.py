@@ -676,6 +676,21 @@ def test_month_year_either_order():
     print("PASS: %month%-%year% and %year%-%month% both work, in whichever order the pattern uses")
 
 
+def test_hyphenated_author_is_not_split_on_its_own_hyphen():
+    # The loose "whitespace optional" rule alone let " - " match the bare
+    # hyphen inside the name: authors="Jean", title="Paul Sartre - Nausea".
+    # The shared engine tries strict whitespace first (2026-09-23).
+    assert parse_filename("Jean-Paul Sartre - Nausea", "%authors% - %title%") == {
+        "authors": "Jean-Paul Sartre", "title": "Nausea",
+    }
+
+
+def test_missing_spaces_around_a_separator_still_parse():
+    assert parse_filename("Pratchett-Mort", "%authors% - %title%") == {
+        "authors": "Pratchett", "title": "Mort",
+    }
+
+
 if __name__ == "__main__":
     test_basic_extraction()
     test_author_title_extraction()
@@ -741,3 +756,4 @@ if __name__ == "__main__":
     test_month_digit_form_unaffected()
     test_month_year_either_order()
     print("\nALL FILENAME PARSER TESTS PASSED")
+

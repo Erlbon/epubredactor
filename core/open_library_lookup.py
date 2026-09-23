@@ -25,9 +25,10 @@ from __future__ import annotations
 import json
 import time
 import urllib.error
-import urllib.request
 from dataclasses import dataclass
 from urllib.parse import quote
+
+from redactor_common.core.lookup_client import fetch_bytes, make_default_fetch
 
 SEARCH_URL = "https://openlibrary.org/search.json"
 COVER_URL_TEMPLATE = "https://covers.openlibrary.org/b/id/{cover_id}-L.jpg"
@@ -87,10 +88,9 @@ class OpenLibraryCandidate:
         return {k: v for k, v in raw.items() if v}
 
 
-def _default_fetch(url: str, timeout: float = DEFAULT_TIMEOUT) -> bytes:
-    request = urllib.request.Request(url, headers={"User-Agent": "EpubRedactor/1.0"})
-    with urllib.request.urlopen(request, timeout=timeout) as response:
-        return response.read()
+# redactor_common's fixed-User-Agent fetch (same request this module
+# used to build by hand); injectable via each function's `fetch` arg.
+_default_fetch = make_default_fetch("EpubRedactor/1.0", timeout=DEFAULT_TIMEOUT)
 
 
 def build_search_url(title: str, author: str = "", max_results: int = 6) -> str:
@@ -173,20 +173,11 @@ def download_cover_image(candidate: OpenLibraryCandidate, fetch=None) -> bytes:
     download fails, or comes back empty."""
     if not candidate.cover_id:
         raise OpenLibraryLookupError("This result has no cover image available.")
-    fetch = fetch or _default_fetch
-    try:
-        data = fetch(candidate.image_url())
-    except urllib.error.HTTPError as exc:
-        if exc.code == 429:
-            raise OpenLibraryLookupError(
-                "Open Library is rate-limiting requests right now (HTTP 429) -- "
-                "wait a minute or two and try again."
-            ) from exc
-        raise OpenLibraryLookupError(
-            f"Could not download the cover image (HTTP {exc.code}): {exc.reason}"
-        ) from exc
-    except (urllib.error.URLError, OSError) as exc:
-        raise OpenLibraryLookupError(f"Could not download the cover image: {exc}") from exc
-    if not data:
-        raise OpenLibraryLookupError("Cover image download returned no data.")
-    return data
+    return fetch_bytes(
+        candidate.image_url(), fetch or _default_fetch, OpenLibraryLookupError, what="the cover image",
+        status_messages={429: (
+            "Open Library is rate-limiting requests right now (HTTP 429) -- "
+            "wait a minute or two and try again."
+        )},
+        require_data=True,
+    )

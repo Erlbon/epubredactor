@@ -4,6 +4,32 @@ All notable changes to The ƎPUB Redactor, by version. Trimmed to new
 functionality and real fixes — cosmetic/UX-only adjustments aren't
 listed here.
 
+## 2026-09-23#01
+
+- **Parse Filename fix:** a hyphenated author no longer gets split on
+  its own hyphen ("Jean-Paul Sartre - Nausea" parsed as author "Jean",
+  title "Paul Sartre - Nausea"). Spaces in a pattern are matched
+  strictly first and only loosened if nothing matches.
+- **Look Up via Calibre / Google Books / Open Library** now show the
+  book's current cover next to the found one at a readable size, and a
+  wrong guess can be corrected per book (edit title/author/ISBN, then
+  Search This Item) -- the shared lookup dialog cbz already used.
+- **Genre and Language "+" pickers** are a searchable, fixed-size list
+  instead of a menu that ran off the screen once the list grew.
+- **Refresh List** shows progress (it re-read every book with none, so a
+  large library looked frozen).
+- **Column widths and hidden columns are saved by column name**, not
+  position, so a future added column can't make a saved preference hit
+  the wrong column. Existing settings are converted automatically.
+- Rename/Export, single-file rename, Case Conversion, Search & Replace,
+  Add/Remove Columns and table zoom use the shared redactor_common
+  versions (which were built from this app's originals); the rename and
+  parse engines, crash log, startup and settings lists are shared too.
+  Removed the dead `gui/about_dialog.py` and six local copies.
+- Tests: two tests that hung forever headless (modal message boxes) now
+  run, and tests no longer write to the real `epubredactor_settings.ini`.
+- redactor_common pinned to 2026-09-23-01 (was 2026-09-17-03).
+
 ## 2026-09-17#16
 
 - `%series_index%` in **Parse Filename → Metadata** now also accepts:

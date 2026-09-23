@@ -1,9 +1,9 @@
-"""Tests for core/case_conversion.py."""
+"""Tests for case conversion -- redactor_common.core.case_conversion, which epub's own identical core/case_conversion.py was replaced by (2026-09-23)."""
 import os
 import sys
 
 sys.path.insert(0, os.path.dirname(__file__))
-from core.case_conversion import (  # noqa: E402
+from redactor_common.core.case_conversion import (  # noqa: E402
     apply_case_conversion,
     to_lower,
     to_sentence_case,

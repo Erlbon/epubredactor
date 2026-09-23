@@ -27,7 +27,6 @@ from PyQt6.QtWidgets import (
     QInputDialog,
     QLabel,
     QLineEdit,
-    QMenu,
     QPlainTextEdit,
     QPushButton,
     QScrollArea,
@@ -42,13 +41,13 @@ from core.epub_metadata import EpubBook
 from core.fields import FIELDS
 from core.genres import add_genre
 from gui import app_settings
+from redactor_common.gui.quick_pick_dialog import QuickPickDialog
 from redactor_common.gui.image_label import AspectRatioImageLabel
 from redactor_common.gui.collapsible_splitter import CollapseToggleButton
 from redactor_common.gui.grid_utils import absorb_extra_row_space
 
 MULTIPLE_VALUES_PLACEHOLDER = "<multiple values>"
 COVER_PREVIEW_MIN_SIZE = (60, 80)
-ADD_CUSTOM_LANGUAGE_LABEL = "Add custom language…"
 # A single narrow, consistent-width button style for every field-side
 # action (Google Books lookup, Author Sort auto-fill, Genre/Language
 # pickers) -- a downward arrow works for all of them even though two are
@@ -370,23 +369,35 @@ class TagPanel(QWidget):
         return btn
 
     def _build_genre_button(self, field_key: str) -> QPushButton:
-        """Click for a menu of common (plus any custom-added) genres. The
-        field itself stays free text -- picking a menu item appends it to
-        whatever's already typed (semicolon list), it never replaces the
-        field's content. Menu is rebuilt fresh each time it opens, so a
-        just-added custom genre (via Settings -> Add/Remove Genres) shows
-        up immediately without needing a restart."""
-        btn = self._build_field_button("Add a genre to the field on the left")
-        menu = QMenu(btn)
-        menu.aboutToShow.connect(lambda m=menu, k=field_key: self._populate_genre_menu(m, k))
-        btn.setMenu(menu)
+        """Click to pick one or more genres from the common (plus any
+        custom-added) list. The field itself stays free text -- picked
+        genres are appended to whatever's already typed (semicolon list),
+        never replacing it. The list is read fresh each time, so a
+        just-added custom genre shows up immediately.
+
+        A searchable, fixed-size redactor_common QuickPickDialog since
+        2026-09-23 -- the flat QMenu this used to be overflowed the screen
+        once enough custom genres piled up (the same problem cbz hit)."""
+        btn = self._build_field_button("Add genre(s) to the field on the left")
+        btn.clicked.connect(lambda _checked=False, k=field_key: self._pick_genres(k))
         return btn
 
-    def _populate_genre_menu(self, menu: QMenu, field_key: str) -> None:
-        menu.clear()
-        for genre in app_settings.load_genres():
-            action = menu.addAction(genre)
-            action.triggered.connect(lambda _checked, g=genre, k=field_key: self._on_genre_picked(k, g))
+    def _pick_genres(self, field_key: str) -> None:
+        dialog = QuickPickDialog(
+            "Pick Genre(s)",
+            load_entries_fn=lambda: [(g, g) for g in app_settings.load_genres()],
+            multi_select=True,
+            add_custom_fn=self._add_custom_genre_from_dialog,
+            parent=self,
+        )
+        if dialog.exec() == QuickPickDialog.DialogCode.Accepted:
+            for genre in dialog.selected_keys():
+                self._on_genre_picked(field_key, genre)
+
+    def _add_custom_genre_from_dialog(self, dialog) -> None:
+        text, ok = QInputDialog.getText(dialog, "Add Custom Genre", "New genre name:")
+        if ok and text.strip():
+            app_settings.add_custom_genre(text.strip())
 
     def _on_genre_picked(self, field_key: str, genre: str) -> None:
         editor = self._editors[field_key]
@@ -397,47 +408,47 @@ class TagPanel(QWidget):
             self._checkboxes[field_key].setChecked(True)
 
     def _build_language_button(self, field_key: str) -> QPushButton:
-        """Click for a menu of common languages (plus any custom ones
-        added previously). Unlike Genre, Language is single-valued, so
-        picking one REPLACES the field rather than appending. The menu is
-        rebuilt fresh each time it opens, so a just-added custom language
-        shows up right away."""
+        """Click to pick a language from the common list (plus any custom
+        ones added previously). Unlike Genre, Language is single-valued,
+        so picking one REPLACES the field rather than appending. Same
+        searchable QuickPickDialog as Genre, with "Add Custom..." inside."""
         btn = self._build_field_button("Set the language from a quick list, or add a new one")
-        menu = QMenu(btn)
-        menu.aboutToShow.connect(lambda m=menu, k=field_key: self._populate_language_menu(m, k))
-        btn.setMenu(menu)
+        btn.clicked.connect(lambda _checked=False, k=field_key: self._pick_language(k))
         return btn
 
-    def _populate_language_menu(self, menu: QMenu, field_key: str) -> None:
-        menu.clear()
-        for code, name in app_settings.load_languages():
-            action = menu.addAction(f"{name} ({code})")
-            action.triggered.connect(lambda _checked, c=code, k=field_key: self._on_language_picked(k, c))
-        menu.addSeparator()
-        add_action = menu.addAction(ADD_CUSTOM_LANGUAGE_LABEL)
-        add_action.triggered.connect(lambda _checked, k=field_key: self._on_add_custom_language(k))
+    def _pick_language(self, field_key: str) -> None:
+        dialog = QuickPickDialog(
+            "Pick Language",
+            load_entries_fn=lambda: [(c, f"{n} ({c})") for c, n in app_settings.load_languages()],
+            multi_select=False,
+            add_custom_fn=self._add_custom_language_from_dialog,
+            parent=self,
+        )
+        if dialog.exec() == QuickPickDialog.DialogCode.Accepted:
+            keys = dialog.selected_keys()
+            if keys:
+                self._on_language_picked(field_key, keys[0])
+
+    def _add_custom_language_from_dialog(self, dialog) -> None:
+        code, ok = QInputDialog.getText(
+            dialog, "Add Custom Language",
+            "Language code (ISO 639-1, e.g. \"pt\" for Portuguese):"
+        )
+        if not ok or not code.strip():
+            return
+        name, ok = QInputDialog.getText(
+            dialog, "Add Custom Language",
+            "Display name (e.g. \"Portuguese\"):"
+        )
+        if not ok or not name.strip():
+            return
+        app_settings.add_custom_language(code.strip(), name.strip())
 
     def _on_language_picked(self, field_key: str, code: str) -> None:
         editor = self._editors[field_key]
         if self._editor_text(editor) != code:
             self._set_editor_text(editor, code)
             self._checkboxes[field_key].setChecked(True)
-
-    def _on_add_custom_language(self, field_key: str) -> None:
-        code, ok = QInputDialog.getText(
-            self, "Add Custom Language",
-            "Language code (ISO 639-1, e.g. \"pt\" for Portuguese):"
-        )
-        if not ok or not code.strip():
-            return
-        name, ok = QInputDialog.getText(
-            self, "Add Custom Language",
-            "Display name (e.g. \"Portuguese\"):"
-        )
-        if not ok or not name.strip():
-            return
-        app_settings.add_custom_language(code.strip(), name.strip())
-        self._on_language_picked(field_key, code.strip())
 
     def _on_autofill_author_sort(self) -> None:
         """Naive "Firstname Lastname" -> "Lastname, Firstname" guess, per

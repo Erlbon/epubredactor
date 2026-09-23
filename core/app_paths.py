@@ -2,30 +2,30 @@
 core/app_paths.py
 
 Where this app's persistent, non-bundled files live -- the settings
-ini and the crash log both need the same answer: next to the real
-executable when frozen (an installed .exe), or the project root when
-running from source. Deliberately not sys._MEIPASS for a frozen
-one-file PyInstaller build: that's a temporary extraction directory
-recreated fresh on every single launch, not a stable place to keep
-anything meant to persist between runs.
+ini, the crash log and the perf log -- via redactor_common.core.
+app_paths (2026-09-23): next to the real executable when frozen, the
+project root when running from source. Deliberately not sys._MEIPASS
+(a one-file build's temp extraction folder, recreated every launch).
+This project's own root is passed in, since the shared package lives
+in site-packages.
 
-Pure logic, no Qt dependency -- so it can be imported as early as
-possible (before QApplication even exists) by the crash logger, and
-reused by gui/app_settings.py for the same answer rather than each
-computing it separately.
+Pure logic, no Qt dependency -- importable before QApplication exists.
 """
 
 from __future__ import annotations
 
 import os
-import sys
+
+from redactor_common.core import app_paths as _shared
+
+APP_SLUG = "epubredactor"
+PROJECT_ROOT = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
 
 
 def base_dir() -> str:
-    """This file lives one level inside the project root (in core/),
-    same as gui/app_settings.py lives one level inside it (in gui/) --
-    so the same two-dirname walk up from THIS file's own location
-    lands on the project root correctly in dev mode either way."""
-    if getattr(sys, "frozen", False):
-        return os.path.dirname(sys.executable)
-    return os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
+    return str(_shared.base_dir(PROJECT_ROOT))
+
+
+def asset_path(*parts: str) -> str:
+    """A bundled read-only asset (icon, README) -- sys._MEIPASS when frozen."""
+    return str(_shared.asset_path(os.path.join(*parts), PROJECT_ROOT))

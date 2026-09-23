@@ -4,187 +4,80 @@ gui/open_library_dialog.py
 Import Metadata from Open Library: for each selected book, searches
 Open Library (openlibrary.org) using that book's own title/author and
 shows the best match -- title, authors, publisher, year, ISBN, genre
-tags (subjects), and a cover thumbnail, all from the same lookup.
-Replaces the narrower "Import Cover from Open Library" dialog, which
-only ever extracted the cover image even though the same response
-already carries the rest.
+tags (subjects), and cover, all from the same lookup.
 
 One checkbox per book (not per field) -- ticking a row applies
-everything found for that book, matching the same pattern already used
-for Calibre Lookup and Google Books. Nothing is written until you click
-Apply, and you can uncheck any row you don't trust before then.
+everything found for that book, cover included, matching Calibre Lookup
+and Google Books. Nothing is written until you click Apply.
+
+Built on redactor_common's LookupDialogBase since 2026-09-23: current vs
+found cover side by side, and per-row title/author correction with
+"Search This Item".
 """
 
 from __future__ import annotations
 
 import os
 
-from PyQt6.QtCore import QSize, Qt
-from PyQt6.QtGui import QIcon, QPixmap
-from PyQt6.QtWidgets import (
-    QAbstractItemView,
-    QCheckBox,
-    QDialog,
-    QDialogButtonBox,
-    QHeaderView,
-    QLabel,
-    QTableWidget,
-    QTableWidgetItem,
-    QVBoxLayout,
-)
-
 from core.epub_metadata import EpubBook
-from redactor_common.core.error_summary import summarize_errors
-from redactor_common.gui.progress import run_with_progress
 from core.open_library_lookup import (
     OpenLibraryLookupError,
     download_cover_image,
     search_open_library,
 )
+from redactor_common.gui.lookup_dialog import LookupDialogBase, LookupResult
 
-BOOK_COL, COVER_COL, FOUND_COL, APPLY_COL = range(4)
-THUMB_SIZE = QSize(50, 70)
+QUERY_FIELDS = [("title", "Title"), ("authors", "Author(s)")]
 
 
-class OpenLibraryDialog(QDialog):
+class OpenLibraryDialog(LookupDialogBase):
     def __init__(self, books: list[EpubBook], parent=None):
-        super().__init__(parent)
-        self.setWindowTitle("Import Metadata from Open Library")
-        self.resize(880, 520)
         self.books = books
-        self._checkboxes: dict[int, QCheckBox] = {}
-        self._results: dict[int, dict[str, str]] = {}
-        self._cover_bytes: dict[int, bytes] = {}
-
-        self._build_ui()
-        self._run_search()
-
-    def _build_ui(self) -> None:
-        layout = QVBoxLayout(self)
-
-        info = QLabel(
-            f"Searching Open Library for {len(self.books)} book(s) by title/author. Each "
-            "match brings in title, authors, publisher, year, ISBN, genre, and cover "
-            "together -- untick anything you don't trust, then Apply."
+        super().__init__(
+            books, parent,
+            window_title="Import Metadata from Open Library",
+            info_text=(
+                f"Searching Open Library for {len(books)} book(s) by title/author. Each "
+                "match brings in title, authors, publisher, year, ISBN, genre and cover "
+                "together -- untick anything you don't trust, then Apply."
+            ),
+            search_label="Searching Open Library…",
+            item_label=lambda book: os.path.basename(book.path),
+            search_one=self._search_one,
+            query_fields=QUERY_FIELDS,
+            get_local_cover=lambda book: book.cover_bytes,
+            progress_threshold=1,
         )
-        info.setWordWrap(True)
-        layout.addWidget(info)
 
-        self.table = QTableWidget()
-        self.table.setColumnCount(4)
-        self.table.setHorizontalHeaderLabels(["Book", "Cover", "Found", "Apply"])
-        self.table.setEditTriggers(QAbstractItemView.EditTrigger.NoEditTriggers)
-        self.table.horizontalHeader().setSectionResizeMode(FOUND_COL, QHeaderView.ResizeMode.Stretch)
-        self.table.setIconSize(THUMB_SIZE)
-        layout.addWidget(self.table, 1)
+    def _search_one(self, book: EpubBook, query_override: dict) -> LookupResult:
+        title = query_override.get("title") or book.metadata.title.strip()
+        authors = query_override.get("authors") or book.metadata.authors_str
+        used = {"title": title, "authors": authors}
+        if not title:
+            return LookupResult(error="no title set -- can't search", used_query=used)
+        try:
+            candidates = search_open_library(title, authors)
+        except OpenLibraryLookupError as exc:
+            return LookupResult(error=str(exc), used_query=used)
+        if not candidates:
+            return LookupResult(used_query=used)
 
-        self.status_label = QLabel("")
-        self.status_label.setWordWrap(True)
-        self.status_label.setStyleSheet("color: gray; font-size: 11px;")
-        layout.addWidget(self.status_label)
+        best = candidates[0]
+        cover_bytes = None
+        if best.cover_id:
+            try:
+                cover_bytes = download_cover_image(best)
+            except OpenLibraryLookupError:
+                cover_bytes = None  # metadata still usable without the cover
+        return LookupResult(fields=best.as_dict(), cover_bytes=cover_bytes, used_query=used)
 
-        buttons = QDialogButtonBox(
-            QDialogButtonBox.StandardButton.Ok | QDialogButtonBox.StandardButton.Cancel
-        )
-        buttons.button(QDialogButtonBox.StandardButton.Ok).setText("Apply")
-        buttons.accepted.connect(self.accept)
-        buttons.rejected.connect(self.reject)
-        layout.addWidget(buttons)
-
-    @staticmethod
-    def _readonly_item(text: str) -> QTableWidgetItem:
-        item = QTableWidgetItem(text)
-        item.setFlags(item.flags() & ~Qt.ItemFlag.ItemIsEditable)
-        return item
-
-    def _run_search(self) -> None:
-        self.table.setRowCount(len(self.books))
-        found_count = 0
-        errors: list[str] = []
-        processed_count = 0
-
-        def _step(book: EpubBook, row: int) -> None:
-            nonlocal found_count, processed_count
-            processed_count = row + 1
-            self.table.setItem(row, BOOK_COL, self._readonly_item(os.path.basename(book.path)))
-            cover_item = self._readonly_item("")
-            self.table.setItem(row, COVER_COL, cover_item)
-            self.table.setRowHeight(row, THUMB_SIZE.height() + 6)
-
-            cb = QCheckBox()
-            fields = {}
-            if not book.metadata.title.strip():
-                self.table.setItem(row, FOUND_COL, self._readonly_item("(no title set -- can't search)"))
-                cb.setEnabled(False)
-            else:
-                try:
-                    candidates = search_open_library(book.metadata.title, book.metadata.authors_str)
-                except OpenLibraryLookupError as exc:
-                    errors.append(f"{os.path.basename(book.path)}: {exc}")
-                    candidates = []
-
-                if candidates:
-                    best = candidates[0]
-                    fields = best.as_dict()
-                    summary = "; ".join(f"{k}: {v}" for k, v in fields.items())
-                    self.table.setItem(row, FOUND_COL, self._readonly_item(summary))
-
-                    if best.cover_id:
-                        try:
-                            image_bytes = download_cover_image(best)
-                            pixmap = QPixmap()
-                            if pixmap.loadFromData(image_bytes):
-                                scaled = pixmap.scaled(
-                                    THUMB_SIZE,
-                                    Qt.AspectRatioMode.KeepAspectRatio,
-                                    Qt.TransformationMode.SmoothTransformation,
-                                )
-                                cover_item.setIcon(QIcon(scaled))
-                                self._cover_bytes[row] = image_bytes
-                        except OpenLibraryLookupError as exc:
-                            errors.append(f"{os.path.basename(book.path)} (cover): {exc}")
-
-                    cb.setChecked(True)
-                    self._results[row] = fields
-                    found_count += 1
-                else:
-                    self.table.setItem(row, FOUND_COL, self._readonly_item("(no match)"))
-                    cb.setEnabled(False)
-
-            self._checkboxes[row] = cb
-            self.table.setCellWidget(row, APPLY_COL, cb)
-
-        completed = run_with_progress(
-            self, self.books, _step, "Searching Open Library…", threshold=1,
-            label_for=lambda book: f"Searching: {os.path.basename(book.path)}",
-        )
-        if not completed:
-            self.table.setRowCount(processed_count)
-        self.table.resizeColumnsToContents()
-
-        msg = f"Found something for {found_count} of {len(self.books)} book(s)."
-        if errors:
-            msg += f" {len(errors)} error(s): {summarize_errors(errors)}"
-        self.status_label.setText(msg)
-
-    # ------------------------------------------------------------------
-    # Result accessors, read by the caller after exec() returns Accepted
-
-    def accepted_metadata(self) -> dict[int, dict[str, str]]:
-        """book index -> {field_key: value}, for every checked row that
-        found something."""
-        return {
-            row: self._results[row]
-            for row, cb in self._checkboxes.items()
-            if cb.isChecked() and cb.isEnabled() and row in self._results
-        }
+    # accepted_metadata() comes from LookupDialogBase.
 
     def accepted_covers(self) -> dict[int, tuple[bytes, str]]:
         """book index -> (image_bytes, mime), for every checked row that
-        has a successfully downloaded cover. Open Library covers are
-        JPEG."""
+        has a downloaded cover. Open Library covers are JPEG."""
         return {
-            row: (self._cover_bytes[row], "image/jpeg")
-            for row, cb in self._checkboxes.items()
-            if cb.isChecked() and cb.isEnabled() and row in self._cover_bytes
+            row: (result.cover_bytes, "image/jpeg")
+            for row, result in self.accepted_rows().items()
+            if result.cover_bytes
         }

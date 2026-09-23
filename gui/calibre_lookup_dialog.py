@@ -17,6 +17,11 @@ Each lookup can take up to Calibre's own timeout (30s by default) since
 it may be querying several online sources in sequence -- for anything
 more than a handful of books, this can take a while, so the dialog
 warns before starting a large batch.
+
+Built on redactor_common's LookupDialogBase since 2026-09-23 (with
+auto_search=False, since Calibre has to be located first): current vs
+found cover side by side, and per-row title/author/ISBN correction with
+"Search This Item".
 """
 
 from __future__ import annotations
@@ -24,102 +29,54 @@ from __future__ import annotations
 import os
 import webbrowser
 
-from PyQt6.QtCore import Qt
-from PyQt6.QtWidgets import (
-    QAbstractItemView,
-    QCheckBox,
-    QDialog,
-    QDialogButtonBox,
-    QFileDialog,
-    QHBoxLayout,
-    QHeaderView,
-    QLabel,
-    QMessageBox,
-    QPushButton,
-    QTableWidget,
-    QTableWidgetItem,
-    QVBoxLayout,
-)
+from PyQt6.QtWidgets import QFileDialog, QMessageBox, QPushButton
 
 from core.calibre_lookup import CalibreLookupError, fetch_metadata
 from core.calibre_tools import DOWNLOAD_URL, find_tool
 from core.epub_metadata import EpubBook
-from redactor_common.core.error_summary import summarize_errors
-from redactor_common.gui.progress import run_with_progress
 from gui import app_settings
-
-BOOK_COL, FOUND_COL, APPLY_COL = range(3)
+from redactor_common.gui.lookup_dialog import LookupDialogBase, LookupResult
 
 # Above this many books, warn before starting -- each lookup can take up
 # to Calibre's own ~30s timeout, so a big batch adds up fast.
 WARN_BATCH_SIZE = 5
 
+QUERY_FIELDS = [("title", "Title"), ("authors", "Author(s)"), ("isbn", "ISBN")]
 
-class CalibreLookupDialog(QDialog):
+
+class CalibreLookupDialog(LookupDialogBase):
     def __init__(self, books: list[EpubBook], parent=None):
-        super().__init__(parent)
-        self.setWindowTitle("Look Up via Calibre")
-        self.resize(820, 520)
         self.books = books
-        self._checkboxes: dict[int, QCheckBox] = {}
-        self._results: dict[int, dict[str, str]] = {}
         self._tool_path = ""
-
-        self._build_ui()
-        self._resolve_tool_and_run()
-
-    # ------------------------------------------------------------------
-
-    def _build_ui(self) -> None:
-        layout = QVBoxLayout(self)
-        self.info_label = QLabel(
-            f"Looking up {len(self.books)} book(s) via your Calibre installation's own "
-            "metadata plugins (Google, Amazon, Open Library, or any others you have "
-            "enabled -- e.g. a Goodreads-replacement or FantasticFiction plugin).\n"
-            "This can take a while for more than a few books."
+        super().__init__(
+            books, parent,
+            window_title="Look Up via Calibre",
+            info_text=(
+                f"Looking up {len(books)} book(s) via your Calibre installation's own "
+                "metadata plugins (Google, Amazon, Open Library, or any others you have "
+                "enabled -- e.g. a Goodreads-replacement or FantasticFiction plugin).\n"
+                "This can take a while for more than a few books."
+            ),
+            search_label="Looking up metadata via Calibre…",
+            item_label=lambda book: os.path.basename(book.path),
+            search_one=self._search_one,
+            query_fields=QUERY_FIELDS,
+            get_local_cover=lambda book: book.cover_bytes,
+            progress_threshold=1,
+            auto_search=False,
         )
-        self.info_label.setWordWrap(True)
-        layout.addWidget(self.info_label)
-
-        self.table = QTableWidget()
-        self.table.setColumnCount(3)
-        self.table.setHorizontalHeaderLabels(["Book", "Found", "Apply"])
-        self.table.setEditTriggers(QAbstractItemView.EditTrigger.NoEditTriggers)
-        self.table.horizontalHeader().setSectionResizeMode(FOUND_COL, QHeaderView.ResizeMode.Stretch)
-        layout.addWidget(self.table, 1)
-
-        btn_row = QHBoxLayout()
-        self.retry_btn = QPushButton("Search Again")
+        self.retry_btn.clicked.disconnect()
         self.retry_btn.clicked.connect(self._resolve_tool_and_run)
-        btn_row.addWidget(self.retry_btn)
+
         self.change_tool_btn = QPushButton("Change Calibre Location…")
         self.change_tool_btn.clicked.connect(self._browse_for_tool)
-        btn_row.addWidget(self.change_tool_btn)
+        self.add_toolbar_button(self.change_tool_btn)
         self.download_btn = QPushButton("Download Calibre…")
         self.download_btn.clicked.connect(lambda: webbrowser.open(DOWNLOAD_URL))
         self.download_btn.setVisible(False)  # only shown once Calibre genuinely can't be found
-        btn_row.addWidget(self.download_btn)
-        btn_row.addStretch(1)
-        layout.addLayout(btn_row)
+        self.add_toolbar_button(self.download_btn)
 
-        self.status_label = QLabel("")
-        self.status_label.setWordWrap(True)
-        self.status_label.setStyleSheet("color: gray; font-size: 11px;")
-        layout.addWidget(self.status_label)
-
-        buttons = QDialogButtonBox(
-            QDialogButtonBox.StandardButton.Ok | QDialogButtonBox.StandardButton.Cancel
-        )
-        buttons.button(QDialogButtonBox.StandardButton.Ok).setText("Apply")
-        buttons.accepted.connect(self.accept)
-        buttons.rejected.connect(self.reject)
-        layout.addWidget(buttons)
-
-    @staticmethod
-    def _readonly_item(text: str) -> QTableWidgetItem:
-        item = QTableWidgetItem(text)
-        item.setFlags(item.flags() & ~Qt.ItemFlag.ItemIsEditable)
-        return item
+        self._resolve_tool_and_run()
 
     # ------------------------------------------------------------------
     # Locating Calibre's tool
@@ -132,7 +89,18 @@ class CalibreLookupDialog(QDialog):
             self._prompt_for_tool()
             return
         self._tool_path = found
-        self._run_lookup()
+        if len(self.books) > WARN_BATCH_SIZE:
+            reply = QMessageBox.question(
+                self,
+                "Large batch",
+                f"Looking up {len(self.books)} books via Calibre can take a while "
+                "(each one may take up to Calibre's own timeout, ~30s). Continue?",
+                QMessageBox.StandardButton.Yes | QMessageBox.StandardButton.No,
+                QMessageBox.StandardButton.Yes,
+            )
+            if reply != QMessageBox.StandardButton.Yes:
+                return
+        self.run_search()
 
     def _prompt_for_tool(self) -> None:
         self.status_label.setText(
@@ -152,71 +120,21 @@ class CalibreLookupDialog(QDialog):
         self._resolve_tool_and_run()
 
     # ------------------------------------------------------------------
-    # Running the lookup
+    # One lookup
 
-    def _run_lookup(self) -> None:
-        if len(self.books) > WARN_BATCH_SIZE:
-            reply = QMessageBox.question(
-                self,
-                "Large batch",
-                f"Looking up {len(self.books)} books via Calibre can take a while "
-                "(each one may take up to Calibre's own timeout, ~30s). Continue?",
-                QMessageBox.StandardButton.Yes | QMessageBox.StandardButton.No,
-                QMessageBox.StandardButton.Yes,
+    def _search_one(self, book: EpubBook, query_override: dict) -> LookupResult:
+        used = {
+            "title": query_override.get("title") or book.metadata.title,
+            "authors": query_override.get("authors") or book.metadata.authors_str,
+            "isbn": query_override.get("isbn") or book.metadata.isbn,
+        }
+        try:
+            result = fetch_metadata(
+                self._tool_path, title=used["title"], authors=used["authors"], isbn=used["isbn"],
             )
-            if reply != QMessageBox.StandardButton.Yes:
-                return
-
-        self.table.setRowCount(len(self.books))
-        self._checkboxes = {}
-        self._results = {}
-
-        found_count = 0
-        errors: list[str] = []
-        processed_count = 0
-
-        def _step(book: EpubBook, row: int) -> None:
-            nonlocal found_count, processed_count
-            processed_count = row + 1
-            self.table.setItem(row, BOOK_COL, self._readonly_item(os.path.basename(book.path)))
-
-            fields = {}
-            try:
-                result = fetch_metadata(
-                    self._tool_path,
-                    title=book.metadata.title,
-                    authors=book.metadata.authors_str,
-                    isbn=book.metadata.isbn,
-                )
-                fields = result.as_dict()
-            except CalibreLookupError as exc:
-                errors.append(f"{os.path.basename(book.path)}: {exc}")
-
-            cb = QCheckBox()
-            if fields:
-                summary = "; ".join(f"{k}: {v}" for k, v in fields.items())
-                self.table.setItem(row, FOUND_COL, self._readonly_item(summary))
-                cb.setChecked(True)
-                self._results[row] = fields
-                found_count += 1
-            else:
-                self.table.setItem(row, FOUND_COL, self._readonly_item("(nothing found)"))
-                cb.setEnabled(False)
-            self._checkboxes[row] = cb
-            self.table.setCellWidget(row, APPLY_COL, cb)
-
-        completed = run_with_progress(
-            self, self.books, _step, "Looking up metadata via Calibre…", threshold=1,
-            label_for=lambda book: f"Looking up: {os.path.basename(book.path)}",
-        )
-        if not completed:
-            self.table.setRowCount(processed_count)
-        self.table.resizeColumnsToContents()
-
-        msg = f"Found something for {found_count} of {len(self.books)} book(s)."
-        if errors:
-            msg += f" {len(errors)} error(s): {summarize_errors(errors)}"
-        self.status_label.setText(msg)
+        except CalibreLookupError as exc:
+            return LookupResult(error=str(exc), used_query=used)
+        return LookupResult(fields=result.as_dict(), used_query=used)
 
     # ------------------------------------------------------------------
     # Result accessor, read by the caller after exec() returns Accepted
@@ -224,8 +142,4 @@ class CalibreLookupDialog(QDialog):
     def accepted_changes(self) -> dict[int, dict[str, str]]:
         """book index -> {field_key: value}, for every row whose checkbox
         is checked and which found something."""
-        return {
-            row: self._results[row]
-            for row, cb in self._checkboxes.items()
-            if cb.isChecked() and cb.isEnabled() and row in self._results
-        }
+        return self.accepted_metadata()

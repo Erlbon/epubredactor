@@ -18,6 +18,7 @@ import os
 
 from core.app_paths import base_dir
 from core.languages import DEFAULT_LANGUAGES
+from redactor_common.core import managed_list, pattern_history
 
 _SETTINGS_FILENAME = "epubredactor_settings.ini"
 _HISTORY_KEY = "rename/pattern_history"
@@ -40,15 +41,10 @@ _PERF_LOGGING_ENABLED_KEY = "debug/perf_logging_enabled"
 
 
 def _dedupe_and_trim(history: list[str], new_pattern: str, max_history: int = _MAX_HISTORY) -> list[str]:
-    """Pure logic: move new_pattern to the front of history, deduped,
-    trimmed to max_history. Split out from save_pattern_used() so it's
-    testable without a live QSettings backend."""
-    new_pattern = new_pattern.strip()
-    if not new_pattern:
-        return history
-    result = [p for p in history if p != new_pattern]
-    result.insert(0, new_pattern)
-    return result[:max_history]
+    """Move new_pattern to the front of history, deduped, trimmed --
+    redactor_common.core.pattern_history's rule (promoted from here),
+    shared by every Redactor app."""
+    return pattern_history.dedupe_and_trim(history, new_pattern, max_history)
 
 
 def _settings_ini_path() -> str:
@@ -66,23 +62,15 @@ def _settings():
 
 def load_pattern_history() -> list[str]:
     """Most-recently-used pattern first."""
-    raw = _settings().value(_HISTORY_KEY, "", type=str)
-    if not raw:
-        return []
-    try:
-        history = json.loads(raw)
-    except (json.JSONDecodeError, TypeError):
-        return []
-    return [p for p in history if isinstance(p, str) and p.strip()]
+    return pattern_history.decode_history(_settings().value(_HISTORY_KEY, "", type=str))
 
 
 def save_pattern_used(pattern: str) -> None:
     """Record that `pattern` was actually used (e.g. the user clicked
     Apply in the rename dialog with it). Moves it to the front of the
     history if already present, dedupes, and trims to _MAX_HISTORY."""
-    history = load_pattern_history()
-    history = _dedupe_and_trim(history, pattern)
-    _settings().setValue(_HISTORY_KEY, json.dumps(history))
+    history = _dedupe_and_trim(load_pattern_history(), pattern)
+    _settings().setValue(_HISTORY_KEY, pattern_history.encode_history(history))
 
 
 def load_last_pattern(default: str) -> str:
@@ -151,176 +139,79 @@ def save_last_session_files(paths: list[str]) -> None:
 
 
 # ------------------------------------------------------------------
-# Languages: built-in defaults (which can now be individually hidden --
-# not deleted, just excluded from the merged list, and restorable) plus
-# any custom ones added via the Language field's "+" menu.
+# Languages and genres: built-in defaults (individually hideable --
+# excluded from the merged list, not deleted, and restorable) plus any
+# custom entries added via the field's "+" picker or Settings ->
+# Add/Remove Genres/Languages. The merge/hide/add/remove rules are
+# redactor_common.core.managed_list (promoted from here, shared with cbz
+# and mp3); only the storage keys live in this file.
 # ------------------------------------------------------------------
 
-def _merge_languages(defaults: list[tuple[str, str]], custom: list[tuple[str, str]]) -> list[tuple[str, str]]:
-    """Pure logic: append custom languages after the defaults, skipping
-    any whose code already appears (defaults win on conflict). Split out
-    for testability."""
-    seen_codes = {code for code, _name in defaults}
-    result = list(defaults)
-    for code, name in custom:
-        code = code.strip()
-        name = name.strip()
-        if not code or not name or code in seen_codes:
-            continue
-        seen_codes.add(code)
-        result.append((code, name))
-    return result
+_merge_languages = managed_list.merge_pairs
+_exclude_hidden_languages = managed_list.exclude_hidden_codes
+_merge_genres = managed_list.merge_names
+_exclude_hidden_genres = managed_list.exclude_hidden_names
 
 
-def _exclude_hidden_languages(
-    defaults: list[tuple[str, str]], hidden_codes: list[str]
-) -> list[tuple[str, str]]:
-    """Pure logic: drop any default language whose code is in
-    hidden_codes. Split out for testability, same pattern as the merge
-    functions elsewhere in this module."""
-    hidden = set(hidden_codes)
-    return [(code, name) for code, name in defaults if code not in hidden]
+def _load_names(key: str) -> list[str]:
+    return managed_list.decode_names(_settings().value(key, "", type=str))
+
+
+def _save_names(key: str, names: list[str]) -> None:
+    _settings().setValue(key, managed_list.encode_names(names))
 
 
 def load_hidden_default_language_codes() -> list[str]:
-    raw = _settings().value(_HIDDEN_DEFAULT_LANGUAGES_KEY, "", type=str)
-    if not raw:
-        return []
-    try:
-        return [c for c in json.loads(raw) if isinstance(c, str)]
-    except (json.JSONDecodeError, TypeError, ValueError):
-        return []
+    return _load_names(_HIDDEN_DEFAULT_LANGUAGES_KEY)
 
 
 def hide_default_language(code: str) -> None:
-    """Removes a built-in default language from the active list (not a
-    deletion of the constant itself -- restore_default_languages() undoes
-    this for all hidden defaults at once)."""
-    hidden = load_hidden_default_language_codes()
-    if code not in hidden:
-        hidden.append(code)
-    _settings().setValue(_HIDDEN_DEFAULT_LANGUAGES_KEY, json.dumps(hidden))
+    _save_names(_HIDDEN_DEFAULT_LANGUAGES_KEY, managed_list.add_code(load_hidden_default_language_codes(), code))
 
 
 def restore_default_languages() -> None:
-    """Un-hides every previously-hidden default language."""
-    _settings().setValue(_HIDDEN_DEFAULT_LANGUAGES_KEY, json.dumps([]))
+    _save_names(_HIDDEN_DEFAULT_LANGUAGES_KEY, [])
 
 
 def load_visible_default_languages() -> list[tuple[str, str]]:
-    """Built-in defaults minus any the user has hidden -- used both by
-    load_languages() and by the Add/Remove Languages management dialog."""
     return _exclude_hidden_languages(DEFAULT_LANGUAGES, load_hidden_default_language_codes())
 
 
 def load_languages() -> list[tuple[str, str]]:
-    """Visible (non-hidden) default languages plus any custom ones added
-    previously."""
-    raw = _settings().value(_CUSTOM_LANGUAGES_KEY, "", type=str)
-    custom: list[tuple[str, str]] = []
-    if raw:
-        try:
-            custom = [(c, n) for c, n in json.loads(raw)]
-        except (json.JSONDecodeError, TypeError, ValueError):
-            custom = []
-    return _merge_languages(load_visible_default_languages(), custom)
+    """Visible (non-hidden) default languages plus any custom ones
+    added previously -- what the Language "+" picker shows."""
+    return _merge_languages(load_visible_default_languages(), load_custom_languages())
 
 
 def add_custom_language(code: str, name: str) -> None:
-    code = code.strip()
-    name = name.strip()
-    if not code or not name:
-        return
-    raw = _settings().value(_CUSTOM_LANGUAGES_KEY, "", type=str)
-    try:
-        custom = json.loads(raw) if raw else []
-    except (json.JSONDecodeError, TypeError):
-        custom = []
-    custom = [pair for pair in custom if isinstance(pair, list) and pair and pair[0] != code]
-    custom.append([code, name])
-    _settings().setValue(_CUSTOM_LANGUAGES_KEY, json.dumps(custom))
+    pairs = managed_list.add_pair(load_custom_languages(), code, name)
+    _settings().setValue(_CUSTOM_LANGUAGES_KEY, managed_list.encode_pairs(pairs))
 
 
 def load_custom_languages() -> list[tuple[str, str]]:
-    """Just the user-added languages (not the built-in defaults) -- used
-    by the Add/Remove Languages management dialog, since only these can
-    be removed."""
-    raw = _settings().value(_CUSTOM_LANGUAGES_KEY, "", type=str)
-    if not raw:
-        return []
-    try:
-        return [(c, n) for c, n in json.loads(raw)]
-    except (json.JSONDecodeError, TypeError, ValueError):
-        return []
+    return managed_list.decode_pairs(_settings().value(_CUSTOM_LANGUAGES_KEY, "", type=str))
 
 
 def remove_custom_language(code: str) -> None:
-    raw = _settings().value(_CUSTOM_LANGUAGES_KEY, "", type=str)
-    try:
-        custom = json.loads(raw) if raw else []
-    except (json.JSONDecodeError, TypeError):
-        custom = []
-    custom = [pair for pair in custom if isinstance(pair, list) and pair and pair[0] != code]
-    _settings().setValue(_CUSTOM_LANGUAGES_KEY, json.dumps(custom))
-
-
-# ------------------------------------------------------------------
-# Genres: built-in defaults (individually hideable/restorable, same as
-# languages above) plus any custom genres added via the Genre field's
-# "+" menu, or Settings -> Add/Remove Genres.
-# ------------------------------------------------------------------
-
-def _merge_genres(defaults: list[str], custom: list[str]) -> list[str]:
-    """Pure logic: append custom genres after the defaults, skipping any
-    that duplicate a default (case-insensitively). Split out for
-    testability, same pattern as _merge_languages above."""
-    seen = {g.lower() for g in defaults}
-    result = list(defaults)
-    for genre in custom:
-        genre = genre.strip()
-        if not genre or genre.lower() in seen:
-            continue
-        seen.add(genre.lower())
-        result.append(genre)
-    return result
-
-
-def _exclude_hidden_genres(defaults: list[str], hidden: list[str]) -> list[str]:
-    """Pure logic: drop any default genre (case-insensitively) that's in
-    hidden. Split out for testability."""
-    hidden_lower = {g.lower() for g in hidden}
-    return [g for g in defaults if g.lower() not in hidden_lower]
+    pairs = managed_list.remove_pair(load_custom_languages(), code)
+    _settings().setValue(_CUSTOM_LANGUAGES_KEY, managed_list.encode_pairs(pairs))
 
 
 def load_hidden_default_genres() -> list[str]:
-    raw = _settings().value(_HIDDEN_DEFAULT_GENRES_KEY, "", type=str)
-    if not raw:
-        return []
-    try:
-        return [g for g in json.loads(raw) if isinstance(g, str)]
-    except (json.JSONDecodeError, TypeError, ValueError):
-        return []
+    return _load_names(_HIDDEN_DEFAULT_GENRES_KEY)
 
 
 def hide_default_genre(genre: str) -> None:
-    """Removes a built-in default genre from the active list (not a
-    deletion of the constant itself -- restore_default_genres() undoes
-    this for all hidden defaults at once)."""
-    hidden = load_hidden_default_genres()
-    if not any(g.lower() == genre.lower() for g in hidden):
-        hidden.append(genre)
-    _settings().setValue(_HIDDEN_DEFAULT_GENRES_KEY, json.dumps(hidden))
+    _save_names(_HIDDEN_DEFAULT_GENRES_KEY, managed_list.add_name(load_hidden_default_genres(), genre))
 
 
 def restore_default_genres() -> None:
-    """Un-hides every previously-hidden default genre."""
-    _settings().setValue(_HIDDEN_DEFAULT_GENRES_KEY, json.dumps([]))
+    _save_names(_HIDDEN_DEFAULT_GENRES_KEY, [])
 
 
 def load_visible_default_genres() -> list[str]:
     """Built-in defaults (COMMON_GENRES) minus any the user has hidden --
-    used both by load_genres() and by the Add/Remove Genres management
-    dialog."""
+    used both by load_genres() and by the Add/Remove Genres dialog."""
     from core.genres import COMMON_GENRES
     return _exclude_hidden_genres(COMMON_GENRES, load_hidden_default_genres())
 
@@ -328,43 +219,19 @@ def load_visible_default_genres() -> list[str]:
 def load_genres() -> list[str]:
     """Visible (non-hidden) default genres plus any custom ones added
     previously."""
-    raw = _settings().value(_CUSTOM_GENRES_KEY, "", type=str)
-    custom: list[str] = []
-    if raw:
-        try:
-            custom = [g for g in json.loads(raw) if isinstance(g, str)]
-        except (json.JSONDecodeError, TypeError, ValueError):
-            custom = []
-    return _merge_genres(load_visible_default_genres(), custom)
+    return _merge_genres(load_visible_default_genres(), load_custom_genres())
 
 
 def load_custom_genres() -> list[str]:
-    """Just the user-added genres (not the built-in defaults) -- used by
-    the Add/Remove Genres management dialog, since only these can be
-    removed."""
-    raw = _settings().value(_CUSTOM_GENRES_KEY, "", type=str)
-    if not raw:
-        return []
-    try:
-        return [g for g in json.loads(raw) if isinstance(g, str)]
-    except (json.JSONDecodeError, TypeError, ValueError):
-        return []
+    return _load_names(_CUSTOM_GENRES_KEY)
 
 
 def add_custom_genre(genre: str) -> None:
-    genre = genre.strip()
-    if not genre:
-        return
-    custom = load_custom_genres()
-    custom = [g for g in custom if g.lower() != genre.lower()]
-    custom.append(genre)
-    _settings().setValue(_CUSTOM_GENRES_KEY, json.dumps(custom))
+    _save_names(_CUSTOM_GENRES_KEY, managed_list.add_name(load_custom_genres(), genre))
 
 
 def remove_custom_genre(genre: str) -> None:
-    custom = load_custom_genres()
-    custom = [g for g in custom if g.lower() != genre.lower()]
-    _settings().setValue(_CUSTOM_GENRES_KEY, json.dumps(custom))
+    _save_names(_CUSTOM_GENRES_KEY, managed_list.remove_name(load_custom_genres(), genre))
 
 
 # ------------------------------------------------------------------
@@ -539,6 +406,67 @@ def load_hidden_columns() -> set[int]:
 
 def save_hidden_columns(hidden: set[int]) -> None:
     _settings().setValue(_HIDDEN_COLUMNS_KEY, json.dumps(sorted(hidden)))
+
+
+# ------------------------------------------------------------------
+# Column widths/visibility by FIELD KEY (2026-09-23) -- the index-based
+# values above break silently if a column is ever inserted in code (a
+# saved "hide column 7" would then hide a different column). Same scheme
+# as redactor_common.core.table_settings and the other apps. The first
+# load after upgrading migrates the old index-based values once, through
+# the caller's current column_keys list (valid: the layout hasn't changed
+# since they were saved), and writes them back in the new form.
+# ------------------------------------------------------------------
+
+_HIDDEN_COLUMN_KEYS_KEY = "table/hidden_column_keys"
+_COLUMN_WIDTHS_BY_KEY_KEY = "table/column_widths_by_key"
+
+
+def load_hidden_column_keys(column_keys: list[str]) -> set[str]:
+    settings = _settings()
+    if settings.contains(_HIDDEN_COLUMN_KEYS_KEY):
+        return set(managed_list.decode_names(settings.value(_HIDDEN_COLUMN_KEYS_KEY, "", type=str)))
+    migrated = {column_keys[i] for i in load_hidden_columns() if 0 <= i < len(column_keys)}
+    save_hidden_column_keys(migrated)
+    return migrated
+
+
+def save_hidden_column_keys(hidden: set[str]) -> None:
+    _settings().setValue(_HIDDEN_COLUMN_KEYS_KEY, managed_list.encode_names(sorted(hidden)))
+
+
+def _parse_column_widths_by_key(raw: str) -> dict[str, int]:
+    if not raw:
+        return {}
+    try:
+        data = json.loads(raw)
+    except (json.JSONDecodeError, TypeError, ValueError):
+        return {}
+    if not isinstance(data, dict):
+        return {}
+    result = {}
+    for key, value in data.items():
+        try:
+            width = int(value)
+        except (TypeError, ValueError):
+            continue
+        if isinstance(key, str) and width > 0:
+            result[key] = width
+    return result
+
+
+def load_column_widths_by_key(column_keys: list[str]) -> dict[str, int]:
+    settings = _settings()
+    if settings.contains(_COLUMN_WIDTHS_BY_KEY_KEY):
+        return _parse_column_widths_by_key(settings.value(_COLUMN_WIDTHS_BY_KEY_KEY, "", type=str))
+    migrated = {column_keys[i]: w for i, w in load_column_widths().items() if 0 <= i < len(column_keys)}
+    if migrated:
+        save_column_widths_by_key(migrated)
+    return migrated
+
+
+def save_column_widths_by_key(widths: dict[str, int]) -> None:
+    _settings().setValue(_COLUMN_WIDTHS_BY_KEY_KEY, json.dumps(widths))
 
 
 # ------------------------------------------------------------------

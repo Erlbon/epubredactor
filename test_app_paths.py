@@ -25,7 +25,7 @@ def test_base_dir_frozen_mode_uses_executable_dir():
         sys.frozen = True
         sys.executable = "/fake/install/location/epubredactor.exe"
         result = base_dir()
-        assert result == "/fake/install/location", result
+        assert os.path.normpath(result) == os.path.normpath("/fake/install/location"), result
     finally:
         if original_frozen is None:
             del sys.frozen

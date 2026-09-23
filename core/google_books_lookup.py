@@ -20,11 +20,12 @@ import json
 import socket
 import time
 import urllib.error
-import urllib.request
 from dataclasses import dataclass
 from urllib.parse import quote
 
 from core.isbn import best_isbn13
+
+from redactor_common.core.lookup_client import fetch_bytes, make_default_fetch
 
 API_URL = "https://www.googleapis.com/books/v1/volumes"
 DEFAULT_TIMEOUT = 8.0
@@ -88,12 +89,9 @@ class GoogleBooksCandidate:
         return {k: v for k, v in raw.items() if v}
 
 
-def _default_fetch(url: str, timeout: float = DEFAULT_TIMEOUT) -> bytes:
-    request = urllib.request.Request(
-        url, headers={"User-Agent": "EpubRedactor/1.0"}
-    )
-    with urllib.request.urlopen(request, timeout=timeout) as response:
-        return response.read()
+# redactor_common's fixed-User-Agent fetch (same request this module
+# used to build by hand); injectable via each function's `fetch` arg.
+_default_fetch = make_default_fetch("EpubRedactor/1.0", timeout=DEFAULT_TIMEOUT)
 
 
 def build_query_url(title: str, authors_str: str = "", max_results: int = 5) -> str:
@@ -208,20 +206,11 @@ def download_cover_image(candidate: GoogleBooksCandidate, fetch=None) -> bytes:
     download fails, or comes back empty."""
     if not candidate.cover_url:
         raise GoogleBooksLookupError("This result has no cover image available.")
-    fetch = fetch or _default_fetch
-    try:
-        data = fetch(candidate.cover_url)
-    except urllib.error.HTTPError as exc:
-        if exc.code == 429:
-            raise GoogleBooksLookupError(
-                "Google Books is rate-limiting requests right now (HTTP 429) -- "
-                "wait a minute or two and try again."
-            ) from exc
-        raise GoogleBooksLookupError(
-            f"Could not download the cover image (HTTP {exc.code}): {exc.reason}"
-        ) from exc
-    except (urllib.error.URLError, OSError) as exc:
-        raise GoogleBooksLookupError(f"Could not download the cover image: {exc}") from exc
-    if not data:
-        raise GoogleBooksLookupError("Cover image download returned no data.")
-    return data
+    return fetch_bytes(
+        candidate.cover_url, fetch or _default_fetch, GoogleBooksLookupError, what="the cover image",
+        status_messages={429: (
+            "Google Books is rate-limiting requests right now (HTTP 429) -- "
+            "wait a minute or two and try again."
+        )},
+        require_data=True,
+    )

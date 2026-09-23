@@ -18,12 +18,15 @@ import os
 import shutil
 import subprocess
 
+from redactor_common.core.tool_locator import find_tool, windows_program_dirs
+
 DOWNLOAD_URL = "https://sigil-ebook.com/sigil/download/"
 
-WINDOWS_INSTALL_DIR_CANDIDATES = [
-    r"C:\Program Files\Sigil",
-    r"C:\Program Files (x86)\Sigil",
-]
+def _default_install_dirs() -> list[str]:
+    """Well-known install folders (empty off Windows). Tests patch this
+    to isolate from a real Sigil install."""
+    return [str(d) for d in windows_program_dirs("Sigil")]
+
 
 _EXE_NAME = "sigil.exe"
 
@@ -35,22 +38,19 @@ class SigilLaunchError(Exception):
 def find_sigil(configured_path: str = "", which_fn=shutil.which) -> str | None:
     """Locate the Sigil executable. Tries, in order: a previously
     configured/remembered path, PATH, then common Windows install
-    locations. Mirrors core/calibre_tools.find_tool()'s approach, kept
+    locations (redactor_common's tool_locator tiers). Mirrors
+    core/calibre_tools.find_tool()'s approach, kept
     as a separate small function here rather than folded into that
     module -- Sigil isn't part of a Calibre install, it has its own
     entirely separate install location and versioning."""
     if configured_path and os.path.isfile(configured_path):
         return configured_path
-
-    found = which_fn("sigil") or which_fn(_EXE_NAME)
-    if found:
-        return found
-
-    for install_dir in WINDOWS_INSTALL_DIR_CANDIDATES:
-        candidate = os.path.join(install_dir, _EXE_NAME)
-        if os.path.isfile(candidate):
-            return candidate
-    return None
+    found = find_tool(
+        "sigil",
+        install_dirs=_default_install_dirs(),
+        which=lambda name: which_fn(name) or which_fn(_EXE_NAME),
+    )
+    return str(found) if found else None
 
 
 def open_in_sigil(sigil_path: str, epub_path: str, popen_fn=subprocess.Popen) -> None:

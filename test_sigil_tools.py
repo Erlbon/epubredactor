@@ -19,7 +19,7 @@ def _make_fake_exe(name: str) -> str:
 def test_find_sigil_from_configured_path():
     path = _make_fake_exe("configured_sigil.exe")
     result = find_sigil(configured_path=path, which_fn=lambda n: None)
-    assert result == path
+    assert os.path.normpath(result) == os.path.normpath(path)
     print("PASS: finds Sigil at a previously configured/remembered path")
 
 
@@ -28,13 +28,13 @@ def test_find_sigil_stale_configured_path_falls_through():
         configured_path="/nonexistent/sigil.exe",
         which_fn=lambda n: "/usr/bin/sigil" if n == "sigil" else None,
     )
-    assert result == "/usr/bin/sigil"
+    assert os.path.normpath(result) == os.path.normpath("/usr/bin/sigil")
     print("PASS: a stale configured path is skipped, falls through to PATH lookup")
 
 
 def test_find_sigil_falls_back_to_which():
     result = find_sigil(which_fn=lambda n: "/usr/local/bin/sigil" if n == "sigil" else None)
-    assert result == "/usr/local/bin/sigil"
+    assert os.path.normpath(result) == os.path.normpath("/usr/local/bin/sigil")
     print("PASS: falls back to PATH lookup when nothing configured")
 
 

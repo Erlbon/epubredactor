@@ -12,13 +12,18 @@ from __future__ import annotations
 
 import os
 import shutil
-import subprocess
-import sys
 
-WINDOWS_INSTALL_DIR_CANDIDATES = [
-    r"C:\Program Files\Calibre2",
-    r"C:\Program Files (x86)\Calibre2",
-]
+from redactor_common.core.subprocess_utils import no_window_kwargs
+from redactor_common.core.tool_locator import find_tool as _shared_find_tool
+from redactor_common.core.tool_locator import windows_program_dirs
+
+# Well-known install folders, checked after PATH (Calibre's installer
+# doesn't always put itself on PATH). Resolved from %ProgramFiles% etc.
+# by redactor_common's windows_program_dirs(); empty off Windows.
+def _default_install_dirs() -> list[str]:
+    """Tests patch this to isolate from a real Calibre install."""
+    return [str(d) for d in windows_program_dirs("Calibre2")]
+
 
 DOWNLOAD_URL = "https://calibre-ebook.com/download"
 
@@ -30,29 +35,11 @@ TOOL_BASE_NAMES = {
 
 
 def no_console_window_kwargs() -> dict:
-    """Extra subprocess.run() kwargs that suppress the console window
-    Windows would otherwise pop up for any console-mode .exe (every one
-    of Calibre's CLI tools is one) launched from this windowed GUI app.
-    That popup can steal focus entirely from this app -- and if the
-    tool errors with a lot of stderr output, the console window fills
-    with raw text with no way to reach anything in this app's own
-    dialog (including its own Apply button) until the console window is
-    manually closed. Shared here since every Calibre subprocess call
-    (fetch-ebook-metadata, ebook-convert, ebook-polish) needs it, not
-    just one.
-
-    Uses getattr rather than a direct subprocess.CREATE_NO_WINDOW
-    reference: that constant is only ever defined on an actual Windows
-    Python build, so a direct reference would itself raise
-    AttributeError if this function is ever exercised on a non-Windows
-    interpreter (e.g. under a sys.platform test mock) -- this way it's a
-    harmless no-op there instead, same as it already is on any genuinely
-    non-Windows platform."""
-    if sys.platform == "win32":
-        flag = getattr(subprocess, "CREATE_NO_WINDOW", None)
-        if flag is not None:
-            return {"creationflags": flag}
-    return {}
+    """Extra subprocess.run() kwargs that stop a Calibre console tool
+    popping up (and stealing focus with) its own console window from
+    this windowed app -- redactor_common's no_window_kwargs(), shared
+    with mp3 and video since 2026-09-23."""
+    return no_window_kwargs()
 
 
 def _exe_name(base_name: str) -> str:
@@ -60,12 +47,7 @@ def _exe_name(base_name: str) -> str:
 
 
 def _candidate_install_dirs(extra_dirs: list[str] | None = None) -> list[str]:
-    dirs = list(extra_dirs or [])
-    dirs += list(WINDOWS_INSTALL_DIR_CANDIDATES)
-    local_appdata = os.environ.get("LOCALAPPDATA", "")
-    if local_appdata:
-        dirs.append(os.path.join(local_appdata, "Programs", "Calibre2"))
-    return dirs
+    return list(extra_dirs or []) + _default_install_dirs()
 
 
 def find_tool(
@@ -76,24 +58,17 @@ def find_tool(
 ) -> str | None:
     """Locate a specific Calibre CLI tool by key ("fetch-ebook-metadata"
     or "ebook-convert"). Tries, in order: the configured install
-    directory, PATH, then common Windows install locations."""
+    directory, PATH, then common install locations -- redactor_common's
+    tool_locator.find_tool() tiers 2-4 (the configured folder plays the
+    bundled-tools-folder role)."""
     base_name = TOOL_BASE_NAMES.get(tool_key, tool_key)
-    exe_name = _exe_name(base_name)
-
-    if configured_install_dir:
-        candidate = os.path.join(configured_install_dir, exe_name)
-        if os.path.isfile(candidate):
-            return candidate
-
-    found = which_fn(base_name) or which_fn(exe_name)
-    if found:
-        return found
-
-    for install_dir in _candidate_install_dirs(extra_install_dirs):
-        candidate = os.path.join(install_dir, exe_name)
-        if os.path.isfile(candidate):
-            return candidate
-    return None
+    found = _shared_find_tool(
+        base_name,
+        tools_dir=configured_install_dir or None,
+        install_dirs=_candidate_install_dirs(extra_install_dirs),
+        which=lambda name: which_fn(name) or which_fn(_exe_name(name)),
+    )
+    return str(found) if found else None
 
 
 def find_install_dir(

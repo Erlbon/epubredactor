@@ -21,20 +21,20 @@ def _make_fake_install(dirname: str, tools: list[str]) -> str:
 def test_find_tool_from_configured_install_dir():
     install_dir = _make_fake_install("install1", ["fetch-ebook-metadata"])
     result = find_tool("fetch-ebook-metadata", configured_install_dir=install_dir, which_fn=lambda n: None)
-    assert result == os.path.join(install_dir, "fetch-ebook-metadata.exe")
+    assert os.path.normpath(result) == os.path.normpath(os.path.join(install_dir, "fetch-ebook-metadata.exe"))
     print("PASS: finds a tool inside the configured install directory")
 
 
 def test_find_tool_falls_back_to_which():
     result = find_tool("ebook-convert", which_fn=lambda name: "/usr/bin/ebook-convert" if name == "ebook-convert" else None)
-    assert result == "/usr/bin/ebook-convert"
+    assert os.path.normpath(result) == os.path.normpath("/usr/bin/ebook-convert")
     print("PASS: falls back to PATH lookup when not in the configured dir")
 
 
 def test_find_tool_checks_extra_candidates():
     install_dir = _make_fake_install("install2", ["ebook-convert"])
     result = find_tool("ebook-convert", which_fn=lambda n: None, extra_install_dirs=[install_dir])
-    assert result == os.path.join(install_dir, "ebook-convert.exe")
+    assert os.path.normpath(result) == os.path.normpath(os.path.join(install_dir, "ebook-convert.exe"))
     print("PASS: checks extra candidate install dirs")
 
 
@@ -55,14 +55,14 @@ def test_find_tool_missing_configured_dir_falls_through():
         configured_install_dir="/does/not/exist",
         which_fn=lambda name: "/usr/bin/ebook-convert",
     )
-    assert result == "/usr/bin/ebook-convert"
+    assert os.path.normpath(result) == os.path.normpath("/usr/bin/ebook-convert")
     print("PASS: a stale/missing configured dir is skipped, falls through to PATH")
 
 
 def test_find_install_dir_derives_parent_of_a_tool():
     install_dir = _make_fake_install("install3", ["ebook-convert"])
     result = find_install_dir(which_fn=lambda n: None, extra_install_dirs=[install_dir])
-    assert result == install_dir
+    assert os.path.normpath(result) == os.path.normpath(install_dir)
     print("PASS: find_install_dir derives the install folder from any one found tool")
 
 
@@ -76,7 +76,7 @@ def test_both_tools_found_in_same_install_dir():
     install_dir = _make_fake_install("install4", ["fetch-ebook-metadata", "ebook-convert"])
     fetch_path = find_tool("fetch-ebook-metadata", configured_install_dir=install_dir, which_fn=lambda n: None)
     convert_path = find_tool("ebook-convert", configured_install_dir=install_dir, which_fn=lambda n: None)
-    assert os.path.dirname(fetch_path) == os.path.dirname(convert_path) == install_dir
+    assert os.path.dirname(fetch_path) == os.path.dirname(convert_path) == os.path.normpath(install_dir)
     print("PASS: both tools resolve correctly from a single shared install directory")
 
 

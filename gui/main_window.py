@@ -37,8 +37,8 @@ import sys
 import traceback
 import webbrowser
 
-from PyQt6.QtCore import QSize, Qt, QTimer, pyqtSignal
-from PyQt6.QtGui import QActionGroup, QColor, QGuiApplication, QIcon, QKeySequence
+from PyQt6.QtCore import QSize, Qt, QTimer
+from PyQt6.QtGui import QActionGroup, QColor, QGuiApplication, QIcon
 from PyQt6.QtWidgets import (
     QAbstractItemView,
     QFileDialog,
@@ -64,17 +64,23 @@ from core.epub_metadata import EpubBook, EpubError
 from core.fields import FIELDS, NUMERIC_FIELD_KEYS
 from core import perf_log
 from core.languages import is_blank_or_unknown_language
-from core.rename_pattern import rename_book_file, render_filename, unique_path
+from core.rename_pattern import DEFAULT_PATTERN, PLACEHOLDERS, placeholder_values, unique_path
 from core.sigil_tools import DOWNLOAD_URL as SIGIL_DOWNLOAD_URL
 from core.sigil_tools import SigilLaunchError, find_sigil
 from core.sigil_tools import open_in_sigil as launch_sigil
 from core.version import APP_NAME, APP_REPO_URL, APP_VERSION, RELEASE_LABEL
 from redactor_common.core.error_summary import summarize_errors
+from redactor_common.core.folder_refresh import find_new_files_in_loaded_folders
 from redactor_common.core.os_utils import reveal_in_file_manager
 from redactor_common.core.save_errors import describe_save_error
 from redactor_common.core.undo import UndoManager
 from redactor_common.gui.action_factory import make_action
 from redactor_common.gui.progress import run_with_progress
+from redactor_common.gui.sortable_table import NumericTableWidgetItem, suspend_sorting
+from redactor_common.gui.zoom_toolbar import TableZoomController
+from redactor_common.gui.visible_rows import VisibleRowsWatcher
+from redactor_common.gui.rename_pattern_dialog import RenamePatternDialog
+from redactor_common.gui.rename_single_file import rename_single_file as prompt_rename_single_file
 from redactor_common.gui.async_hash_cache import AsyncHashCache
 from redactor_common.gui.async_icon_cache import AsyncIconCache
 from redactor_common.gui.quick_series_number import prompt_and_generate_series_numbers
@@ -94,8 +100,8 @@ from redactor_common.core.version import REDACTOR_COMMON_REPO_URL, REDACTOR_COMM
 from gui.author_sort_dialog import AuthorSortDialog
 from gui.blank_language_default_dialog import BlankLanguageDefaultDialog
 from gui.calibre_lookup_dialog import CalibreLookupDialog
-from gui.case_conversion_dialog import CaseConversionDialog
-from gui.column_settings_dialog import ColumnSettingsDialog
+from redactor_common.gui.case_conversion_dialog import CaseConversionDialog
+from redactor_common.gui.column_settings_dialog import ColumnSettingsDialog
 from gui.compress_images_dialog import CompressImagesDialog, format_size
 from gui.content_scan_dialog import ContentScanDialog
 from gui.cover_generator_dialog import CoverGeneratorDialog
@@ -104,15 +110,14 @@ from gui.ebook_convert_dialog import EbookConvertDialog
 from gui.filename_parse_dialog import FilenameParseDialog
 from gui.google_books_dialog import GoogleBooksDialog
 from gui.image_compress import recompress_jpeg
-from gui.manage_list_dialog import ManageListDialog
+from redactor_common.gui.manage_list_dialog import ManageListDialog
 from gui.manifest_dedupe_dialog import ManifestDedupeDialog
 from gui.manifest_rebuild_dialog import ManifestRebuildDialog
 from gui.missing_space_dialog import MissingSpaceDialog
 from gui.nav_repair_dialog import NavRepairDialog
 from gui.open_library_dialog import OpenLibraryDialog
 from gui.polish_book_dialog import PolishBookDialog
-from gui.rename_dialog import RenameDialog
-from gui.search_replace_dialog import FILENAME_FIELD_KEY, SearchReplaceDialog
+from redactor_common.gui.search_replace_dialog import FILENAME_FIELD_KEY, SearchReplaceDialog
 from gui.series_number_dialog import SeriesNumberDialog
 from gui.send_to_ereader_dialog import SendToEreaderDialog
 from gui.send_to_kobo_dialog import SendToKoboDialog
@@ -136,6 +141,11 @@ FIRST_FIELD_COL = 3
 # new column in earlier would shift every FIELDS column's saved index
 # out from under existing users' settings on upgrade.
 JUNK_COVER_COL = FIRST_FIELD_COL + len(FIELDS)
+# Every column's stable key, in logical-column order -- what column
+# widths/visibility are persisted by (see app_settings'
+# load_hidden_column_keys()), so inserting a column later can't silently
+# re-point a saved preference at the wrong column.
+COLUMN_KEYS = ["path", "filename", "status", *[key for key, _label, _ml in FIELDS], "junk_cover"]
 # Colors now live in redactor_common.gui.colors -- this project's own
 # scheme became the shared standard (mp3/video had each picked their
 # own row-tint/selection colors independently). See that module's
@@ -155,8 +165,6 @@ LOAD_PROGRESS_THRESHOLD = 3  # don't bother with a progress dialog for a tiny ba
 # (thousands of rows) are where an uninterrupted rebuild loop can run
 # long enough to look exactly like a frozen app with no feedback at all.
 REBUILD_PROGRESS_THRESHOLD = 500
-TABLE_ZOOM_MIN_PT = 6
-TABLE_ZOOM_MAX_PT = 20
 TAG_PANEL_COLLAPSED_WIDTH = 32  # slim strip, not zero -- keeps the panel's own toggle button reachable
 
 IMAGE_FILE_FILTER = "Images (*.jpg *.jpeg *.png *.gif *.webp)"
@@ -179,18 +187,6 @@ def resource_path(*parts: str) -> str:
     return os.path.join(base, *parts)
 
 
-class NumericTableWidgetItem(QTableWidgetItem):
-    """Sorts numerically when both sides parse as numbers (so "9" sorts
-    before "10"), falling back to normal text sorting otherwise (so a
-    blank or non-numeric cell doesn't crash the comparison)."""
-
-    def __lt__(self, other):
-        try:
-            return float(self.text()) < float(other.text())
-        except (ValueError, TypeError):
-            return super().__lt__(other)
-
-
 class BookTableWidget(QTableWidget):
     """QTableWidget with spreadsheet-style keyboard navigation:
     Tab/Shift+Tab move horizontally (wrapping to the next/previous row at
@@ -200,18 +196,9 @@ class BookTableWidget(QTableWidget):
     still auto-commits via the standard delegate when the current cell
     changes).
 
-    Also emits viewportResized whenever the widget's own size changes
-    (window resize, splitter drag, tag panel collapse/expand) -- lets
-    MainWindow re-check which rows are newly visible for lazy cover
-    icon loading (see _request_icons_for_visible_rows) without needing
-    to override resizeEvent itself, or having every resize path
-    remember to call something."""
-
-    viewportResized = pyqtSignal()
-
-    def resizeEvent(self, event) -> None:
-        super().resizeEvent(event)
-        self.viewportResized.emit()
+    (Viewport resizes for lazy cover loading are watched by
+    redactor_common's VisibleRowsWatcher now -- this class no longer
+    needs its own viewportResized signal.)"""
 
     def keyPressEvent(self, event) -> None:
         key = event.key()
@@ -384,7 +371,6 @@ class MainWindow(QMainWindow):
         self.splitter.addWidget(self.tag_panel)
 
         self.table = BookTableWidget()
-        self._default_table_font_pt = self.table.font().pointSize()
         # Debounces row-height reflow while a column is being dragged --
         # sectionResized fires continuously during a drag, and
         # resizeRowsToContents() over the whole table on every single one
@@ -411,10 +397,10 @@ class MainWindow(QMainWindow):
         # visual reordering or hiding). If there's nothing saved yet
         # (first ever run), _rebuild_table() auto-fits once on the first
         # real population instead -- see self._columns_sized below.
-        saved_widths = app_settings.load_column_widths()
-        for col, width in saved_widths.items():
-            if 0 <= col < self.table.columnCount():
-                self.table.setColumnWidth(col, width)
+        saved_widths = app_settings.load_column_widths_by_key(COLUMN_KEYS)
+        for key, width in saved_widths.items():
+            if key in COLUMN_KEYS:
+                self.table.setColumnWidth(COLUMN_KEYS.index(key), width)
         self._columns_sized = bool(saved_widths)
         self.table.horizontalHeader().sectionResized.connect(self._on_column_resized)
 
@@ -422,10 +408,10 @@ class MainWindow(QMainWindow):
         # is excluded defensively (it's the one column the UI never lets you
         # hide, see open_column_settings_dialog's `locked` set) even though
         # it should never end up in a saved hidden set in the first place.
-        saved_hidden = app_settings.load_hidden_columns()
-        for col in saved_hidden:
-            if 0 <= col < self.table.columnCount() and col != FILENAME_COL:
-                self.table.setColumnHidden(col, True)
+        saved_hidden = app_settings.load_hidden_column_keys(COLUMN_KEYS)
+        for key in saved_hidden:
+            if key in COLUMN_KEYS and key != "filename":
+                self.table.setColumnHidden(COLUMN_KEYS.index(key), True)
 
         self.table.verticalHeader().setVisible(True)  # row numbers, always positionally accurate
         self.table.setSelectionBehavior(QAbstractItemView.SelectionBehavior.SelectRows)
@@ -441,13 +427,11 @@ class MainWindow(QMainWindow):
         # never actually scrolled to. Instead, this timer -- restarted
         # (debounced) by scrolling, resizing, or re-sorting the table --
         # requests icons only for whatever's currently visible, plus a
-        # small buffer. See _request_icons_for_visible_rows().
-        self._icon_visibility_timer = QTimer(self)
-        self._icon_visibility_timer.setSingleShot(True)
-        self._icon_visibility_timer.timeout.connect(self._request_icons_for_visible_rows)
-        self.table.viewportResized.connect(self._schedule_icon_visibility_check)
-        self.table.verticalScrollBar().valueChanged.connect(self._schedule_icon_visibility_check)
-        self.table.horizontalHeader().sortIndicatorChanged.connect(self._schedule_icon_visibility_check)
+        # small buffer. The watching part (scroll/resize/sort/row changes,
+        # debounced, viewport + 15-row buffer) is redactor_common's
+        # VisibleRowsWatcher, promoted from this window (2026-09-23) so
+        # cbz's table covers use the same mechanism.
+        self._visible_rows = VisibleRowsWatcher(self.table, self._load_icons_for_rows)
 
         self._apply_text_overflow_mode(self._text_overflow_mode)
         # Strong, theme-independent selection/current-cell indicators --
@@ -746,55 +730,13 @@ class MainWindow(QMainWindow):
         toolbar.addAction(toggle_panel_act)
         toolbar.addSeparator()
 
-        zoom_out_act = make_action(
-            self, "\u2212", self.zoom_out, shortcut=QKeySequence.StandardKey.ZoomOut
-        )
-        zoom_out_act.setToolTip("Decrease table font size")
-        toolbar.addAction(zoom_out_act)
-
-        self.zoom_label = QLabel("100%")
-        self.zoom_label.setMinimumWidth(44)
-        self.zoom_label.setAlignment(Qt.AlignmentFlag.AlignCenter)
-        self.zoom_label.setToolTip("Table font size, relative to the default (100%). Click to reset.")
-        self.zoom_label.mousePressEvent = lambda _event: self.zoom_reset()
-        toolbar.addWidget(self.zoom_label)
-
-        zoom_in_act = make_action(
-            self, "+", self.zoom_in, shortcut=QKeySequence.StandardKey.ZoomIn
-        )
-        zoom_in_act.setToolTip("Increase table font size")
-        toolbar.addAction(zoom_in_act)
-
-    def zoom_in(self) -> None:
-        self._adjust_table_zoom(1)
-
-    def zoom_out(self) -> None:
-        self._adjust_table_zoom(-1)
-
-    def zoom_reset(self) -> None:
-        self._set_table_font_size(self._default_table_font_pt)
-
-    def _adjust_table_zoom(self, delta: int) -> None:
-        new_size = max(TABLE_ZOOM_MIN_PT, min(TABLE_ZOOM_MAX_PT, self.table.font().pointSize() + delta))
-        self._set_table_font_size(new_size)
-
-    def _set_table_font_size(self, point_size: int) -> None:
-        """Adjusts the table's (and its headers') font size, then re-fits
-        row heights to the new text size and updates the toolbar's
-        percentage indicator (relative to the size captured at startup,
-        i.e. the default is always 100%). Not persisted across sessions
-        -- purely a this-window display preference for fitting more (or
-        more readable) content."""
-        font = self.table.font()
-        if point_size == font.pointSize():
-            return
-        font.setPointSize(point_size)
-        self.table.setFont(font)
-        self.table.horizontalHeader().setFont(font)
-        self.table.verticalHeader().setFont(font)
-        self.table.resizeRowsToContents()
-        percent = round(point_size / self._default_table_font_pt * 100)
-        self.zoom_label.setText(f"{percent}%")
+        # +/- table font zoom -- redactor_common's TableZoomController,
+        # which was extracted from this app's own version (2026-09-23 it
+        # replaced the original copy here).
+        self.zoom = TableZoomController(self.table, parent=self)
+        toolbar.addAction(self.zoom.zoom_out_action)
+        toolbar.addWidget(self.zoom.label)
+        toolbar.addAction(self.zoom.zoom_in_action)
 
     # ------------------------------------------------------------------
     # Bulk-edit panel: toolbar Apply, collapse/restore, field sync
@@ -852,8 +794,8 @@ class MainWindow(QMainWindow):
         restart quietly showed every column again regardless of what
         you'd hidden last time."""
         self.tag_panel.set_visible_fields(self._visible_ordered_field_keys())
-        hidden = {i for i in range(self.table.columnCount()) if self.table.isColumnHidden(i)}
-        app_settings.save_hidden_columns(hidden)
+        hidden = {COLUMN_KEYS[i] for i in range(self.table.columnCount()) if self.table.isColumnHidden(i)}
+        app_settings.save_hidden_column_keys(hidden)
 
     # ------------------------------------------------------------------
     # Right-click context menus
@@ -1101,10 +1043,8 @@ class MainWindow(QMainWindow):
             return
         was_updating = self._updating_table
         self._updating_table = True
-        was_sorting = self.table.isSortingEnabled()
-        self.table.setSortingEnabled(False)
-        self._refresh_row_cells(row, book)
-        self.table.setSortingEnabled(was_sorting)
+        with suspend_sorting(self.table):
+            self._refresh_row_cells(row, book)
         self._updating_table = was_updating
 
     def _refresh_rows_full(self, books: list[EpubBook]) -> None:
@@ -1119,14 +1059,12 @@ class MainWindow(QMainWindow):
             return
         was_updating = self._updating_table
         self._updating_table = True
-        was_sorting = self.table.isSortingEnabled()
-        self.table.setSortingEnabled(False)
-        rows_by_book = self._rows_by_book()
-        for book in books:
-            row = rows_by_book.get(book)
-            if row is not None:
-                self._refresh_row_cells(row, book)
-        self.table.setSortingEnabled(was_sorting)
+        with suspend_sorting(self.table):
+            rows_by_book = self._rows_by_book()
+            for book in books:
+                row = rows_by_book.get(book)
+                if row is not None:
+                    self._refresh_row_cells(row, book)
         self._updating_table = was_updating
 
     def _refresh_row_cells(self, row: int, book: EpubBook) -> None:
@@ -1402,44 +1340,42 @@ class MainWindow(QMainWindow):
         previously_selected = self._books_for_rows(self._selected_rows(), exclude_errors=False)
 
         self._updating_table = True
-        was_sorting = self.table.isSortingEnabled()
-        self.table.setSortingEnabled(False)  # avoid reorder-mid-populate
-        self.table.setRowCount(len(self.books))
-        self._filename_item_by_book = {}  # repopulated fresh below, in _populate_row()
-        self._junk_cover_item_by_book = {}  # ditto
+        with suspend_sorting(self.table):  # avoid reorder-mid-populate
+            self.table.setRowCount(len(self.books))
+            self._filename_item_by_book = {}  # repopulated fresh below, in _populate_row()
+            self._junk_cover_item_by_book = {}  # ditto
 
-        # Per-section timing across the whole populate loop below (see
-        # core/perf_log.py) -- a no-op unless Settings -> Enable
-        # Performance Logging is on. Stashed on self so _populate_row()
-        # (called once per book via the lambda below) can record into
-        # the SAME accumulator across the whole rebuild, rather than
-        # each row producing its own separate summary.
-        self._perf_accum = perf_log.Accumulator()
+            # Per-section timing across the whole populate loop below (see
+            # core/perf_log.py) -- a no-op unless Settings -> Enable
+            # Performance Logging is on. Stashed on self so _populate_row()
+            # (called once per book via the lambda below) can record into
+            # the SAME accumulator across the whole rebuild, rather than
+            # each row producing its own separate summary.
+            self._perf_accum = perf_log.Accumulator()
 
-        # A plain, uninterrupted loop here blocks the whole UI thread
-        # until every row is built -- fine for a handful of books, but
-        # for a genuinely large library (thousands of rows) this can run
-        # long enough to look exactly like a frozen, unresponsive app,
-        # with no way to tell it's actually still working. No cancel
-        # button, deliberately: unlike loading, this is just re-drawing
-        # a decision that's already been made (files already loaded,
-        # already saved, already deleted, ...), not an operation there's
-        # any reason to interrupt partway through.
-        run_with_progress(
-            self, self.books, lambda book, row: self._populate_row(row, book), "Updating list…",
-            threshold=REBUILD_PROGRESS_THRESHOLD, cancellable=False, update_every=50,
-        )
-        self._perf_accum.dump(f"_populate_row breakdown ({len(self.books)} books)")
+            # A plain, uninterrupted loop here blocks the whole UI thread
+            # until every row is built -- fine for a handful of books, but
+            # for a genuinely large library (thousands of rows) this can run
+            # long enough to look exactly like a frozen, unresponsive app,
+            # with no way to tell it's actually still working. No cancel
+            # button, deliberately: unlike loading, this is just re-drawing
+            # a decision that's already been made (files already loaded,
+            # already saved, already deleted, ...), not an operation there's
+            # any reason to interrupt partway through.
+            run_with_progress(
+                self, self.books, lambda book, row: self._populate_row(row, book), "Updating list…",
+                threshold=REBUILD_PROGRESS_THRESHOLD, cancellable=False, update_every=50,
+            )
+            self._perf_accum.dump(f"_populate_row breakdown ({len(self.books)} books)")
 
-        if not self._columns_sized and self.books:
-            # Only ever auto-fits once, the very first time real content
-            # lands in the table (and only when nothing was restored from
-            # a previous session) -- otherwise this ran on every single
-            # rebuild (after Save, Refresh, Undo, Delete, ...), silently
-            # overwriting any manual column resizing every time.
-            self.table.resizeColumnsToContents()
-            self._columns_sized = True
-        self.table.setSortingEnabled(was_sorting)
+            if not self._columns_sized and self.books:
+                # Only ever auto-fits once, the very first time real content
+                # lands in the table (and only when nothing was restored from
+                # a previous session) -- otherwise this ran on every single
+                # rebuild (after Save, Refresh, Undo, Delete, ...), silently
+                # overwriting any manual column resizing every time.
+                self.table.resizeColumnsToContents()
+                self._columns_sized = True
         self._updating_table = False
         self._apply_filter(self.filter_edit.text())
 
@@ -1475,8 +1411,8 @@ class MainWindow(QMainWindow):
         # mouse movement. Restarted (not just started) on every event, so
         # it fires once when dragging actually stops.
         self._row_reflow_timer.start(120)
-        widths = {i: self.table.columnWidth(i) for i in range(self.table.columnCount())}
-        app_settings.save_column_widths(widths)
+        widths = {COLUMN_KEYS[i]: self.table.columnWidth(i) for i in range(self.table.columnCount())}
+        app_settings.save_column_widths_by_key(widths)
 
     def _reflow_table_rows(self) -> None:
         """Re-measures every row's height against its current content and
@@ -1742,25 +1678,12 @@ class MainWindow(QMainWindow):
         which only ever covers in-memory metadata edits, never file
         operations. Triggered by double-clicking a Filename cell, or via
         the table's right-click menu."""
-        current_stem = os.path.splitext(os.path.basename(book.path))[0]
-        new_stem, ok = QInputDialog.getText(
-            self, "Rename File",
-            f'New filename for "{os.path.basename(book.path)}" '
-            "(the file extension is kept automatically):",
-            text=current_stem,
-        )
-        if not ok:
-            return
-        new_stem = new_stem.strip()
-        if new_stem == current_stem:
-            return
-        try:
-            rename_book_file(book, new_stem)
-        except (ValueError, FileExistsError, OSError) as exc:
-            QMessageBox.warning(self, "Could not rename", str(exc))
-            return
-        self._refresh_row_full(book)
-        self._refresh_status()
+        # Prompt/validate/rename/error-report is redactor_common's
+        # rename_single_file(), extracted from this method (2026-09-23
+        # this app switched to the shared copy too).
+        if prompt_rename_single_file(self, book.path, lambda new_path: setattr(book, "path", new_path)):
+            self._refresh_row_full(book)
+            self._refresh_status()
 
     def rename_selected_file(self) -> None:
         """F2 entry point (Explorer convention: select one item, press
@@ -1818,46 +1741,23 @@ class MainWindow(QMainWindow):
             self._cover_icon_cache.request(book, book.cover_bytes, book.cover_bytes)
 
     def _schedule_icon_visibility_check(self, *_args) -> None:
-        """Restarts the debounce timer for _request_icons_for_visible_rows()
-        -- connected to scrolling, resizing, and re-sorting the table,
-        all of which fire many times in quick succession (e.g. every
-        pixel of a scroll-wheel tick), so this only actually runs once
-        that's settled for a moment. `*_args` absorbs whichever signal
-        arguments the caller happens to pass (row/column/order for
-        sortIndicatorChanged, a plain scrollbar value for valueChanged,
-        nothing for viewportResized) -- none of them matter here, the
-        handler always just re-checks the CURRENT visible range fresh."""
-        self._icon_visibility_timer.start(150)
+        """Re-check which rows are visible once things settle (e.g. after
+        a filter change) -- see VisibleRowsWatcher."""
+        self._visible_rows.schedule()
 
     def _request_icons_for_visible_rows(self) -> None:
-        """Queues a real icon decode (see _apply_cover_icon) only for
-        the rows currently visible in the table's viewport, plus a
-        small buffer above/below so a modest scroll doesn't show blank
-        icons for a moment. This is the actual lazy-loading mechanism:
-        a huge library's "Updating list" cost used to include decoding
-        every single book's cover up front, dominating the whole
-        operation, when a user can only ever look at a couple dozen
-        rows at a time regardless of library size. Safe to call
-        repeatedly for the same rows -- a book whose icon is already
-        cached just gets that same icon re-applied (cheap); one still
-        mid-decode gets a harmless duplicate request at worst, since
-        AsyncIconCache has no separate "already in flight" tracking of
-        its own, but the 150ms debounce keeps that rare in practice."""
-        if self.table.rowCount() == 0:
-            return
-        viewport_height = self.table.viewport().height()
-        first_row = self.table.rowAt(0)
-        last_row = self.table.rowAt(max(0, viewport_height - 1))
-        if first_row == -1:
-            first_row = 0
-        if last_row == -1:
-            last_row = self.table.rowCount() - 1
-        buffer_rows = 15
-        first_row = max(0, first_row - buffer_rows)
-        last_row = min(self.table.rowCount() - 1, last_row + buffer_rows)
-        for row in range(first_row, last_row + 1):
-            if self.table.isRowHidden(row):
-                continue
+        """Request icons for the currently visible rows right now."""
+        self._visible_rows.check_now()
+
+    def _load_icons_for_rows(self, rows: list[int]) -> None:
+        """VisibleRowsWatcher callback: queue a real icon decode (see
+        _apply_cover_icon) only for these on-screen rows (plus buffer).
+        A huge library's "Updating list" cost used to include decoding
+        every book's cover up front, when a user can only ever look at a
+        couple dozen rows at once. Safe to call repeatedly: a cached icon
+        is just re-applied, and a decode already in flight isn't queued
+        twice (AsyncIconCache tracks that now)."""
+        for row in rows:
             book = self._book_for_row(row)
             if book is None or book.load_error:
                 continue
@@ -1937,22 +1837,20 @@ class MainWindow(QMainWindow):
             return
         self._push_undo("Bulk edit", books)
         self._updating_table = True
-        was_sorting = self.table.isSortingEnabled()
-        self.table.setSortingEnabled(False)  # keep row positions stable mid-loop
-        rows_by_book = self._rows_by_book()
-        for book in books:
-            book.apply_metadata(values)
-            row = rows_by_book.get(book)
-            if row is None:
-                continue
-            for i, (key, _label, multiline) in enumerate(FIELDS):
-                if key in values:
-                    col = FIRST_FIELD_COL + i
-                    item = self.table.item(row, col)
-                    if item is not None:
-                        item.setText(self._field_display_text(getattr(book.metadata, key, ""), multiline))
-            self._set_row_dirty_style(row, book.dirty)
-        self.table.setSortingEnabled(was_sorting)
+        with suspend_sorting(self.table):  # keep row positions stable mid-loop
+            rows_by_book = self._rows_by_book()
+            for book in books:
+                book.apply_metadata(values)
+                row = rows_by_book.get(book)
+                if row is None:
+                    continue
+                for i, (key, _label, multiline) in enumerate(FIELDS):
+                    if key in values:
+                        col = FIRST_FIELD_COL + i
+                        item = self.table.item(row, col)
+                        if item is not None:
+                            item.setText(self._field_display_text(getattr(book.metadata, key, ""), multiline))
+                self._set_row_dirty_style(row, book.dirty)
         self._updating_table = False
         self._refresh_status()
 
@@ -1968,7 +1866,19 @@ class MainWindow(QMainWindow):
             )
             return
 
-        dialog = SearchReplaceDialog(target_books, self)
+        def get_value(book: EpubBook, field_key: str) -> str:
+            # Filename includes the extension here, as this app's Search &
+            # Replace always has -- _apply_filename_search_replace() splits
+            # it back off.
+            if field_key == FILENAME_FIELD_KEY:
+                return os.path.basename(book.path)
+            return getattr(book.metadata, field_key, "") or ""
+
+        dialog = SearchReplaceDialog(
+            target_books, [(key, label) for key, label, _multiline in FIELDS], get_value,
+            lambda book: os.path.basename(book.path), include_filename=True,
+            is_excluded=lambda book: bool(book.load_error), item_noun="book", parent=self,
+        )
         if dialog.exec() != SearchReplaceDialog.DialogCode.Accepted:
             return
 
@@ -2014,10 +1924,10 @@ class MainWindow(QMainWindow):
         if not errors:
             QMessageBox.information(self, "Done", f"Renamed {succeeded} of {total} file(s).")
         else:
-            details = "\n".join(f"- {os.path.basename(p)}: {err}" for p, err in errors)
+            details = summarize_errors([f"{os.path.basename(p)}: {err}" for p, err in errors])
             QMessageBox.warning(
                 self, "Some files failed",
-                f"{succeeded} of {total} succeeded.\n\nFailed:\n{details}",
+                f"{succeeded} of {total} succeeded.\n\nFailed: {details}",
             )
 
     # ------------------------------------------------------------------
@@ -2105,19 +2015,17 @@ class MainWindow(QMainWindow):
         # treat it as a user edit and push a bogus undo entry.
         was_updating = self._updating_table
         self._updating_table = True
-        was_sorting = self.table.isSortingEnabled()
-        self.table.setSortingEnabled(False)
-        rows_by_book = self._rows_by_book()
-        for book in books:
-            row = rows_by_book.get(book)
-            if row is None:
-                continue
-            item = self.table.item(row, FILENAME_COL)
-            if item is not None:
-                self._apply_cover_icon(item, book)
-            self._set_row_dirty_style(row, book.dirty)
-            self._update_junk_cover_cell(row, book)  # cover just changed -- its hash may have too
-        self.table.setSortingEnabled(was_sorting)
+        with suspend_sorting(self.table):
+            rows_by_book = self._rows_by_book()
+            for book in books:
+                row = rows_by_book.get(book)
+                if row is None:
+                    continue
+                item = self.table.item(row, FILENAME_COL)
+                if item is not None:
+                    self._apply_cover_icon(item, book)
+                self._set_row_dirty_style(row, book.dirty)
+                self._update_junk_cover_cell(row, book)  # cover just changed -- its hash may have too
         self._updating_table = was_updating
         self._refresh_status()
         self._on_selection_changed()  # refresh the cover preview panel too
@@ -2169,14 +2077,12 @@ class MainWindow(QMainWindow):
         book that happens to share the exact same cover image."""
         was_updating = self._updating_table
         self._updating_table = True
-        was_sorting = self.table.isSortingEnabled()
-        self.table.setSortingEnabled(False)
-        rows_by_book = self._rows_by_book()
-        for book in self.books:
-            row = rows_by_book.get(book)
-            if row is not None:
-                self._update_junk_cover_cell(row, book)
-        self.table.setSortingEnabled(was_sorting)
+        with suspend_sorting(self.table):
+            rows_by_book = self._rows_by_book()
+            for book in self.books:
+                row = rows_by_book.get(book)
+                if row is not None:
+                    self._update_junk_cover_cell(row, book)
         self._updating_table = was_updating
 
     def open_regenerate_junk_covers_dialog(self) -> None:
@@ -2320,18 +2226,23 @@ class MainWindow(QMainWindow):
             return
 
         existing_paths = [os.path.normpath(b.path) for b in self.books]
-        seen = set(existing_paths)
-        folders = {os.path.dirname(p) for p in existing_paths}
-        new_paths = []
-        for folder in folders:
-            for path in self._find_epubs_in_folder(folder, recursive=False):
-                normalized = os.path.normpath(path)
-                if normalized not in seen:
-                    new_paths.append(normalized)
-                    seen.add(normalized)
-        new_paths.sort()
+        new_paths = [
+            os.path.normpath(p) for p in find_new_files_in_loaded_folders(
+                existing_paths, lambda folder: self._find_epubs_in_folder(folder, recursive=False),
+            )
+        ]
 
-        self.books = [EpubBook(p) for p in existing_paths + new_paths]
+        # Re-reading every book is real per-book work (unzip + parse the
+        # OPF) -- it used to run with no progress at all, so refreshing a
+        # large library froze the window. Not cancellable: the old list
+        # is being replaced, so stopping halfway would drop books.
+        reloaded: list[EpubBook] = []
+        run_with_progress(
+            self, existing_paths + new_paths, lambda path, _i: reloaded.append(EpubBook(path)),
+            "Refreshing...", threshold=3, cancellable=False,
+            label_for=lambda path: f"Loading: {os.path.basename(path)}",
+        )
+        self.books = reloaded
         self.undo_manager = UndoManager(max_entries=UNDO_MAX_ENTRIES)
         self.undo_act.setEnabled(False)
         self._rebuild_table()
@@ -2502,81 +2413,76 @@ class MainWindow(QMainWindow):
             )
             return
 
-        dialog = RenameDialog(target_books, self)
-        if dialog.exec() != RenameDialog.DialogCode.Accepted:
-            return
-
-        self.perform_rename_export(
-            books=target_books,
-            pattern=dialog.result_pattern(),
-            zero_pad=dialog.result_zero_pad(),
-            mode=dialog.result_mode(),
-            output_folder=dialog.result_output_folder(),
+        # redactor_common's shared Rename/Export dialog, generalized from
+        # this app's own RenameDialog (retired 2026-09-23). The values
+        # dict already carries the legacy %tags%/%pub_year%... keys, so
+        # old saved patterns still render.
+        dialog = RenamePatternDialog(
+            target_books, PLACEHOLDERS,
+            lambda book: placeholder_values(book.metadata),
+            lambda book: book.path,
+            pattern_history=app_settings.load_pattern_history(),
+            default_pattern=app_settings.load_last_pattern(DEFAULT_PATTERN),
+            item_noun="book",
+            zero_pad_field="series_index",
+            zero_pad_label="Zero-pad series number to:",
+            parent=self,
         )
+        if dialog.exec() != dialog.DialogCode.Accepted:
+            return
+        # Only patterns actually applied get remembered, not every
+        # keystroke while experimenting.
+        app_settings.save_pattern_used(dialog.pattern_edit.text())
+        self.perform_rename_export(dialog.planned_renames(), export=dialog.is_export_mode())
 
-    def perform_rename_export(
-        self,
-        books: list[EpubBook],
-        pattern: str,
-        zero_pad: bool,
-        mode: str,
-        output_folder: str | None,
-    ) -> None:
-        """Rename in place, or export renamed copies.
+    def perform_rename_export(self, planned: list[tuple[EpubBook, str, str]], export: bool) -> None:
+        """Rename in place, or export renamed copies, for the dialog's
+        planned (book, old_path, new_path) list -- new paths are already
+        collision-free (the shared dialog runs unique_path() across the
+        whole batch).
 
         For "rename in place": a book with unsaved metadata edits is saved
         first, so the new filename always matches what's actually inside
         the file, not a stale on-disk value.
 
-        For "export": EpubBook.save(new_path) already writes the book's
-        *current* in-memory metadata into the new file regardless of the
-        dirty flag, and (per the fix above) does not disturb the original
-        book's own path/dirty state -- so exporting never touches originals.
+        For "export": EpubBook.save(new_path) writes the book's *current*
+        in-memory metadata into the new file regardless of the dirty flag
+        and leaves the original book's own path/dirty state alone -- so
+        exporting never touches originals.
 
-        Note: physical rename/export is deliberately NOT covered by Undo
-        -- see core/undo.py.
+        Physical rename/export is deliberately NOT covered by Undo --
+        see core/undo.py.
         """
-        taken: set[str] = set()
-        errors: list[tuple[str, str]] = []
+        errors: list[str] = []
         succeeded = 0
-
-        for book in books:
+        for book, old_path, new_path in planned:
             try:
-                old_name = os.path.basename(book.path)
-                stem = render_filename(
-                    book.metadata, pattern, zero_pad,
-                    fallback=os.path.splitext(old_name)[0],
-                )
-
-                if mode == "export":
-                    new_path = unique_path(output_folder, stem, ".epub", taken)
+                if export:
                     book.save(new_path)
                 else:
+                    if os.path.normcase(os.path.abspath(old_path)) == os.path.normcase(os.path.abspath(new_path)):
+                        succeeded += 1
+                        continue
                     if book.dirty:
                         book.save()  # embed current metadata before renaming
-                    directory = os.path.dirname(book.path)
-                    new_path = unique_path(directory, stem, ".epub", taken)
                     os.rename(book.path, new_path)
                     book.path = new_path
-
-                taken.add(os.path.normcase(os.path.abspath(new_path)))
                 succeeded += 1
             except (EpubError, OSError) as exc:
-                errors.append((book.path, str(exc)))
+                errors.append(f"{os.path.basename(old_path)}: {exc}")
 
         self._rebuild_table()
         self._refresh_status()
 
-        total = len(books)
+        total = len(planned)
         if not errors:
-            verb = "Exported" if mode == "export" else "Renamed"
+            verb = "Exported" if export else "Renamed"
             QMessageBox.information(self, "Done", f"{verb} {succeeded} of {total} file(s).")
         else:
-            details = "\n".join(f"- {os.path.basename(p)}: {err}" for p, err in errors)
             QMessageBox.warning(
                 self,
                 "Some files failed",
-                f"{succeeded} of {total} succeeded.\n\nFailed:\n{details}",
+                f"{succeeded} of {total} succeeded.\n\nFailed: {summarize_errors(errors)}",
             )
 
     # ------------------------------------------------------------------
@@ -2765,7 +2671,12 @@ class MainWindow(QMainWindow):
             )
             return
 
-        dialog = CaseConversionDialog(target_books, self)
+        dialog = CaseConversionDialog(
+            target_books, [(key, label) for key, label, _multiline in FIELDS],
+            lambda book, key: getattr(book.metadata, key, "") or "",
+            lambda book: os.path.basename(book.path),
+            is_excluded=lambda book: bool(book.load_error), item_noun="book", parent=self,
+        )
         if dialog.exec() != CaseConversionDialog.DialogCode.Accepted:
             return
 
@@ -3340,16 +3251,20 @@ class MainWindow(QMainWindow):
     # ------------------------------------------------------------------
 
     def open_column_settings_dialog(self) -> None:
-        column_names = [
-            self.table.horizontalHeaderItem(i).text() for i in range(self.table.columnCount())
+        """Add/Remove Columns -- redactor_common's field-key-based
+        ColumnSettingsDialog (the same one cbz/mp3/video use)."""
+        columns = [
+            (COLUMN_KEYS[i], self.table.horizontalHeaderItem(i).text())
+            for i in range(self.table.columnCount())
         ]
-        hidden = {i for i in range(self.table.columnCount()) if self.table.isColumnHidden(i)}
-        locked = {FILENAME_COL}  # the one column you always need to tell rows apart
-        dialog = ColumnSettingsDialog(column_names, hidden, locked, self)
+        hidden = {COLUMN_KEYS[i] for i in range(self.table.columnCount()) if self.table.isColumnHidden(i)}
+        dialog = ColumnSettingsDialog(
+            columns, hidden, protected_columns=frozenset({"filename"}), parent=self,
+        )
         dialog.exec()
-        visible = dialog.visible_indices()
-        for i in range(self.table.columnCount()):
-            self.table.setColumnHidden(i, i not in visible and i not in locked)
+        new_hidden = dialog.hidden_fields()
+        for i, key in enumerate(COLUMN_KEYS):
+            self.table.setColumnHidden(i, key in new_hidden)
         self._on_columns_changed()
 
     def open_genre_settings_dialog(self) -> None:

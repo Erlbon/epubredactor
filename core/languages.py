@@ -11,17 +11,13 @@ via the picker's "Add custom language..." option (persisted for future
 sessions).
 """
 
-DEFAULT_LANGUAGES: list[tuple[str, str]] = [
-    ("en", "English"),
-    ("de", "German"),
-    ("fr", "French"),
-    ("es", "Spanish"),
-    ("nl", "Dutch"),
-    ("no", "Norwegian"),
-    ("it", "Italian"),
-    ("sv", "Swedish"),
-    ("da", "Danish"),
-]
+from redactor_common.core.languages import language_pairs
+
+# (ISO 639-1 code, English name) from redactor_common's shared ISO 639
+# table (2026-09-23), the same one cbz (2-letter) and mp3 (3-letter) use.
+DEFAULT_LANGUAGES: list[tuple[str, str]] = language_pairs(
+    ["en", "de", "fr", "es", "nl", "no", "it", "sv", "da"], "alpha2",
+)
 
 # Values that mean "no real language was ever set" -- not just an empty
 # string, but the handful of placeholder values conversion tools and
