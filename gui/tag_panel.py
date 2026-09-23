@@ -30,8 +30,6 @@ from PyQt6.QtWidgets import (
     QPlainTextEdit,
     QPushButton,
     QScrollArea,
-    QSizePolicy,
-    QSplitter,
     QVBoxLayout,
     QWidget,
 )
@@ -42,8 +40,8 @@ from core.fields import FIELDS
 from core.genres import add_genre
 from gui import app_settings
 from redactor_common.gui.quick_pick_dialog import QuickPickDialog
-from redactor_common.gui.image_label import AspectRatioImageLabel
 from redactor_common.gui.collapsible_splitter import CollapseToggleButton
+from redactor_common.gui.image_pane import ImagePanelSplitter, ImagePreviewBox
 from redactor_common.gui.grid_utils import absorb_extra_row_space
 
 MULTIPLE_VALUES_PLACEHOLDER = "<multiple values>"
@@ -147,23 +145,15 @@ class TagPanel(QWidget):
         fields_scroll.setFrameShape(QFrame.Shape.NoFrame)
         fields_scroll.setWidget(self._fields_box)
 
-        cover_box = QGroupBox("Cover Image")
-        cover_layout = QVBoxLayout(cover_box)
-
-        self.cover_preview = AspectRatioImageLabel()
-        self.cover_preview.setText("No cover")
-        self.cover_preview.setAlignment(Qt.AlignmentFlag.AlignCenter)
-        self.cover_preview.setMinimumSize(*COVER_PREVIEW_MIN_SIZE)
-        self.cover_preview.setSizePolicy(QSizePolicy.Policy.Expanding, QSizePolicy.Policy.Expanding)
-        self.cover_preview.setStyleSheet(
-            "border: 1px solid palette(mid); border-radius: 4px; color: gray;"
-        )
-        cover_layout.addWidget(self.cover_preview, 1)
+        # redactor_common's ImagePreviewBox: an image that fills (and
+        # rescales to) whatever room the splitter below gives it.
+        cover_box = ImagePreviewBox("Cover Image", placeholder="No cover", minimum_size=COVER_PREVIEW_MIN_SIZE)
+        self.cover_preview = cover_box.image_label
 
         self.cover_hint = QLabel("")
         self.cover_hint.setStyleSheet("color: gray; font-size: 11px;")
         self.cover_hint.setAlignment(Qt.AlignmentFlag.AlignCenter)
-        cover_layout.addWidget(self.cover_hint)
+        cover_box.add_widget(self.cover_hint)
 
         # Two rows, not one -- a fourth button (Junk) made a single row
         # too cramped once the panel is dragged down toward its narrower
@@ -186,7 +176,7 @@ class TagPanel(QWidget):
         self.cover_generate_btn.clicked.connect(self.coverGenerateRequested.emit)
         cover_btn_row1.addWidget(self.cover_generate_btn)
 
-        cover_layout.addLayout(cover_btn_row1)
+        cover_box.add_layout(cover_btn_row1)
 
         cover_btn_row2 = QHBoxLayout()
         self.cover_delete_btn = QPushButton("Delete")
@@ -204,19 +194,14 @@ class TagPanel(QWidget):
         self.cover_junk_btn.clicked.connect(self.coverToggleJunkRequested.emit)
         cover_btn_row2.addWidget(self.cover_junk_btn)
 
-        cover_layout.addLayout(cover_btn_row2)
+        cover_box.add_layout(cover_btn_row2)
 
-        # A real draggable divider between the two sections -- lets you
-        # give the cover image much more room by dragging, even if that
-        # squeezes Bulk Edit Tags down to something that needs to scroll.
-        # Both panes are collapsible (Qt's default), so either one can be
-        # dragged all the way down to make room for the other.
-        self._vertical_splitter = QSplitter(Qt.Orientation.Vertical)
-        self._vertical_splitter.addWidget(fields_scroll)
-        self._vertical_splitter.addWidget(cover_box)
-        self._vertical_splitter.setStretchFactor(0, 1)
-        self._vertical_splitter.setStretchFactor(1, 1)
-        self._vertical_splitter.setSizes([600, 300])  # initial bias toward fields; purely a starting hint
+        # A draggable divider between the two sections -- give the cover
+        # much more room by dragging, even if that squeezes Bulk Edit
+        # Tags down to something that scrolls; either pane can be dragged
+        # all the way closed. redactor_common's ImagePanelSplitter (built
+        # from this panel's original), shared by every Redactor app.
+        self._vertical_splitter = ImagePanelSplitter(fields_scroll, cover_box)
         outer.addWidget(self._vertical_splitter, 1)
 
         self._selected_count = 0

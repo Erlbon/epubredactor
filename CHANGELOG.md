@@ -4,6 +4,14 @@ All notable changes to The ƎPUB Redactor, by version. Trimmed to new
 functionality and real fixes — cosmetic/UX-only adjustments aren't
 listed here.
 
+## 2026-09-23#02
+
+- The cover/fields splitter in the side panel is now redactor_common's
+  shared `ImagePanelSplitter` + `ImagePreviewBox` (2026-09-23-02), built
+  from this panel's original. After the cover has been dragged large,
+  the pane can be dragged smaller again, and a long title can no longer
+  stop the side panel from collapsing.
+
 ## 2026-09-23#01
 
 - **Parse Filename fix:** a hyphenated author no longer gets split on
