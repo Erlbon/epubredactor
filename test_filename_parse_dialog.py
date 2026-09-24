@@ -254,7 +254,13 @@ def test_intro_label_wraps_instead_of_widening_the_dialog():
     intro = next(lbl for lbl in labels if lbl.text().startswith("Applies to"))
     assert intro.wordWrap(), "the intro label must have word wrap enabled"
     dlg.adjustSize()
-    assert dlg.sizeHint().width() < 900, dlg.sizeHint().width()
+    # Compare against the intro text's own one-line width rather than a
+    # fixed pixel count: font metrics vary by machine (a headless Windows
+    # run falls back to a font twice as wide as Linux's, putting even the
+    # correctly wrapped dialog at ~1500px), but an unwrapped label always
+    # makes the dialog at least as wide as the whole sentence.
+    one_line = intro.fontMetrics().horizontalAdvance(intro.text())
+    assert dlg.sizeHint().width() < one_line / 2, (dlg.sizeHint().width(), one_line)
     print("PASS: the intro label wraps, so the dialog doesn't stretch to fit it on one line")
 
 
