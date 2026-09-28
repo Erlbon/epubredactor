@@ -4,6 +4,13 @@ All notable changes to The ƎPUB Redactor, by version. Trimmed to new
 functionality and real fixes — cosmetic/UX-only adjustments aren't
 listed here.
 
+## 2026-09-28#02
+
+- **Parse Filename:** "Author A & Author B" in a filename now reads as
+  two authors ("Author A; Author B"), the reverse of how Rename/Export
+  writes `%authors%`. Only a spaced " & " splits, so "AT&T" stays one
+  name.
+
 ## 2026-09-28#01
 
 - **Suggest Genres** (Import menu): proposes genres per book from its

@@ -40,6 +40,7 @@ longer split on its own hyphen.
 from __future__ import annotations
 
 import os
+import re
 
 from core.rename_pattern import PLACEHOLDERS
 from redactor_common.core import filename_parser as _shared
@@ -73,7 +74,23 @@ FIELD_PATTERNS = {
 # padding and ordinal dots aren't part of the value); a month name
 # becomes its unpadded digit ("Jan." -> "1").
 STRIP_LEADING_ZEROS_FIELDS = {"series_index"}
-NORMALIZERS = {"month": _shared.normalize_month, "pub_month": _shared.normalize_month}
+
+_AUTHOR_AMPERSAND_RE = re.compile(r"\s+&\s+")
+
+
+def split_author_ampersands(value: str) -> str:
+    """"Author A & Author B" -> "Author A; Author B": the read side of
+    rename_pattern's %authors%, which joins multiple authors with " & "
+    in a filename. Only a spaced " & " separates authors, so an "&"
+    inside a name ("AT&T") is left alone."""
+    return "; ".join(p.strip() for p in _AUTHOR_AMPERSAND_RE.split(value) if p.strip())
+
+
+NORMALIZERS = {
+    "month": _shared.normalize_month,
+    "pub_month": _shared.normalize_month,
+    "authors": split_author_ampersands,
+}
 
 _PARSE_OPTIONS = {
     "strip_leading_zeros_fields": STRIP_LEADING_ZEROS_FIELDS,
@@ -209,6 +226,10 @@ def folder_metadata_field_counts(
             continue
         if field == "authors":
             values = [a for a in book.metadata.authors if a]
+            if len(values) > 1:
+                # A parsed "A & B" arrives as "A; B" -- let the whole
+                # co-author list confirm it too, not just each name.
+                values.append("; ".join(values))
         elif field == "series":
             values = [book.metadata.series] if book.metadata.series else []
         else:

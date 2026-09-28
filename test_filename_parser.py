@@ -29,6 +29,24 @@ def test_author_title_extraction():
     print("PASS: author-title pattern extracts correctly even with spaces inside a field")
 
 
+def test_ampersand_authors_read_as_separate_authors():
+    # Rename writes multiple authors as "A & B"; parsing that filename
+    # back must give two authors again, not one "A & B" author.
+    result = parse_filename("Terry Pratchett & Neil Gaiman - Good Omens", "%authors% - %title%")
+    assert result["authors"] == "Terry Pratchett; Neil Gaiman", result
+    from core.epub_metadata import EpubMetadata
+    from core.filename_parser import parsed_to_metadata_kwargs
+    from core.rename_pattern import placeholder_values
+
+    meta = EpubMetadata()
+    meta.authors_str = parsed_to_metadata_kwargs(result)["authors_str"]
+    assert meta.authors == ["Terry Pratchett", "Neil Gaiman"], meta.authors
+    # round trip: written back out, it's the same filename text
+    assert placeholder_values(meta)["authors"] == "Terry Pratchett & Neil Gaiman"
+    # an unspaced "&" is part of a name, not a separator
+    assert parse_filename("AT&T Press - Manual", "%authors% - %title%")["authors"] == "AT&T Press"
+
+
 def test_no_match_returns_none():
     result = parse_filename("Completely Different Shape", "%series% %series_index% - %title%")
     assert result is None
