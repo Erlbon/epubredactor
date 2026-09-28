@@ -4,6 +4,10 @@ All notable changes to The ƎPUB Redactor, by version. Trimmed to new
 functionality and real fixes — cosmetic/UX-only adjustments aren't
 listed here.
 
+## 2026-09-28#07 -- Linux tool lookup fix
+
+- **Linux: Sigil is found on PATH** (it looked for `sigil.exe`, the Windows name; redactor_common 2026-09-28-06). Windows is unchanged.
+
 ## 2026-09-28#06 -- Linux version
 
 - **A Linux download** alongside the Windows one:
