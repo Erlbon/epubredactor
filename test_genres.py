@@ -3,7 +3,7 @@ import os
 import sys
 
 sys.path.insert(0, os.path.dirname(__file__))
-from core.genres import COMMON_GENRES, add_genre  # noqa: E402
+from core.genres import COMMON_GENRES, add_genre, add_genres  # noqa: E402
 
 
 def test_genre_list_sane():
@@ -39,6 +39,17 @@ def test_add_genre_handles_messy_whitespace():
     result = add_genre("Fiction ;  Fantasy ;", "Horror")
     assert result == "Fiction; Fantasy; Horror", result
     print("PASS: cleans up stray whitespace/trailing separators while merging")
+
+
+def test_add_genre_dedups_case_insensitively():
+    assert add_genre("fantasy", "Fantasy") == "fantasy"
+    print("PASS: differently-cased duplicate isn't added; existing spelling kept")
+
+
+def test_add_genres_only_appends():
+    assert add_genres("Fiction; My Tag", ["Horror", "fiction", "Gothic"]) == "Fiction; My Tag; Horror; Gothic"
+    assert add_genres("Fiction", []) == "Fiction"
+    print("PASS: add_genres keeps every existing entry and only appends new ones")
 
 
 if __name__ == "__main__":

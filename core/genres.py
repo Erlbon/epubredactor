@@ -172,8 +172,21 @@ def add_genre(current: str, genre: str) -> str:
     """Append `genre` to a semicolon-separated list `current`, without
     duplicating it if it's already present. Pure string logic, no GUI --
     used by the quick-pick dropdown so a value picked from the list is
-    added alongside whatever's already typed, never replacing it."""
+    added alongside whatever's already typed, never replacing it.
+    Already present means case-insensitively: adding "Fantasy" to
+    "fantasy" keeps the existing spelling rather than adding a twin."""
     parts = [p.strip() for p in current.split(";") if p.strip()]
-    if genre not in parts:
+    genre = genre.strip()
+    if genre and genre.lower() not in {p.lower() for p in parts}:
         parts.append(genre)
     return "; ".join(parts)
+
+
+def add_genres(current: str, genres: list[str]) -> str:
+    """add_genre() for each of `genres` in turn. Every existing entry in
+    `current` is kept, in its original order and spelling -- this only
+    ever appends (used by Suggest Genres, which must never replace or
+    drop a genre tag a book already has)."""
+    for genre in genres:
+        current = add_genre(current, genre)
+    return current

@@ -4,6 +4,23 @@ All notable changes to The ƎPUB Redactor, by version. Trimmed to new
 functionality and real fixes — cosmetic/UX-only adjustments aren't
 listed here.
 
+## 2026-09-28#01
+
+- **Suggest Genres** (Import menu): proposes genres per book from its
+  folder path and bracketed filename tags, its description, catalog
+  lines on its first pages (LoC CIP headings, BISAC-style
+  "FICTION / Fantasy / Epic", "This is a work of fiction") and its DDC
+  number, with the matched text shown on hover. Ambiguous words
+  ("war", "history", "romance") only count in genre context ("a war
+  novel"). Only genres on your Genre list are suggested, and it is
+  add-only: existing genre tags are never replaced or removed, and
+  suggestions for already-tagged books start unticked.
+- **Parse Filename** now goes through the same per-field overwrite
+  review as the lookups, so a `%genres%` pattern can no longer silently
+  replace genres a book already has.
+- The Genre "+" picker no longer adds a differently-cased duplicate
+  ("Fantasy" onto "fantasy").
+
 ## 2026-09-23#02
 
 - The cover/fields splitter in the side panel is now redactor_common's

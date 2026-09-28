@@ -303,6 +303,16 @@ them in one go.
   and common formats; picking one appends it to the field without
   replacing anything you've already typed, and won't add a duplicate.
   The field stays free text at all times.
+- **Import > Suggest Genres…** proposes genres for the selected books
+  from their folder path (".../Fantasy/Epic/...", or a bracketed
+  "[Sci-Fi]" tag in the filename), their description ("a psychological
+  thriller"), catalog lines on their first pages (Library of Congress
+  CIP headings, "FICTION / Fantasy / Epic", "This is a work of
+  fiction") and their DDC number. Only genres on your Genre list are
+  suggested. Ticked genres are **added** to the Genre field; existing
+  genres are never replaced or removed, and suggestions for a book that
+  already has genres start unticked. Hover "Found In" to see the text
+  that matched.
 - Language field has the same **"+"** button, with a curated starting list
   (English, German, French, Spanish, Dutch, Norwegian, Italian, Swedish,
   Danish) plus an "Add custom language…" option that remembers what you add

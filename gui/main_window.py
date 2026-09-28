@@ -62,6 +62,7 @@ from PyQt6.QtWidgets import (
 
 from core.epub_metadata import EpubBook, EpubError
 from core.fields import FIELDS, NUMERIC_FIELD_KEYS
+from core.genres import add_genres
 from core import perf_log
 from core.languages import is_blank_or_unknown_language
 from core.rename_pattern import DEFAULT_PATTERN, PLACEHOLDERS, placeholder_values, unique_path
@@ -104,6 +105,7 @@ from redactor_common.gui.case_conversion_dialog import CaseConversionDialog
 from redactor_common.gui.column_settings_dialog import ColumnSettingsDialog
 from gui.compress_images_dialog import CompressImagesDialog, format_size
 from gui.content_scan_dialog import ContentScanDialog
+from gui.genre_suggest_dialog import GenreSuggestDialog
 from gui.cover_generator_dialog import CoverGeneratorDialog
 from gui.cover_render import generate_cover_image
 from gui.ebook_convert_dialog import EbookConvertDialog
@@ -531,6 +533,10 @@ class MainWindow(QMainWindow):
                 MenuAction(
                     "import_file_content", "Import Metadata from File &Content…",
                     self.open_content_scan_dialog,
+                ),
+                MenuAction(
+                    "suggest_genres", "Suggest &Genres…",
+                    self.open_genre_suggest_dialog,
                 ),
                 MenuAction(
                     "import_open_library", "Import Metadata from &Open Library…",
@@ -2579,6 +2585,14 @@ class MainWindow(QMainWindow):
         if not changes:
             return
 
+        # Same per-field review as the lookups: a parsed value that would
+        # overwrite a different existing one (e.g. a %genre% pattern over
+        # genre tags a book already has) starts unticked. Skips itself
+        # when nothing would be overwritten. None = cancelled outright.
+        changes = resolve_overwrite_conflicts(self, target_books, changes, _field_label)
+        if not changes:
+            return
+
         affected_books = [target_books[i] for i in changes]
         self._push_undo("Parse filename to metadata", affected_books)
         for i, field_values in changes.items():
@@ -2616,6 +2630,44 @@ class MainWindow(QMainWindow):
         self._on_selection_changed()  # bulk-edit panel was showing stale data for these fields
         QMessageBox.information(
             self, "Applied", f"Applied scanned metadata to {len(changes)} book(s). Remember to save."
+        )
+
+    # ------------------------------------------------------------------
+    # Suggest genres
+    # ------------------------------------------------------------------
+
+    def open_genre_suggest_dialog(self) -> None:
+        target_books = self._selection_or_all_books()
+        if not target_books:
+            QMessageBox.information(
+                self, "No books", "Load some books first (or select the ones to suggest genres for)."
+            )
+            return
+
+        dialog = GenreSuggestDialog(target_books, app_settings.load_genres(), self)
+        if dialog.exec() != GenreSuggestDialog.DialogCode.Accepted:
+            return
+
+        # Add-only: merged into each book's Genre field as it is now,
+        # never a replacement value, so no existing genre tag is lost.
+        changes: list[tuple[EpubBook, str]] = []
+        for index, genres in dialog.accepted_additions().items():
+            book = target_books[index]
+            merged = add_genres(book.metadata.tags_str, genres)
+            if merged != book.metadata.tags_str:
+                changes.append((book, merged))
+        if not changes:
+            return
+
+        affected_books = [book for book, _tags in changes]
+        self._push_undo("Suggest genres", affected_books)
+        for book, tags in changes:
+            book.apply_metadata({"tags_str": tags})
+        self._refresh_rows_full(affected_books)
+        self._refresh_status()
+        self._on_selection_changed()  # bulk-edit panel was showing stale data for the Genre field
+        QMessageBox.information(
+            self, "Applied", f"Added genres to {len(changes)} book(s). Remember to save."
         )
 
     # ------------------------------------------------------------------
