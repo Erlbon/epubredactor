@@ -4,6 +4,12 @@ All notable changes to The ƎPUB Redactor, by version. Trimmed to new
 functionality and real fixes — cosmetic/UX-only adjustments aren't
 listed here.
 
+## 2026-09-28#05
+
+- redactor_common 2026-09-28-02 (adds the shared local metadata
+  database layer used by cbzredactor's offline GCD lookup; no change
+  to epubredactor's behaviour).
+
 ## 2026-09-28#04
 
 - **Online lookups no longer freeze the window.** Google Books, Open
