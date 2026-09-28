@@ -4,6 +4,16 @@ All notable changes to The ƎPUB Redactor, by version. Trimmed to new
 functionality and real fixes — cosmetic/UX-only adjustments aren't
 listed here.
 
+## 2026-09-28#06 -- Linux version
+
+- **A Linux download** alongside the Windows one:
+  `epubredactor-linux-x86_64.tar.gz`, a single self-contained program for
+  64-bit desktop Linux (glibc 2.35+: Ubuntu 22.04+, Debian 12+, Fedora
+  36+, Mint 21+). Built with Python 3.12 like the Windows version; the
+  whole test suite runs on Linux as part of every release build.
+  External tools are found on your PATH, as on Windows.
+- redactor_common 2026-09-28-05 (from 2026-09-28-02): on Linux the settings live in `~/.config/epubredactor/`, the standard place, instead of next to the program (Windows unchanged).
+
 ## 2026-09-28#05
 
 - redactor_common 2026-09-28-02 (adds the shared local metadata

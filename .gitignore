@@ -11,3 +11,7 @@ dist/
 epubredactor_settings.ini
 epubredactor_crash.log
 epubredactor_perf.log
+
+# Linux builds (redactor-build-tools/linux-build/build.sh)
+build-linux/
+dist-linux/

@@ -16,12 +16,15 @@ def test_base_dir_dev_mode_is_project_root():
 
 
 def test_base_dir_frozen_mode_uses_executable_dir():
-    """When frozen (a real PyInstaller build), base_dir() should be the
-    directory containing the actual .exe, via sys.executable -- not the
-    dev-mode project-root fallback."""
+    """When frozen (a real PyInstaller build) on Windows, base_dir() should
+    be the directory containing the actual .exe, via sys.executable -- not
+    the dev-mode project-root fallback. (Linux/Mac builds use the per-user
+    config folder instead -- covered by redactor_common's own tests.)"""
     original_frozen = getattr(sys, "frozen", None)
     original_executable = sys.executable
+    original_platform = sys.platform
     try:
+        sys.platform = "win32"
         sys.frozen = True
         sys.executable = "/fake/install/location/epubredactor.exe"
         result = base_dir()
@@ -32,7 +35,8 @@ def test_base_dir_frozen_mode_uses_executable_dir():
         else:
             sys.frozen = original_frozen
         sys.executable = original_executable
-    print("PASS: when frozen, base_dir() uses the real executable's own directory")
+        sys.platform = original_platform
+    print("PASS: when frozen on Windows, base_dir() uses the real executable's own directory")
 
 
 if __name__ == "__main__":
