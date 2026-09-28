@@ -4,6 +4,10 @@ All notable changes to The ƎPUB Redactor, by version. Trimmed to new
 functionality and real fixes — cosmetic/UX-only adjustments aren't
 listed here.
 
+## 2026-09-28#08 -- Shared release notes
+
+No change to the app. The GitHub Release notes (every CHANGELOG section since the previous release) are now built by redactor_common's shared script instead of a copy in this repo (redactor_common 2026-09-28-07, from 2026-09-28-06).
+
 ## 2026-09-28#07 -- Linux tool lookup fix
 
 - **Linux: Sigil is found on PATH** (it looked for `sigil.exe`, the Windows name; redactor_common 2026-09-28-06). Windows is unchanged.
