@@ -4,6 +4,14 @@ All notable changes to The ƎPUB Redactor, by version. Trimmed to new
 functionality and real fixes — cosmetic/UX-only adjustments aren't
 listed here.
 
+## 2026-09-28#04
+
+- **Online lookups no longer freeze the window.** Google Books, Open
+  Library and Calibre lookups now run in the background: the window
+  keeps redrawing and the progress dialog's Cancel button responds at
+  once. A progress dialog is now shown even for a single book.
+  (redactor_common 2026-09-28-01.)
+
 ## 2026-09-28#03
 
 - **Validate & Fix:** a book whose single author entry holds several
