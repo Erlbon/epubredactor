@@ -40,8 +40,8 @@ longer split on its own hyphen.
 from __future__ import annotations
 
 import os
-import re
 
+from core.epub_metadata import split_ampersand_names
 from core.rename_pattern import PLACEHOLDERS
 from redactor_common.core import filename_parser as _shared
 from redactor_common.core.filename_parser import (  # noqa: F401 -- re-exported
@@ -75,15 +75,11 @@ FIELD_PATTERNS = {
 # becomes its unpadded digit ("Jan." -> "1").
 STRIP_LEADING_ZEROS_FIELDS = {"series_index"}
 
-_AUTHOR_AMPERSAND_RE = re.compile(r"\s+&\s+")
-
-
 def split_author_ampersands(value: str) -> str:
     """"Author A & Author B" -> "Author A; Author B": the read side of
     rename_pattern's %authors%, which joins multiple authors with " & "
-    in a filename. Only a spaced " & " separates authors, so an "&"
-    inside a name ("AT&T") is left alone."""
-    return "; ".join(p.strip() for p in _AUTHOR_AMPERSAND_RE.split(value) if p.strip())
+    in a filename. See split_ampersand_names() for the rule."""
+    return "; ".join(split_ampersand_names(value))
 
 
 NORMALIZERS = {

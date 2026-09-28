@@ -166,6 +166,17 @@ def _split_multi(value: str) -> list[str]:
     return [p for p in parts if p]
 
 
+_AUTHOR_AMPERSAND_RE = re.compile(r"\s+&\s+")
+
+
+def split_ampersand_names(value: str) -> list[str]:
+    """"Author A & Author B" -> ["Author A", "Author B"]. Only a spaced
+    " & " separates names, so "AT&T" stays whole. The inverse of the
+    " & " rename_pattern uses for %authors% in filenames; also used for a
+    single dc:creator that holds several authors (AUTHORS_AMPERSAND)."""
+    return [p.strip() for p in _AUTHOR_AMPERSAND_RE.split(value or "") if p.strip()]
+
+
 def parse_date_parts(text: str) -> tuple[str, str, str]:
     """Split a dc:date value into (year, month, day). Tolerates plain
     years ("2020"), year-month ("2020-05"), full dates ("2020-05-14"),
@@ -601,6 +612,19 @@ class EpubBook:
                 "LANGUAGE_MISSING", SEVERITY_WARNING, "No language is set.", fixable=True
             ))
 
+        # --- several authors crammed into one author entry ("A & B").
+        # Checked on the in-memory authors, so it clears as soon as the
+        # fix (or a manual edit) splits them, before saving.
+        joined = [a for a in self.metadata.authors if len(split_ampersand_names(a)) > 1]
+        if joined:
+            preview = "; ".join(f'"{a}"' for a in joined[:3]) + ("; ..." if len(joined) > 3 else "")
+            issues.append(ValidationIssue(
+                "AUTHORS_AMPERSAND", SEVERITY_WARNING,
+                f"Several authors stored as one author entry: {preview}. "
+                "Fixing splits them into separate authors at each \" & \".",
+                fixable=True,
+            ))
+
         # --- manifest: files that should exist actually exist, ids are unique
         opf_dir = posixpath.dirname(self.opf_path)
         manifest_items = manifest.findall("opf:item", namespaces=NS) if manifest is not None else []
@@ -719,6 +743,27 @@ class EpubBook:
                 el.text = "en"
                 self.metadata.language = "en"
                 fixed.append('Set language to "en" (please verify this is correct)')
+
+            elif issue.code == "AUTHORS_AMPERSAND":
+                authors: list[str] = []
+                author_sort: list[str] = []
+                for i, name in enumerate(self.metadata.authors):
+                    names = split_ampersand_names(name) or [name]
+                    sort = self.metadata.author_sort[i] if i < len(self.metadata.author_sort) else ""
+                    sorts = split_ampersand_names(sort)
+                    # Keep sort names only when they split the same way;
+                    # otherwise leave them blank for Author Sort to fill.
+                    if len(sorts) != len(names):
+                        sorts = [sort] if len(names) == 1 else [""] * len(names)
+                    authors.extend(names)
+                    author_sort.extend(sorts)
+                while author_sort and not author_sort[-1]:
+                    author_sort.pop()
+                joined_count = sum(1 for a in self.metadata.authors if len(split_ampersand_names(a)) > 1)
+                self.metadata.authors = authors
+                self.metadata.author_sort = author_sort
+                fixed.append(f"Split {joined_count} joined author entr{'y' if joined_count == 1 else 'ies'} "
+                             f"into separate authors: {'; '.join(authors)}")
 
             elif issue.code == "DANGLING_SPINE_ITEMREF":
                 spine = root.find("opf:spine", namespaces=NS)

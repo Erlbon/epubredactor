@@ -449,3 +449,33 @@ if __name__ == "__main__":
     test_rebuild_manifest_noop_when_nothing_missing()
     test_rebuild_manifest_with_explicit_item_ids()
     print("\nALL VALIDATION TESTS PASSED")
+
+
+def test_ampersand_authors_flagged_and_split_by_fix(tmp_path):
+    opf = GOOD_OPF.replace(
+        "<dc:creator>Author Name</dc:creator>",
+        '<dc:creator opf:file-as="Pratchett, Terry &amp; Gaiman, Neil">Terry Pratchett &amp; Neil Gaiman</dc:creator>'
+        "<dc:creator>AT&amp;T Press</dc:creator>",
+    )
+    path = str(tmp_path / "joined_authors.epub")
+    build(path, opf)
+    b = EpubBook(path)
+    assert "AUTHORS_AMPERSAND" in {i.code for i in b.validation_issues}
+    assert b.validation_status == STATUS_ISSUES
+
+    fixed = b.apply_fixes({"AUTHORS_AMPERSAND"})
+    assert fixed and b.dirty
+    assert b.metadata.authors == ["Terry Pratchett", "Neil Gaiman", "AT&T Press"], b.metadata.authors
+    assert b.metadata.author_sort == ["Pratchett, Terry", "Gaiman, Neil"], b.metadata.author_sort
+    assert "AUTHORS_AMPERSAND" not in {i.code for i in b.validation_issues}
+
+    b.save()
+    reloaded = EpubBook(path)
+    assert reloaded.metadata.authors == ["Terry Pratchett", "Neil Gaiman", "AT&T Press"]
+    assert "AUTHORS_AMPERSAND" not in {i.code for i in reloaded.validation_issues}
+
+
+def test_unspaced_ampersand_in_a_name_is_not_flagged(tmp_path):
+    path = str(tmp_path / "att.epub")
+    build(path, GOOD_OPF.replace("Author Name", "AT&amp;T Press"))
+    assert "AUTHORS_AMPERSAND" not in {i.code for i in EpubBook(path).validation_issues}

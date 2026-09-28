@@ -4,6 +4,15 @@ All notable changes to The ƎPUB Redactor, by version. Trimmed to new
 functionality and real fixes — cosmetic/UX-only adjustments aren't
 listed here.
 
+## 2026-09-28#03
+
+- **Validate & Fix:** a book whose single author entry holds several
+  authors ("Terry Pratchett & Neil Gaiman") is flagged on load (status
+  ISSUES), and the fix splits it into separate authors, keeping the
+  author-sort names when they split the same way. As with the other
+  fixes, the book is marked unsaved so you know to save it. An unspaced
+  "&" ("AT&T Press") is left alone.
+
 ## 2026-09-28#02
 
 - **Parse Filename:** "Author A & Author B" in a filename now reads as
