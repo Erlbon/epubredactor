@@ -590,3 +590,16 @@ def load_perf_logging_enabled() -> bool:
 
 def save_perf_logging_enabled(enabled: bool) -> None:
     _settings().setValue(_PERF_LOGGING_ENABLED_KEY, bool(enabled))
+
+
+_ASCII_FILENAMES_KEY = "rename/ascii_only"
+
+
+def load_ascii_filenames() -> bool:
+    """Rename/Export by Pattern's "ASCII-safe filenames" checkbox,
+    remembered between runs (redactor_common's RenamePatternDialog)."""
+    return bool(_settings().value(_ASCII_FILENAMES_KEY, False, type=bool))
+
+
+def save_ascii_filenames(enabled: bool) -> None:
+    _settings().setValue(_ASCII_FILENAMES_KEY, bool(enabled))

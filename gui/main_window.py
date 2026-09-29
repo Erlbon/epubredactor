@@ -2432,6 +2432,8 @@ class MainWindow(QMainWindow):
             item_noun="book",
             zero_pad_field="series_index",
             zero_pad_label="Zero-pad series number to:",
+            ascii_only=app_settings.load_ascii_filenames(),
+            on_ascii_only_changed=app_settings.save_ascii_filenames,
             parent=self,
         )
         if dialog.exec() != dialog.DialogCode.Accepted:
