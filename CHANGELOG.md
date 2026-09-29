@@ -4,6 +4,12 @@ All notable changes to The ƎPUB Redactor, by version. Trimmed to new
 functionality and real fixes — cosmetic/UX-only adjustments aren't
 listed here.
 
+## 2026-09-29#02 -- Small fixes
+
+- Message boxes with several wide buttons keep their text next to the icon (on Linux the text could end up in a narrow strip far to the right).
+- Delete Files uses redactor_common's shared Recycle Bin helper (same behaviour; a file that can't be moved is reported as before).
+- redactor_common 2026-09-29-02 (from 2026-09-29-01).
+
 ## 2026-09-29#01 -- ASCII-safe filenames
 
 - **Rename/Export by Pattern: "ASCII-safe filenames"** -- new names use only plain ASCII letters, digits and punctuation: accents removed (é -> e, å -> a), æ -> ae, ø -> o, ß -> ss, typographic quotes and dashes made plain, and anything with no ASCII form (other scripts, emoji, symbols) dropped. For old file systems, network shares, e-readers, car stereos and sync tools that mangle anything else. The preview updates as you tick it, and the choice is remembered.

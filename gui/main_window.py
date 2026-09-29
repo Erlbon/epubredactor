@@ -127,10 +127,9 @@ from gui.strip_description_html_dialog import StripDescriptionHtmlDialog
 from gui.tag_panel import TagPanel
 from gui.validation_dialog import ValidationDialog
 
-try:
-    import send2trash
-except ImportError:  # pragma: no cover -- exercised only on a real install
-    send2trash = None
+import importlib.util
+
+from redactor_common.core.trash import TrashError, move_to_trash
 
 PATH_COL = 0
 FILENAME_COL = 1
@@ -2158,7 +2157,7 @@ class MainWindow(QMainWindow):
         if not to_delete:
             QMessageBox.information(self, "No books selected", "Select at least one book to delete.")
             return
-        if send2trash is None:
+        if importlib.util.find_spec("send2trash") is None:
             QMessageBox.warning(
                 self, "Can't delete files",
                 "The send2trash package isn't installed. Run:\n\n"
@@ -2186,9 +2185,9 @@ class MainWindow(QMainWindow):
         errors: list[tuple[str, str]] = []
         for book in to_delete:
             try:
-                send2trash.send2trash(book.path)
+                move_to_trash(book.path)  # redactor_common's shared Recycle Bin helper
                 deleted.append(book)
-            except Exception as exc:  # noqa: BLE001 - surface any OS/trash error, don't crash
+            except TrashError as exc:
                 errors.append((book.path, str(exc)))
 
         self.books = [b for b in self.books if b not in deleted]
