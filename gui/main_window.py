@@ -80,6 +80,9 @@ from redactor_common.gui.progress import run_with_progress
 from redactor_common.gui.sortable_table import NumericTableWidgetItem, suspend_sorting
 from redactor_common.gui.zoom_toolbar import TableZoomController
 from redactor_common.gui.visible_rows import VisibleRowsWatcher
+from redactor_common.core.rename_log import RenameLog
+from redactor_common.gui.rename_undo import undo_last_rename
+from core.app_paths import base_dir
 from redactor_common.gui.rename_pattern_dialog import RenamePatternDialog
 from redactor_common.gui.rename_single_file import rename_single_file as prompt_rename_single_file
 from redactor_common.gui.async_hash_cache import AsyncHashCache
@@ -175,6 +178,12 @@ IMAGE_FILE_FILTER = "Images (*.jpg *.jpeg *.png *.gif *.webp)"
 # _FIELD_LABELS/_field_label, the project this was promoted from.
 _FIELD_LABELS = {key: label for key, label, _multiline in FIELDS}
 
+
+
+def _rename_log() -> RenameLog:
+    """The persistent log behind File > Undo Last Rename (redactor_common's
+    core/rename_log.py), next to this app's settings."""
+    return RenameLog(os.path.join(str(base_dir()), "epubredactor_rename_log.json"))
 
 def _field_label(key: str) -> str:
     return _FIELD_LABELS.get(key, key.replace("_", " ").title())
@@ -503,6 +512,7 @@ class MainWindow(QMainWindow):
                     "rename_file", "&Rename File…", self.rename_selected_file,
                     shortcut=shortcuts.RENAME_SINGLE_FILE,
                 ),
+                MenuAction("undo_rename", "&Undo Last Rename...", self.undo_last_rename),
                 MenuAction(
                     "rename_files", "Rename Files (&Pattern)…", self.open_rename_dialog,
                     shortcut=shortcuts.RENAME_EXPORT_BY_PATTERN,
@@ -1686,8 +1696,23 @@ class MainWindow(QMainWindow):
         # Prompt/validate/rename/error-report is redactor_common's
         # rename_single_file(), extracted from this method (2026-09-23
         # this app switched to the shared copy too).
-        if prompt_rename_single_file(self, book.path, lambda new_path: setattr(book, "path", new_path)):
+        if prompt_rename_single_file(self, book.path, lambda new_path: setattr(book, "path", new_path),
+                                     log=_rename_log()):
             self._refresh_row_full(book)
+            self._refresh_status()
+
+    def undo_last_rename(self) -> None:
+        """File > Undo Last Rename...: renames the newest logged rename back
+        (redactor_common's rename log -- renames aren't on the Undo stack,
+        which covers metadata edits only)."""
+        def restored(new_path: str, old_path: str) -> None:
+            wanted = os.path.normcase(os.path.abspath(new_path))
+            for item in self.books:
+                if os.path.normcase(os.path.abspath(str(item.path))) == wanted:
+                    item.path = str(old_path)
+
+        if undo_last_rename(self, _rename_log(), restored):
+            self._rebuild_table()
             self._refresh_status()
 
     def rename_selected_file(self) -> None:
@@ -1910,18 +1935,22 @@ class MainWindow(QMainWindow):
         taken: set[str] = set()
         errors: list[tuple[str, str]] = []
         succeeded = 0
+        renamed: list[tuple[str, str]] = []
         for i, new_filename in changes.items():
             book = books[i]
             try:
                 stem, ext = os.path.splitext(new_filename)
                 directory = os.path.dirname(book.path)
                 new_path = unique_path(directory, stem, ext or ".epub", taken)
+                old_path = book.path
                 os.rename(book.path, new_path)
                 book.path = new_path
+                renamed.append((old_path, new_path))
                 taken.add(os.path.normcase(os.path.abspath(new_path)))
                 succeeded += 1
             except OSError as exc:
                 errors.append((book.path, str(exc)))
+        _rename_log().record("Search/Replace (filename)", renamed)
 
         self._rebuild_table()
         self._refresh_status()
@@ -2462,6 +2491,7 @@ class MainWindow(QMainWindow):
         """
         errors: list[str] = []
         succeeded = 0
+        renamed: list[tuple[str, str]] = []
         for book, old_path, new_path in planned:
             try:
                 if export:
@@ -2472,11 +2502,14 @@ class MainWindow(QMainWindow):
                         continue
                     if book.dirty:
                         book.save()  # embed current metadata before renaming
+                    previous = book.path
                     os.rename(book.path, new_path)
                     book.path = new_path
+                    renamed.append((previous, new_path))
                 succeeded += 1
             except (EpubError, OSError) as exc:
                 errors.append(f"{os.path.basename(old_path)}: {exc}")
+        _rename_log().record("Rename by Pattern", renamed)
 
         self._rebuild_table()
         self._refresh_status()

@@ -15,3 +15,7 @@ epubredactor_perf.log
 # Linux builds (redactor-build-tools/linux-build/build.sh)
 build-linux/
 dist-linux/
+
+# File > Undo Last Rename's log (redactor_common's RenameLog) -- per-user data,
+# next to the settings like epubredactor_settings.ini.
+epubredactor_rename_log.json
