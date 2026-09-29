@@ -78,6 +78,8 @@ from redactor_common.core.undo import UndoManager
 from redactor_common.gui.action_factory import make_action
 from redactor_common.gui.progress import run_with_progress
 from redactor_common.gui.sortable_table import NumericTableWidgetItem, suspend_sorting
+
+from gui import cover_quality
 from redactor_common.gui.zoom_toolbar import TableZoomController
 from redactor_common.gui.visible_rows import VisibleRowsWatcher
 from redactor_common.core.rename_log import RenameLog
@@ -145,11 +147,14 @@ FIRST_FIELD_COL = 3
 # new column in earlier would shift every FIELDS column's saved index
 # out from under existing users' settings on upgrade.
 JUNK_COVER_COL = FIRST_FIELD_COL + len(FIELDS)
+# Cover size (gui/cover_quality.py) -- appended after Junk Cover for the
+# same saved-column-index reason.
+COVER_SIZE_COL = JUNK_COVER_COL + 1
 # Every column's stable key, in logical-column order -- what column
 # widths/visibility are persisted by (see app_settings'
 # load_hidden_column_keys()), so inserting a column later can't silently
 # re-point a saved preference at the wrong column.
-COLUMN_KEYS = ["path", "filename", "status", *[key for key, _label, _ml in FIELDS], "junk_cover"]
+COLUMN_KEYS = ["path", "filename", "status", *[key for key, _label, _ml in FIELDS], "junk_cover", "cover_size"]
 # Colors now live in redactor_common.gui.colors -- this project's own
 # scheme became the shared standard (mp3/video had each picked their
 # own row-tint/selection colors independently). See that module's
@@ -392,7 +397,7 @@ class MainWindow(QMainWindow):
         self._row_reflow_timer.setSingleShot(True)
         self._row_reflow_timer.timeout.connect(self._reflow_table_rows)
         self._text_overflow_mode = app_settings.load_text_overflow_mode()
-        headers = ["Path", "Filename", "Status"] + [label for _key, label, _m in FIELDS] + ["Junk Cover"]
+        headers = ["Path", "Filename", "Status"] + [label for _key, label, _m in FIELDS] + ["Junk Cover", "Cover"]
         self.table.setColumnCount(len(headers))
         self.table.setHorizontalHeaderLabels(headers)
         self.table.horizontalHeader().setSectionResizeMode(
@@ -574,6 +579,7 @@ class MainWindow(QMainWindow):
                     "generate_cover", "&Generate Cover from Metadata…",
                     self.open_cover_generator_dialog,
                 ),
+                MenuAction("find_better_covers", "Find &Better Covers…", self.open_find_better_covers_dialog),
                 MenuAction(
                     "regenerate_junk_covers", "Regenerate &Junk Covers…",
                     self.open_regenerate_junk_covers_dialog,
@@ -1567,8 +1573,23 @@ class MainWindow(QMainWindow):
             self._junk_cover_item_by_book[book] = junk_item
             self._update_junk_cover_cell(row, book)
 
+        with accum.section("cover size cell"):
+            self._update_cover_size_cell(row, book)
+
         with accum.section("dirty row styling"):
             self._set_row_dirty_style(row, book.dirty)
+
+    def _update_cover_size_cell(self, row: int, book: EpubBook) -> None:
+        """The Cover column: the cover's size, yellow when low-res, red
+        when missing (gui/cover_quality.py); sorts by height."""
+        text, background, tooltip, sort_value = cover_quality.describe(book)
+        item = NumericTableWidgetItem(text, sort_value=sort_value)
+        item.setFlags(item.flags() & ~Qt.ItemFlag.ItemIsEditable)
+        item.setToolTip(tooltip)
+        if background is not None:
+            item.setBackground(background)
+            item.setForeground(HIGHLIGHT_TEXT_COLOR)
+        self.table.setItem(row, COVER_SIZE_COL, item)
 
     def _update_status_cell(self, row: int, book: EpubBook) -> None:
         item = self.table.item(row, STATUS_COL)
@@ -1839,7 +1860,7 @@ class MainWindow(QMainWindow):
             return
         row = item.row()
         col = item.column()
-        if col in (PATH_COL, FILENAME_COL, STATUS_COL, JUNK_COVER_COL):
+        if col in (PATH_COL, FILENAME_COL, STATUS_COL, JUNK_COVER_COL, COVER_SIZE_COL):
             return
         book = self._book_for_row(row)
         if book is None or book.load_error:
@@ -2060,6 +2081,7 @@ class MainWindow(QMainWindow):
                     self._apply_cover_icon(item, book)
                 self._set_row_dirty_style(row, book.dirty)
                 self._update_junk_cover_cell(row, book)  # cover just changed -- its hash may have too
+                self._update_cover_size_cell(row, book)
         self._updating_table = was_updating
         self._refresh_status()
         self._on_selection_changed()  # refresh the cover preview panel too
@@ -2118,6 +2140,78 @@ class MainWindow(QMainWindow):
                 if row is not None:
                     self._update_junk_cover_cell(row, book)
         self._updating_table = was_updating
+
+    def open_find_better_covers_dialog(self) -> None:
+        """Operations > Find Better Covers…: for the selected books (or all)
+        that have an ISBN, asks Open Library for its cover and offers the
+        ones LARGER than the current cover (or where there is none) side
+        by side -- see core/better_cover.py, gui/better_cover_dialog.py.
+        Applied as one Undo step, written on Save."""
+        from core.better_cover import IsbnCoverError, IsbnCoverLimitError, fetch_cover_by_isbn
+        from gui.better_cover_dialog import BetterCoverDialog
+        from redactor_common.gui.background_call import call_in_background
+
+        rows = self._selected_rows()
+        books = self._books_for_rows(rows) if rows else [b for b in self.books if not b.load_error]
+        with_isbn = [b for b in books if (b.metadata.isbn or "").strip()]
+        if not with_isbn:
+            QMessageBox.information(
+                self, "Find Better Covers",
+                "None of these books has an ISBN -- the cover is looked up by ISBN. "
+                "Import one first (e.g. Import > Google Books / Open Library).",
+            )
+            return
+        found: list = []
+        problems: list[str] = []
+        stopped = [""]
+
+        def _look_up(book: EpubBook, _index: int) -> None:
+            if stopped[0]:
+                return
+            try:
+                data = call_in_background(fetch_cover_by_isbn, book.metadata.isbn)
+            except IsbnCoverLimitError as exc:
+                stopped[0] = str(exc)
+                return
+            except IsbnCoverError as exc:
+                problems.append(f"{os.path.basename(book.path)}: {exc}")
+                return
+            new_size = cover_quality.image_size(data)
+            if new_size is None:
+                return
+            current = cover_quality.cover_size(book)
+            if current is None or new_size[1] > current[1]:
+                found.append((book, data))
+
+        run_with_progress(
+            self, with_isbn, _look_up, "Looking up covers by ISBN…", threshold=1,
+            label_for=lambda b: f"Looking up: {os.path.basename(b.path)}",
+        )
+        notes = []
+        if stopped[0]:
+            notes.append(stopped[0])
+        if problems:
+            notes.append(f"{len(problems)} lookup(s) failed: " + "; ".join(problems[:3]))
+        skipped = len(books) - len(with_isbn)
+        if skipped:
+            notes.append(f"{skipped} book(s) without an ISBN were skipped.")
+        if not found:
+            QMessageBox.information(
+                self, "Find Better Covers",
+                f"Open Library has no larger cover for {len(with_isbn)} book(s) with an ISBN."
+                + ("\n\n" + "\n".join(notes) if notes else ""),
+            )
+            return
+        dialog = BetterCoverDialog(found, "<br>".join(notes), self)
+        if dialog.exec() != dialog.DialogCode.Accepted:
+            return
+        chosen = dialog.ticked()
+        if not chosen:
+            return
+        self._push_undo("Find Better Covers", [book for book, _data in chosen])
+        for book, data in chosen:
+            book.set_cover(data, "image/jpeg")
+        self._refresh_affected_rows([book for book, _data in chosen])
 
     def open_regenerate_junk_covers_dialog(self) -> None:
         """Operations menu batch version of the table right-click's Flag

@@ -88,6 +88,19 @@ them in one go.
   The flag itself isn't book content — it's not written to the EPUB,
   doesn't dirty the book, and isn't part of Undo, just a standing note
   about a cover image, remembered across restarts like a column width.
+- **Cover column** — each book's cover size in pixels: yellow for a
+  low-resolution cover (under 1000px tall -- soft on a current
+  e-reader), red when there's none. Sortable, so the problem covers
+  group together. Only the image header is read, so it's instant.
+- **Find Better Covers** (Operations menu) — for the selected books
+  (or all) with an ISBN, looks up Open Library's cover for that ISBN
+  and offers the ones LARGER than the current cover (or where there's
+  none), current and found side by side with their sizes. Untick any
+  that aren't the same edition; applied as one Undo step, written on
+  Save. Open Library's covers are often modest in size, so this helps
+  most with missing and very small covers; it limits lookups by ISBN
+  per computer, and the app stops cleanly with a message when it
+  refuses.
 - **Case Conversion** — UPPERCASE / lowercase / Title Case / Sentence
   case for any column, with a live preview before applying. Title Case
   correctly leaves small connector words ("of", "the") lowercase except

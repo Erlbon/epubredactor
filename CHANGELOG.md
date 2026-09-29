@@ -4,6 +4,19 @@ All notable changes to The ƎPUB Redactor, by version. Trimmed to new
 functionality and real fixes — cosmetic/UX-only adjustments aren't
 listed here.
 
+## 2026-09-29#04 -- Cover quality
+
+- **Cover column**: each book's cover size in pixels -- yellow for a
+  low-resolution cover (under 1000px tall), red when there's none;
+  sortable. Reads only the image header, so it costs nothing.
+- **Operations > Find Better Covers…**: for the selected books (or all)
+  with an ISBN, asks Open Library for its cover and offers the larger
+  ones (or any, where the book has none), current and found side by
+  side with their sizes. Applied as one Undo step, written on Save.
+  Open Library's covers are often modest in size, so this helps most
+  with missing and very small covers; when it refuses more lookups by
+  ISBN (it limits them per computer), the search stops with a message.
+
 ## 2026-09-29#03 -- Undo Last Rename
 
 - **File > Undo Last Rename...**: renames are now logged (Rename/Export by Pattern, a filename Search/Replace, Rename File) and the newest one can be taken back -- even after restarting the app. It shows what will be renamed back first, and never overwrites: a file that has moved since, or whose old name is taken again, is skipped and reported. The in-app Undo still covers metadata edits only.
