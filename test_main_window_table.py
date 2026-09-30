@@ -20,6 +20,7 @@ import gui.main_window as mw  # noqa: E402
 from core.epub_metadata import EpubBook, EpubMetadata  # noqa: E402
 from core.fields import FIELDS  # noqa: E402
 from gui.main_window import MainWindow  # noqa: E402
+from redactor_common.core import labels  # noqa: E402
 
 _app = QApplication.instance() or QApplication(sys.argv)
 
@@ -230,5 +231,5 @@ def test_every_lookup_is_in_the_right_click_menu(monkeypatch):
     monkeypatch.setattr(mw, "show_table_context_menu", fake_show)
     window._show_table_context_menu(None)
     sub = next(i for i in seen["items"] if isinstance(i, mw.Submenu))
-    assert sub.text == "Look Up"
-    assert [i.text for i in sub.items] == ["Google Books…", "Open Library…", "Calibre…"]
+    assert labels.strip_mnemonic(sub.text) == "Look Up"
+    assert [labels.strip_mnemonic(i.text) for i in sub.items] == ["Google Books…", "Open Library…", "Calibre…"]

@@ -31,6 +31,7 @@ regardless of where sorting/reordering puts the row.
 from __future__ import annotations
 
 import copy
+import dataclasses
 import mimetypes
 import os
 import sys
@@ -99,7 +100,21 @@ from redactor_common.gui.rename_single_file import rename_single_file as prompt_
 from redactor_common.gui.async_hash_cache import AsyncHashCache
 from redactor_common.gui.async_icon_cache import AsyncIconCache
 from redactor_common.gui.quick_series_number import prompt_and_generate_series_numbers
-from redactor_common.gui.menu_builder import MenuAction, MenuItems, Separator, Submenu, build_menu_bar
+from redactor_common.core import labels
+from redactor_common.gui.menu_builder import MenuAction, MenuItems, Separator, Submenu
+from redactor_common.gui.standard_menus import (
+    AppMenu,
+    StandardMenuSpec,
+    build_standard_menu_bar,
+    get_action_registry,
+    look_up_submenu,
+    set_apply_count,
+    standard_edit_items,
+    standard_file_items,
+    standard_help_items,
+    standard_tools_items,
+    standard_view_items,
+)
 from redactor_common.gui.overwrite_review_dialog import resolve_overwrite_conflicts
 from redactor_common.gui.colors import (
     DIRTY_COLOR, ERROR_COLOR, SAVE_FAILED_COLOR, DRM_COLOR, HIGHLIGHT_TEXT_COLOR,
@@ -214,6 +229,45 @@ def _rename_log() -> RenameLog:
 
 def _field_label(key: str) -> str:
     return _FIELD_LABELS.get(key, key.replace("_", " ").title())
+
+
+# Shortcuts the actions had before the menu-skeleton restructure; the
+# standard_*_items helpers would otherwise hand out the new family keys.
+LEGACY_SHORTCUTS: dict[str, list[str]] = {
+    "save_all": ["Ctrl+S"],  # was "Save Files"
+    "delete_files": ["F8"],
+    "zoom_in": [],  # the zoom toolbar's own StandardKey actions own these
+    "zoom_out": [],
+    "about": ["F1"],
+}
+
+
+def _with_shortcuts(items: MenuItems, overrides: dict[str, list[str]]) -> MenuItems:
+    """Copies `items` with the listed actions' shortcuts replaced ([] = none)."""
+    out: MenuItems = []
+    for item in items:
+        if isinstance(item, MenuAction) and item.key in overrides:
+            keys = overrides[item.key]
+            item = dataclasses.replace(item, shortcut=None, shortcuts=keys or None)
+        out.append(item)
+    return out
+
+
+def _drop_keys(items: MenuItems, keys: set[str]) -> MenuItems:
+    """Copies `items` without the actions whose key is in `keys`."""
+    return [i for i in items if not (isinstance(i, MenuAction) and i.key in keys)]
+
+
+def _tidy(items: MenuItems) -> MenuItems:
+    """Removes leading, trailing and doubled separators left by _drop_keys."""
+    out: MenuItems = []
+    for item in items:
+        if isinstance(item, Separator) and (not out or isinstance(out[-1], Separator)):
+            continue
+        out.append(item)
+    while out and isinstance(out[-1], Separator):
+        out.pop()
+    return out
 
 
 def resource_path(*parts: str) -> str:
@@ -511,182 +565,126 @@ class MainWindow(QMainWindow):
         self.status.addPermanentWidget(self.status_label)
 
     def _build_menu_bar(self) -> None:
-        # Built via the shared redactor_common menu framework so the
-        # top-level shape (File / Import / Operations / Settings / Help,
-        # in that order, with those exact mnemonics) matches every other
-        # Redactor project. "Kobo" is this project's one bit of
-        # project-specific menu, inserted via extra_menus rather than
-        # folded into the standard five -- see menu_builder.py.
-        #
-        # "About" is folded into "Help" here (it used to be its own
-        # top-level menu) to match the shared spec; nothing about the
-        # actions themselves changes.
-        specs = {
-            "File": [
-                MenuAction("load_files", "&Load Files…", self.add_files_dialog, shortcut=shortcuts.LOAD_FILES),
+        # Built through redactor_common's standard menu skeleton (File, Edit,
+        # View, Metadata, Repair, Send, Tools, Help): the shared items come
+        # from the standard_*_items helpers with their canonical labels
+        # (core/labels.py), and only what is specific to an ebook tool is
+        # spelled out here. See the family menu-skeleton proposal (section C2).
+        file_items = _tidy(_drop_keys(
+            standard_file_items(
+                open_files=self.add_files_dialog,
+                open_folder=self.add_folder_dialog,
+                import_and_convert=self.open_ebook_convert_dialog,
+                # "Save Files" has always saved EVERY changed book (there is
+                # no save-selected), so it is Save All here, not Save. The
+                # helper's separate Save entry would be a dead duplicate, and
+                # Export/Import Settings have no settings adapter in this app
+                # yet: both are dropped rather than shown greyed out.
+                save_all=self.save_changed,
+                save_as=self.save_as_copies,
+                rename_file=self.rename_selected_file,
+                undo_last_rename=self.undo_last_rename,
+                # The dialog's modes are rename in place, export a copy and
+                # Move into folders, hence "Rename / Export / Move".
+                rename_export_move=self.open_rename_dialog,
+                remove_from_list=self.remove_selected,
+                clear_list=self.clear_list,
+                delete_files=self.delete_files,
+                exit_slot=self.close,
+            ),
+            {"save", "export_settings", "import_settings"},
+        ))
+
+        edit_items = standard_edit_items(
+            undo=self.on_undo,
+            redo=self.on_redo,
+            # Shared with the toolbar, so its dynamic "Apply to N Selected"
+            # text and enabled state never drift apart (see set_apply_count).
+            apply=self.tag_panel.apply_bulk_edit,
+            # One click: the recipe's repairs and fill-ins on the selected
+            # books (or all loaded, if none selected), each saved in place
+            # with its original in the Recycle Bin. See redact_books().
+            redact=self.redact_books,
+            edit_redact_recipe=self.edit_redact_recipe,
+            search_replace=self.open_search_replace_dialog,
+            change_case=self.open_case_conversion_dialog,
+            filter_list=self.focus_filter,
+        )
+
+        text_wrapping = Submenu(labels.TEXT_WRAPPING, [
+            MenuAction(
+                "text_wrap_mode_wrap", "&Wrap Text (grow row height)",
+                lambda: self.set_text_overflow_mode("wrap"), checkable=True,
+            ),
+            MenuAction(
+                "text_wrap_mode_ellipsis", "&Truncate with … (fixed row height)",
+                lambda: self.set_text_overflow_mode("ellipsis"), checkable=True,
+            ),
+            MenuAction(
+                "text_wrap_mode_clip", "&Clip, No … (fixed row height)",
+                lambda: self.set_text_overflow_mode("clip"), checkable=True,
+            ),
+        ])
+        view_items = _drop_keys(
+            standard_view_items(
+                show_metadata_panel=self.toggle_tag_panel,
+                # self.zoom is created with the toolbar, after this menu.
+                zoom_in=lambda: self.zoom.zoom_in(),
+                zoom_out=lambda: self.zoom.zoom_out(),
+                reset_zoom=lambda: self.zoom.zoom_reset(),
+                refresh_list=self.refresh_list,
+                extra_view=[text_wrapping],
+            ),
+            {"command_palette"},  # wired in the command-palette commit
+        )
+
+        metadata_items = [
+            MenuAction(
+                "import_from_filename", labels.PARSE_FILENAME,
+                self.open_filename_parse_dialog, shortcut=shortcuts.PARSE_FILENAME,
+            ),
+            MenuAction("import_file_content", "Scan File &Content…", self.open_content_scan_dialog),
+            Separator(),
+            look_up_submenu(self._look_up_entries("import_")),
+            Separator(),
+            MenuAction("suggest_genres", "Suggest &Genres…", self.open_genre_suggest_dialog),
+            MenuAction("author_sort_convert", "Convert &Author Sort…", self.open_author_sort_dialog),
+            MenuAction("number_series", "&Number Series…", self.open_series_number_dialog),
+            Separator(),
+            Submenu("C&over", [
                 MenuAction(
-                    "load_folder", "Load &Folder…", self.add_folder_dialog, shortcut=shortcuts.LOAD_FOLDER
+                    "find_better_covers", "&Find Better Covers…", self.open_find_better_covers_dialog,
                 ),
-                Separator(),
-                MenuAction("save", "&Save Files", self.save_changed, shortcut=shortcuts.SAVE),
-                MenuAction("save_as", "Save As Cop&y…", self.save_as_copies, shortcut=shortcuts.SAVE_AS),
-                Separator(),
-                # Quick, direct rename of the one selected file -- matches
-                # Explorer's F2 exactly. Distinct from "rename_files"
-                # below (the pattern-based batch tool, moved off F2 to
-                # make room for this): see rename_selected_file().
                 MenuAction(
-                    "rename_file", "&Rename File…", self.rename_selected_file,
-                    shortcut=shortcuts.RENAME_SINGLE_FILE,
-                ),
-                MenuAction("undo_rename", "&Undo Last Rename...", self.undo_last_rename),
-                MenuAction(
-                    "rename_files", "Rename Files (&Pattern)…", self.open_rename_dialog,
-                    shortcut=shortcuts.RENAME_EXPORT_BY_PATTERN,
-                ),
-                Separator(),
-                MenuAction("remove_files", "Remo&ve Files", self.remove_selected, shortcut=shortcuts.REMOVE_FROM_LIST),
-                MenuAction("delete_files", "&Delete Files…", self.delete_files, shortcut="F8"),
-                Separator(),
-                MenuAction("refresh", "Re&fresh List", self.refresh_list, shortcuts=shortcuts.REFRESH_LIST),
-                MenuAction("clear", "&Clear List", self.clear_list),
-                Separator(),
-                # No explicit shortcut -- Alt+F4 already closes this (or
-                # any) plain QMainWindow at the OS level, verified
-                # directly (launch, send Alt+F4, confirm the process
-                # exits), independent of anything bound here.
-                MenuAction("exit", "E&xit Program", self.close),
-            ],
-            "Import": [
-                MenuAction(
-                    "import_from_filename", "Import Metadata from &Filename…",
-                    self.open_filename_parse_dialog, shortcut=shortcuts.PARSE_FILENAME_TO_METADATA,
+                    "generate_cover", "&Generate Cover from Metadata…", self.open_cover_generator_dialog,
                 ),
                 MenuAction(
-                    "import_google_books", "Import Metadata from &Google Books…",
-                    self.open_google_books_dialog,
-                ),
-                MenuAction(
-                    "import_file_content", "Import Metadata from File &Content…",
-                    self.open_content_scan_dialog,
-                ),
-                MenuAction(
-                    "suggest_genres", "Suggest &Genres…",
-                    self.open_genre_suggest_dialog,
-                ),
-                MenuAction(
-                    "import_open_library", "Import Metadata from &Open Library…",
-                    self.open_open_library_dialog,
-                ),
-                MenuAction(
-                    "import_calibre", "Import Metadata from &Calibre…",
-                    self.open_calibre_lookup_dialog,
-                ),
-                Separator(),
-                MenuAction("import_to_epub", "Import &to EPUB…", self.open_ebook_convert_dialog),
-            ],
-            "Operations": [
-                # Apply lives in the toolbar too (see _build_toolbar) --
-                # sharing this QAction instance means its dynamic
-                # "Apply to N selected book(s)" text and enabled state
-                # never drift out of sync between the two.
-                MenuAction("apply_bulk_edit", "&Apply to 0 selected book(s)", self.tag_panel.apply_bulk_edit),
-                # One click: the recipe's repairs and fill-ins on the selected
-                # books (or all loaded, if none selected), each saved in place
-                # with its original in the Recycle Bin. See redact_books().
-                redact_menu_action(self.redact_books, text="Re&dact"),
-                edit_recipe_menu_action(self.edit_redact_recipe, text="Edit Redact Reci&pe…"),
-                Separator(),
-                MenuAction("case_conversion", "&Case Conversion…", self.open_case_conversion_dialog),
-                MenuAction(
-                    "author_sort_convert", "Author Sor&t Conversion…",
-                    self.open_author_sort_dialog,
-                ),
-                MenuAction("number_series", "&Number Series…", self.open_series_number_dialog),
-                MenuAction(
-                    "generate_cover", "&Generate Cover from Metadata…",
-                    self.open_cover_generator_dialog,
-                ),
-                MenuAction("find_better_covers", "Find &Better Covers…", self.open_find_better_covers_dialog),
-                MenuAction(
-                    "regenerate_junk_covers", "Regenerate &Junk Covers…",
+                    "regenerate_junk_covers", "&Regenerate Junk Covers…",
                     self.open_regenerate_junk_covers_dialog,
                 ),
-                MenuAction(
-                    "search_replace", "&Search/Replace…", self.open_search_replace_dialog,
-                    shortcut=shortcuts.SEARCH_REPLACE,
-                ),
-                MenuAction("polish_book", "&Polish Book…", self.open_polish_book_dialog),
-                MenuAction(
-                    "compress_images_lossy", "&Compress Images (Lossy)…",
-                    self.open_compress_images_dialog,
-                ),
                 Separator(),
-                MenuAction("undo", "&Undo", self.on_undo, shortcut=shortcuts.UNDO,
-                           tooltip="Undo the last change (in-memory edits only, up to 5 steps back)"),
-                MenuAction("redo", "&Redo", self.on_redo, shortcut=shortcuts.REDO,
-                           tooltip="Redo the last undone change"),
-            ],
-            "Settings": [
-                MenuAction("column_settings", "Add/Remove &Columns…", self.open_column_settings_dialog),
-                MenuAction("language_settings", "Add/Remove &Languages…", self.open_language_settings_dialog),
-                MenuAction("genre_settings", "Add/Remove &Genres…", self.open_genre_settings_dialog),
+                MenuAction("flag_junk_cover", "Flag Cover as &Junk", self.flag_selected_covers_as_junk),
                 MenuAction(
-                    "blank_language_default", "&Blank Language Default…",
-                    self.open_blank_language_default_settings,
+                    "unflag_junk_cover", "&Unflag Cover as Junk", self.unflag_selected_covers_as_junk,
                 ),
-                Submenu("&Text Wrapping", [
-                    MenuAction(
-                        "text_wrap_mode_wrap", "&Wrap Text (grow row height)",
-                        lambda: self.set_text_overflow_mode("wrap"), checkable=True,
-                    ),
-                    MenuAction(
-                        "text_wrap_mode_ellipsis", "&Truncate with … (fixed row height)",
-                        lambda: self.set_text_overflow_mode("ellipsis"), checkable=True,
-                    ),
-                    MenuAction(
-                        "text_wrap_mode_clip", "&Clip, No … (fixed row height)",
-                        lambda: self.set_text_overflow_mode("clip"), checkable=True,
-                    ),
-                ]),
-                Separator(),
-                MenuAction(
-                    "perf_logging", "&Enable Performance Logging",
-                    self.toggle_perf_logging, checkable=True,
-                    tooltip="Logs a timing breakdown of slow operations (table rebuilds, saves) "
-                            "to a file next to the crash log, for diagnosing a slowdown that "
-                            "doesn't reproduce on a smaller library.",
-                ),
-                MenuAction("open_perf_log", "Open Performance &Log File…", self.open_perf_log_file),
-            ],
-            "Help": [
-                MenuAction("about", f"&About {APP_NAME}…", self.open_about_dialog, shortcut=shortcuts.HELP),
-                MenuAction("changelog", "View &Changelog…", self.open_changelog_dialog),
-                MenuAction("credits", "&Credits…", self.open_credits_dialog),
-            ],
-        }
-        # Repair: batch operations specifically for books that arrive with
-        # structural or metadata damage (most often from older files that
-        # have been through several lossy format conversions) -- kept
-        # separate from Operations, which is everyday field editing, since
-        # this category kept growing (Validate/Fix Issues, Rebuild
-        # Manifest, Missing Space detection, and now Nav/Manifest Repair
-        # and the blank-language default) and deserved its own place
-        # rather than continuing to pile into one menu.
+            ]),
+        ]
+
+        # Repair: batch operations for books that arrive with structural or
+        # metadata damage (most often old files that went through several
+        # lossy format conversions).
         repair_items = [
-            MenuAction("validate", "&Validate / Fix Issues…", self.open_validation_dialog),
-            MenuAction("rebuild_manifest", "Re&build Manifest…", self.open_manifest_rebuild_dialog),
+            MenuAction("validate", labels.VALIDATE_AND_FIX, self.open_validation_dialog),
             MenuAction(
-                "dedupe_manifest_ids", "&Deduplicate Manifest IDs…",
-                self.open_manifest_dedupe_dialog,
+                "rebuild_manifest", "&Rebuild Manifest…", self.open_manifest_rebuild_dialog,
             ),
             MenuAction(
-                "repair_navigation", "Repair &Navigation…",
-                self.open_nav_repair_dialog,
+                "dedupe_manifest_ids", "&Deduplicate Manifest IDs…", self.open_manifest_dedupe_dialog,
             ),
+            MenuAction("repair_navigation", "Repair &Navigation…", self.open_nav_repair_dialog),
+            Separator(),
             MenuAction(
-                "generate_toc", "Generate &Table of Contents…",
-                self.open_toc_generate_dialog,
+                "generate_toc", "Generate &Table of Contents…", self.open_toc_generate_dialog,
             ),
             MenuAction("missing_space", "Detect &Missing Spaces…", self.open_missing_space_dialog),
             MenuAction(
@@ -694,39 +692,87 @@ class MainWindow(QMainWindow):
                 self.open_strip_description_html_dialog,
             ),
             Separator(),
+            MenuAction("polish_book", "&Polish Book…", self.open_polish_book_dialog),
             MenuAction(
-                "set_default_language", "Set &Blank/Unknown Language to Default…",
+                "compress_images_lossy", "&Compress Images…", self.open_compress_images_dialog,
+            ),
+            Separator(),
+            MenuAction(
+                "set_default_language", "Set &Blank Language to Default…",
                 self.set_blank_languages_to_default,
             ),
         ]
-        kobo_items = [
+
+        send_items = [
             MenuAction("send_to_kobo_usb", "Send to &Kobo (USB)…", self.open_send_to_kobo_dialog),
             MenuAction(
-                "send_to_ereader", "Send to e&Reader (Wireless)…",
-                self.open_send_to_ereader_dialog,
+                "send_to_ereader", "Send to e&Reader (Wireless)…", self.open_send_to_ereader_dialog,
             ),
+            MenuAction("open_sigil", "Open in &Sigil…", self.open_in_sigil),
         ]
-        actions = build_menu_bar(
-            self, specs, extra_menus=[("Repair", 3, repair_items), ("Kobo", 4, kobo_items)]
+
+        tools_items = standard_tools_items(
+            app_settings=[
+                MenuAction(
+                    "blank_language_default", "&Blank Language Default…",
+                    self.open_blank_language_default_settings,
+                ),
+            ],
+            columns=self.open_column_settings_dialog,
+            genres=self.open_genre_settings_dialog,
+            languages=self.open_language_settings_dialog,
+        ) + [
+            Separator(),
+            MenuAction(
+                "perf_logging", "Enable &Performance Logging",
+                self.toggle_perf_logging, checkable=True,
+                tooltip="Logs a timing breakdown of slow operations (table rebuilds, saves) "
+                        "to a file next to the crash log, for diagnosing a slowdown that "
+                        "doesn't reproduce on a smaller library.",
+            ),
+            MenuAction("open_perf_log", "&Open Performance Log…", self.open_perf_log_file),
+        ]
+
+        help_items = standard_help_items(
+            APP_NAME, self.open_changelog_dialog, self.open_credits_dialog, self.open_about_dialog,
         )
+
+        # Commit-1 migration: every action keeps the shortcut it had before
+        # the restructure (the shortcut fixes are a separate step).
+        spec = StandardMenuSpec(
+            file=_with_shortcuts(file_items, LEGACY_SHORTCUTS),
+            edit=edit_items,
+            view=_with_shortcuts(view_items, LEGACY_SHORTCUTS),
+            app_menus=[
+                AppMenu(labels.MENU_METADATA, metadata_items),
+                AppMenu(labels.MENU_REPAIR, repair_items),
+                AppMenu(labels.MENU_SEND, send_items),
+            ],
+            tools=tools_items,
+            help=_with_shortcuts(help_items, LEGACY_SHORTCUTS),
+        )
+        build_standard_menu_bar(self, spec)
+        actions = get_action_registry(self)
 
         # Back-compat: the rest of this file (toolbar, context menus)
         # references these as self.<x>_act attributes directly.
-        self.load_files_act = actions["load_files"]
-        self.load_folder_act = actions["load_folder"]
-        self.save_act = actions["save"]
+        self.load_files_act = actions["open_files"]
+        self.load_folder_act = actions["open_folder"]
+        self.save_act = actions["save_all"]  # saves every changed book, see above
         self.save_as_act = actions["save_as"]
         self.rename_file_act = actions["rename_file"]
-        self.rename_files_act = actions["rename_files"]
-        self.remove_files_act = actions["remove_files"]
+        self.rename_files_act = actions["rename_export_move"]
+        self.remove_files_act = actions["remove_from_list"]
         self.delete_files_act = actions["delete_files"]
-        self.apply_bulk_edit_act = actions["apply_bulk_edit"]
-        self.apply_bulk_edit_act.setEnabled(False)
+        self.apply_bulk_edit_act = actions["apply"]
+        set_apply_count(self.apply_bulk_edit_act, 0)
         self.redact_act = actions["redact"]
         self.undo_act = actions["undo"]
         self.undo_act.setEnabled(False)
         self.redo_act = actions["redo"]
         self.redo_act.setEnabled(False)
+        self.show_panel_act = actions["show_metadata_panel"]
+        self.show_panel_act.setChecked(True)
         self.set_default_language_act = actions["set_default_language"]
         self._update_blank_language_default_action_state()
 
@@ -747,6 +793,19 @@ class MainWindow(QMainWindow):
         self.perf_logging_act = actions["perf_logging"]
         self.perf_logging_act.setChecked(perf_log.is_enabled())
 
+    def _look_up_entries(self, key_prefix: str = "") -> list[MenuAction]:
+        """The online sources of Look Up (menu bar and context menu share them)."""
+        return [
+            MenuAction(f"{key_prefix}google_books", "&Google Books…", self.open_google_books_dialog),
+            MenuAction(f"{key_prefix}open_library", "&Open Library…", self.open_open_library_dialog),
+            MenuAction(f"{key_prefix}calibre", "&Calibre…", self.open_calibre_lookup_dialog),
+        ]
+
+    def focus_filter(self) -> None:
+        """Edit > Filter List (Ctrl+F): focuses the toolbar filter box."""
+        self.filter_edit.setFocus()
+        self.filter_edit.selectAll()
+
     def _build_toolbar(self) -> None:
         """Slim toolbar: just the handful of most-frequent actions,
         sharing QAction instances with the menu bar above so nothing
@@ -763,6 +822,10 @@ class MainWindow(QMainWindow):
         toolbar.addSeparator()
         toolbar.addAction(self.apply_bulk_edit_act)
         toolbar.addAction(self.redact_act)
+        # Redact is the headline action: bold so it stands out in the row.
+        redact_button = toolbar.widgetForAction(self.redact_act)
+        if redact_button is not None:
+            redact_button.setStyleSheet("font-weight: bold;")
         toolbar.addSeparator()
         toolbar.addAction(self.undo_act)
         toolbar.addAction(self.redo_act)
@@ -798,8 +861,7 @@ class MainWindow(QMainWindow):
     # ------------------------------------------------------------------
 
     def _on_tag_panel_selection_count_changed(self, count: int) -> None:
-        self.apply_bulk_edit_act.setText(f"Apply to {count} selected book(s)")
-        self.apply_bulk_edit_act.setEnabled(count > 0)
+        set_apply_count(self.apply_bulk_edit_act, count)
 
     def toggle_tag_panel(self) -> None:
         """Collapses the bulk-edit panel to a slim strip (not all the way
@@ -821,6 +883,9 @@ class MainWindow(QMainWindow):
 
     def _sync_tag_panel_collapsed_indicator(self) -> None:
         self.tag_panel.set_collapsed_indicator(self._panel_collapser.is_collapsed())
+        show_panel_act = getattr(self, "show_panel_act", None)  # View > Show Metadata Panel
+        if show_panel_act is not None:
+            show_panel_act.setChecked(not self._panel_collapser.is_collapsed())
 
     def _visible_ordered_field_keys(self) -> list[str]:
         """The bulk-edit field keys, filtered to visible table columns
@@ -856,62 +921,60 @@ class MainWindow(QMainWindow):
     # Right-click context menus
     # ------------------------------------------------------------------
 
+    def _context_menu_items(self, books: list[EpubBook]) -> MenuItems:
+        """The app-specific rows of the table's right-click menu, after the
+        shared Open in Default App / Open Containing Folder / Copy Path:
+        rename | Look Up | Organize | Cover | Redact, repair, send | remove."""
+        items: MenuItems = [Separator()]
+        if len(books) == 1 and not books[0].load_error:
+            # Reuses the actual File-menu QAction (F2) rather than
+            # building a fresh one -- same object, so this shows the
+            # real shortcut hint and can never drift out of sync
+            # with it. Only offered for a single book -- renaming
+            # several to the same name doesn't make sense. Distinct
+            # from "Rename / Export / Move…" under Organize (the
+            # pattern-based batch tool) -- this is the quick, direct
+            # fix for one typo at a time.
+            items.extend([self.rename_file_act, Separator()])
+        items.append(look_up_submenu(self._look_up_entries()))
+        items.append(Submenu("Organize", [
+            self.rename_files_act,
+            MenuAction("number_series", "Number Series…", self.quick_number_series),
+        ]))
+        cover_items: MenuItems = [
+            MenuAction("find_better_covers", "Find Better Covers…", self.open_find_better_covers_dialog),
+        ]
+        books_with_covers = [b for b in books if b.cover_hash is not None]
+        if any(not self._book_is_junk_cover(b) for b in books_with_covers):
+            cover_items.append(MenuAction(
+                "flag_junk_cover", "Flag Cover as Junk", self.flag_selected_covers_as_junk,
+            ))
+        if any(self._book_is_junk_cover(b) for b in books_with_covers):
+            cover_items.append(MenuAction(
+                "unflag_junk_cover", "Unflag Cover as Junk", self.unflag_selected_covers_as_junk,
+            ))
+        items.append(Submenu("Cover", cover_items))
+        items.append(Separator())
+        items.append(self.redact_act)
+        items.append(MenuAction("validate", "Validate and Fix…", self.open_validation_dialog))
+        items.append(MenuAction("open_sigil", "Open in Sigil…", self.open_in_sigil))
+        items.append(Submenu("Send to", [
+            MenuAction("send_kobo", "Kobo (USB)…", self.open_send_to_kobo_dialog),
+            MenuAction("send_ereader", "eReader (Wireless)…", self.open_send_to_ereader_dialog),
+        ]))
+        items.append(Separator())
+        items.append(self.remove_files_act)
+        items.append(self.delete_files_act)
+        return items
+
     def _show_table_context_menu(self, pos) -> None:
         # Selection-fix, and the generic Open Containing Folder/Copy Path
         # actions, are handled by the shared helper -- see its docstring.
-        def extra(books: list[EpubBook]) -> MenuItems:
-            items: MenuItems = []
-            if len(books) == 1 and not books[0].load_error:
-                # Reuses the actual File-menu QAction (F2) rather than
-                # building a fresh one -- same object, so this shows the
-                # real shortcut hint and can never drift out of sync
-                # with it. Only offered for a single book -- renaming
-                # several to the same name doesn't make sense. Distinct
-                # from "Rename Files…" just below (the pattern-based
-                # batch tool) -- this is the quick, direct fix for one
-                # typo at a time.
-                items.append(self.rename_file_act)
-            items.append(Separator())
-            items.append(self.rename_files_act)
-            items.append(self.save_act)
-            items.append(Separator())
-            items.append(self.remove_files_act)
-            items.append(self.delete_files_act)
-            items.append(Separator())
-            items.append(MenuAction("validate", "Validate / Fix Issues…", self.open_validation_dialog))
-            # Every lookup source from the Import menu, in one place.
-            items.append(Submenu("Look Up", [
-                MenuAction("google_books_lookup", "Google Books…", self.open_google_books_dialog),
-                MenuAction("open_library_lookup", "Open Library…", self.open_open_library_dialog),
-                MenuAction("calibre_lookup", "Calibre…", self.open_calibre_lookup_dialog),
-            ]))
-            items.append(MenuAction("polish_book", "Polish Book…", self.open_polish_book_dialog))
-            items.append(MenuAction("number_series", "Number Series…", self.quick_number_series))
-            books_with_covers = [b for b in books if b.cover_hash is not None]
-            if any(not self._book_is_junk_cover(b) for b in books_with_covers):
-                items.append(MenuAction(
-                    "flag_junk_cover", "Flag Cover as Junk",
-                    self.flag_selected_covers_as_junk,
-                ))
-            if any(self._book_is_junk_cover(b) for b in books_with_covers):
-                items.append(MenuAction(
-                    "unflag_junk_cover", "Unflag Cover as Junk",
-                    self.unflag_selected_covers_as_junk,
-                ))
-            items.append(Separator())
-            items.append(MenuAction("open_sigil", "Open with Sigil…", self.open_in_sigil))
-            items.append(Separator())
-            items.append(MenuAction("send_kobo", "Send to Kobo (USB)…", self.open_send_to_kobo_dialog))
-            items.append(MenuAction(
-                "send_ereader", "Send to eReader (Wireless)…", self.open_send_to_ereader_dialog
-            ))
-            return items
-
         show_table_context_menu(
             self, self.table, pos,
             get_selected_items=self._currently_selected_books,
             get_path=lambda book: book.path,
-            extra_items=extra,
+            extra_items=self._context_menu_items,
         )
 
     # ------------------------------------------------------------------

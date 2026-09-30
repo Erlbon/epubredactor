@@ -34,14 +34,14 @@ def _window(tmp_path, monkeypatch, *paths):
     return window, env, trash, shown
 
 
-def test_redact_is_in_the_operations_menu_and_the_toolbar():
+def test_redact_is_in_the_edit_menu_and_the_toolbar():
     window = mw.MainWindow()
     assert window.redact_act.shortcut().toString() == "Ctrl+Shift+E"
     toolbar_actions = [a for bar in window.findChildren(QToolBar) for a in bar.actions()]
     assert window.redact_act in toolbar_actions
-    operations = next(a.menu() for a in window.menuBar().actions() if a.text() == "&Operations")
-    texts = [a.text() for a in operations.actions()]
-    assert "Re&dact" in texts and "Edit Redact Reci&pe…" in texts
+    edit = next(a.menu() for a in window.menuBar().actions() if a.text() == "&Edit")
+    texts = [a.text() for a in edit.actions()]
+    assert "Redac&t" in texts and "&Edit Redact Recipe…" in texts
 
 
 def test_nothing_selected_asks_then_redacts_all_and_reloads(tmp_path, monkeypatch):

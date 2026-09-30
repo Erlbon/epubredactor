@@ -4,6 +4,31 @@ All notable changes to The ƎPUB Redactor, by version. Trimmed to new
 functionality and real fixes — cosmetic/UX-only adjustments aren't
 listed here.
 
+## 2026-09-30#11 -- New menu structure
+
+- The menu bar now follows the shared Redactor skeleton: File, Edit, View,
+  Metadata, Repair, Send, Tools, Help. Only the mouse paths changed; every
+  keyboard shortcut is the same as before. Where things went:
+  - Operations is gone: Undo/Redo, Apply, Redact, Edit Redact Recipe,
+    Search and Replace and Change Case are under Edit; Number Series, Convert
+    Author Sort and the cover tools (Cover submenu) under Metadata; Polish
+    Book and Compress Images under Repair.
+  - Import is gone: Parse Filename, Scan File Content and Suggest Genres are
+    under Metadata, the three online sources in Metadata > Look Up (Google
+    Books, Open Library, Calibre), Import to EPUB is File > Import and
+    Convert.
+  - Settings is gone: Columns, Genres, Languages, Blank Language Default and
+    the performance-log entries are under Tools; Text Wrapping is under View.
+  - Kobo is now Send (Send to Kobo, Send to eReader, and Open in Sigil, which
+    used to be right-click only). Refresh List moved from File to View.
+- "Save Files" is now called Save All: it always saved every changed book.
+  The flag/unflag junk-cover commands also appear in Metadata > Cover.
+- New: View > Show Metadata Panel (mirrors the toolbar's Panel button), Reset
+  Zoom (Ctrl+0), Edit > Filter List (Ctrl+F, focuses the filter box).
+- Shorter right-click menu: Look Up, Organize, Cover and Send to submenus;
+  Save and Polish Book left it (Polish Book stays in Repair).
+- The toolbar's Redact button is bold. Uses redactor_common 2026-09-30-13.
+
 ## 2026-09-30#10 -- Redact pattern trail
 
 - A saved Redact recipe now keeps the rename / move / folder-path pattern
