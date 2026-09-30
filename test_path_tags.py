@@ -186,9 +186,12 @@ def test_step_is_in_the_catalogue_on_by_default_and_before_the_scans():
     assert keys.index("path_tags") < keys.index("scan_isbn") < keys.index("metadata_lookup")
     plain = Recipe.default_for(cat)
     assert plain.enabled["path_tags"] is True
-    assert plain.options["path_tags"]["pattern"] == "%authors%/%series%/%title%"
-    saved = Recipe.default_for(build_catalogue("%title%", "Author - %authors%/%title%"))
-    assert saved.options["path_tags"]["pattern"] == "Author - %authors%/%title%"
+    # the stored pattern is empty (= follow the fallback, see test_redact_pattern_trail.py)
+    assert plain.options["path_tags"]["pattern"] == ""
+    spec = next(s for s in cat if s.key == "path_tags").options[0]
+    assert spec.fallback() == "%authors%/%series%/%title%"
+    saved_cat = build_catalogue("%title%", "Author - %authors%/%title%")
+    assert next(s for s in saved_cat if s.key == "path_tags").options[0].fallback() == "Author - %authors%/%title%"
 
 
 def test_high_confidence_folder_match_fills_empty_fields_and_saves(tmp_path, env, trash):

@@ -4,6 +4,19 @@ All notable changes to The ƎPUB Redactor, by version. Trimmed to new
 functionality and real fixes — cosmetic/UX-only adjustments aren't
 listed here.
 
+## 2026-09-30#10 -- Redact pattern trail
+
+- A saved Redact recipe now keeps the rename / move / folder-path pattern
+  that was saved in it: later changes to Rename/Export no longer steer
+  Redact, and the recipe never has to be recreated. An empty pattern still
+  follows the app's most recent one. The first time Edit Redact Recipe is
+  opened (nothing saved yet) the current patterns are filled in, so OK pins
+  them; "Use fallback" unpins a step again.
+- The recipe editor shows each pattern as an editable drop-down of recent
+  patterns, a caption "In effect: ... -- set in this recipe / follows: ...",
+  and a preview on the first loaded book (or a built-in sample).
+- Uses redactor_common 2026-09-30-12.
+
 ## 2026-09-30#09 -- Metadata from the folder path
 
 - Parse Filename -> Metadata now reads folders too: a pattern with "/" in

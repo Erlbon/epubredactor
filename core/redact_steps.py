@@ -52,7 +52,7 @@ from dataclasses import dataclass, field
 from typing import Any, Callable, Iterable
 
 from redactor_common.core import rename_pattern as shared_rename
-from redactor_common.core.move_plan import execute_move, plan_moves
+from redactor_common.core.move_plan import execute_move, plan_moves, render_relative_path
 from redactor_common.core.os_utils import rename_no_clobber
 from redactor_common.core.path_parser import is_path_pattern
 from redactor_common.core.pipeline import (
@@ -64,6 +64,7 @@ from redactor_common.core.pipeline import (
     StepResult,
     StepStatus,
     commit_in_place,
+    effective_option_source,
 )
 from redactor_common.core.trash import move_to_trash
 
@@ -889,6 +890,73 @@ class CoverStep(Step):
 
 DEFAULT_PATH_PATTERN = "%authors%/%series%/%title%"
 
+# Pattern trail (redactor_common 2026-09-30-12): a recipe keeps the pattern
+# that was saved in it; an EMPTY stored pattern follows the app's current
+# one. So every pattern option's spec default is "" and the app's pattern
+# is its `fallback`; resolve with effective_option_source(), never
+# options_for() alone.
+SAMPLE_VALUES = {
+    "title": "The Long Way Home", "authors": "Jane Author", "series": "Sample Saga",
+    "series_index": "2", "year": "2019", "publisher": "Example Press",
+}
+
+
+def _sample_values(sample: Callable[[], dict[str, str] | None] | None) -> dict[str, str]:
+    """The first loaded book's placeholder values when the app gives
+    them, else a built-in sample; never raises."""
+    try:
+        values = sample() if sample is not None else None
+    except Exception:  # noqa: BLE001 - a preview must never break the editor
+        values = None
+    return values if values else dict(SAMPLE_VALUES)
+
+
+def _pattern_spec(
+    tooltip: str, fallback: Callable[[], str], label: str, history: Callable[[], list[str]] | None,
+    sample: Callable[[], dict[str, str] | None] | None, as_path: bool,
+) -> OptionSpec:
+    def preview(pattern: str) -> str:
+        try:
+            values = _sample_values(sample)
+            if as_path:
+                return "/".join(render_relative_path(values, pattern)) + ".epub"
+            return shared_rename.render_filename(values, pattern) + ".epub"
+        except Exception:  # noqa: BLE001
+            return ""
+
+    return OptionSpec(
+        "pattern", "Pattern", "str", "", max_length=300, tooltip=tooltip,
+        suggestions=history if history is not None else (lambda: []),
+        fallback=fallback, fallback_label=label, preview=preview,
+    )
+
+
+def _effective_pattern(step: Step, ctx: EpubCtx) -> str:
+    """The pattern this step runs with: the recipe's stored one, or the
+    fallback while it is empty."""
+    value, _source = effective_option_source(step.options[0], step.options_for(ctx)["pattern"])
+    return value.strip()
+
+
+def pin_pattern_options(recipe: Recipe, catalogue: list[Step]) -> Recipe:
+    """First-save pinning: a copy of `recipe` where every EMPTY pattern
+    option holds its current effective value, so saving the recipe keeps
+    today's patterns instead of following later changes."""
+    options = {k: dict(v) for k, v in recipe.options.items()}
+    for step in catalogue:
+        for spec in step.options:
+            if spec.kind != "str" or spec.fallback is None:
+                continue
+            current = options.setdefault(step.key, {})
+            if not current.get(spec.key):
+                pinned, _source = effective_option_source(spec, "")
+                if pinned:
+                    current[spec.key] = pinned
+    return Recipe(
+        order=list(recipe.order), enabled=dict(recipe.enabled), options=options,
+        confidence_threshold=recipe.confidence_threshold,
+    )
+
 
 def _is_under(path: str, root: str) -> bool:
     try:
@@ -907,18 +975,21 @@ class PathTagsStep(Step):
         "root and a file under it. Applied at or above the confidence threshold, else listed for review."
     )
 
-    def __init__(self, pattern: str = "", default_enabled: bool | None = None):
-        # The default pattern is the most recent saved PATH pattern.
+    def __init__(self, pattern: str = "", default_enabled: bool | None = None, history=None, sample=None):
+        # While the recipe's pattern is empty it follows the most recent
+        # saved PATH pattern (else the built-in one).
         self.options = (
-            OptionSpec(
-                "pattern", "Pattern", "str", pattern or DEFAULT_PATH_PATTERN, max_length=300,
-                tooltip="Folders and file name under the library root, e.g. %authors%/%series%/%title%",
+            _pattern_spec(
+                "Folders and file name under the library root, e.g. %authors%/%series%/%title%",
+                lambda: pattern or DEFAULT_PATH_PATTERN,
+                "the last folder pattern used in Rename/Export" if pattern else "the built-in folder pattern",
+                history, sample, as_path=True,
             ),
         )
         super().__init__(default_enabled=True if default_enabled is None else default_enabled)
 
     def run(self, ctx: EpubCtx) -> StepResult:
-        pattern = self.options_for(ctx)["pattern"].strip()
+        pattern = _effective_pattern(self, ctx)
         env = ctx.env
         if not is_path_pattern(pattern):
             return StepResult.nothing(note="the folder pattern needs a / between folder and file name parts")
@@ -976,16 +1047,19 @@ class RenameStep(Step):
     description = "Renames the finished file by the pattern below (File > Rename Files (Pattern)). Undo with File > Undo Last Rename."
     position = "last"
 
-    def __init__(self, pattern: str = "", default_enabled: bool | None = None):
-        # Off unless the user has used a rename pattern before; the
-        # default pattern is the most recent one.
+    def __init__(self, pattern: str = "", default_enabled: bool | None = None, history=None, sample=None):
+        # Off unless the user has used a rename pattern before; while the
+        # recipe's pattern is empty it follows the most recent one.
         self.options = (
-            OptionSpec("pattern", "Pattern", "str", pattern, max_length=300, tooltip="%title%, %authors%, %series% ..."),
+            _pattern_spec(
+                "%title%, %authors%, %series% ...", lambda: pattern, "the last Rename/Export pattern",
+                history, sample, as_path=False,
+            ),
         )
         super().__init__(default_enabled=bool(pattern) if default_enabled is None else default_enabled)
 
     def run(self, ctx: EpubCtx) -> StepResult:
-        pattern = self.options_for(ctx)["pattern"].strip()
+        pattern = _effective_pattern(self, ctx)
         if not pattern:
             return StepResult.nothing(note="no rename pattern is set")
         if not ctx.ensure_saved():
@@ -1016,15 +1090,22 @@ class MoveIntoFoldersStep(Step):
     )
     position = "last"
     default_enabled = False
-    options = (
-        OptionSpec(
-            "pattern", "Pattern", "str", "%authors%/%series%/%title%", max_length=300,
-            tooltip="Folders and file name under the library root, e.g. %authors%/%series%/%title%",
-        ),
-    )
+
+    def __init__(self, pattern: str = "", default_enabled: bool | None = None, history=None, sample=None):
+        # While the recipe's pattern is empty it follows the most recent
+        # saved folder pattern (else the built-in one).
+        self.options = (
+            _pattern_spec(
+                "Folders and file name under the library root, e.g. %authors%/%series%/%title%",
+                lambda: pattern or DEFAULT_PATH_PATTERN,
+                "the last folder pattern used in Rename/Export" if pattern else "the built-in folder pattern",
+                history, sample, as_path=True,
+            ),
+        )
+        super().__init__(default_enabled=False if default_enabled is None else default_enabled)
 
     def run(self, ctx: EpubCtx) -> StepResult:
-        pattern = self.options_for(ctx)["pattern"].strip()
+        pattern = _effective_pattern(self, ctx)
         env = ctx.env
         if not pattern:
             return StepResult.nothing(note="no move pattern is set")
@@ -1060,12 +1141,17 @@ class MoveIntoFoldersStep(Step):
 # --- catalogue and recipe storage ---------------------------------------------
 
 
-def build_catalogue(rename_pattern: str = "", path_pattern: str = "") -> list[Step]:
+def build_catalogue(
+    rename_pattern: str = "", path_pattern: str = "", history: Callable[[], list[str]] | None = None,
+    sample: Callable[[], dict[str, str] | None] | None = None,
+) -> list[Step]:
     """The steps the recipe editor offers, in default order.
     `rename_pattern` (the most recent saved one) is the Rename step's
-    default and turns it on. `path_pattern` (the most recent saved
-    pattern with a / in it) is the folder-path step's default. The
-    folder-path and scan steps come before the online lookups so what
+    fallback and turns it on. `path_pattern` (the most recent saved
+    pattern with a / in it) is the folder-path steps' fallback while the
+    recipe's pattern is empty. `history` (pattern history, newest first)
+    and `sample` (first loaded book's placeholder values) feed the editor's
+    pattern trail. The folder-path and scan steps come before the online lookups so what
     they find can feed them."""
     return [
         ValidateFixStep(),
@@ -1075,15 +1161,15 @@ def build_catalogue(rename_pattern: str = "", path_pattern: str = "") -> list[St
         GenerateTocStep(),
         StripDescriptionHtmlStep(),
         LanguageStep(),
-        PathTagsStep(path_pattern),
+        PathTagsStep(path_pattern, history=history, sample=sample),
         ScanIsbnStep(),
         ScanPublisherStep(),
         ScanYearStep(),
         ScanSeriesStep(),
         MetadataLookupStep(),
         CoverStep(),
-        RenameStep(rename_pattern),
-        MoveIntoFoldersStep(),
+        RenameStep(rename_pattern, history=history, sample=sample),
+        MoveIntoFoldersStep(path_pattern, history=history, sample=sample),
     ]
 
 

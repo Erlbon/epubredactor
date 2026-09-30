@@ -548,7 +548,7 @@ def test_defaults_rename_on_only_with_a_pattern_and_move_off():
     assert plain.enabled["rename"] is False and plain.enabled["move_into_folders"] is False
     with_pattern = Recipe.default_for(build_catalogue("%authors% - %title%"))
     assert with_pattern.enabled["rename"] is True
-    assert with_pattern.options["rename"]["pattern"] == "%authors% - %title%"
+    assert with_pattern.options["rename"]["pattern"] == ""  # empty = follows the app's pattern (the fallback)
     assert with_pattern.enabled["repair_navigation"] and with_pattern.options["repair_navigation"]["remove_orphans"] is False
     assert plain.confidence_threshold == 0.9
     for key in ("validate_fix", "dedupe_manifest_ids", "rebuild_manifest", "generate_toc", "language",

@@ -132,6 +132,7 @@ from core.redact_steps import (
     EpubCtx,
     RedactEnv,
     build_catalogue,
+    pin_pattern_options,
     recipe_for_run,
     recipe_from_setting,
     recipe_to_setting,
@@ -2793,8 +2794,26 @@ class MainWindow(QMainWindow):
         _names, paths = split_pattern_history(app_settings.load_pattern_history())
         return paths[0] if paths else ""
 
+    @staticmethod
+    def _pattern_trail() -> list[str]:
+        """The pattern history for the recipe editor's pattern trail,
+        newest first (filename patterns, then folder patterns)."""
+        names, paths = split_pattern_history(app_settings.load_pattern_history())
+        return names + paths
+
+    def _sample_placeholder_values(self) -> dict[str, str] | None:
+        """The first loaded book's placeholder values for the editor's
+        pattern previews (None -> the built-in sample)."""
+        for book in self.books:
+            if not book.load_error and book.metadata.title:
+                return placeholder_values(book.metadata)
+        return None
+
     def _redact_catalogue(self):
-        return build_catalogue(self._last_rename_pattern(), self._last_path_pattern())
+        return build_catalogue(
+            self._last_rename_pattern(), self._last_path_pattern(),
+            history=self._pattern_trail, sample=self._sample_placeholder_values,
+        )
 
     def _redact_recipe(self):
         return recipe_from_setting(app_settings.load_redact_recipe(), self._redact_catalogue())
@@ -2802,7 +2821,13 @@ class MainWindow(QMainWindow):
     def edit_redact_recipe(self) -> None:
         """Operations > Edit Redact Recipe...: the shared recipe editor over
         this app's steps; the result is stored in the settings file."""
-        dialog = RecipeEditorDialog(self._redact_catalogue(), self._redact_recipe(), self)
+        catalogue = self._redact_catalogue()
+        recipe = self._redact_recipe()
+        if not app_settings.load_redact_recipe().strip():
+            # Never saved: show today's patterns filled in, so OK pins them
+            # (later Rename/Export changes then don't steer Redact).
+            recipe = pin_pattern_options(recipe, catalogue)
+        dialog = RecipeEditorDialog(catalogue, recipe, self)
         if dialog.exec() == dialog.DialogCode.Accepted:
             app_settings.save_redact_recipe(recipe_to_setting(dialog.recipe()))
 
