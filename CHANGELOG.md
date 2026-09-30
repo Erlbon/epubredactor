@@ -4,6 +4,24 @@ All notable changes to The ƎPUB Redactor, by version. Trimmed to new
 functionality and real fixes — cosmetic/UX-only adjustments aren't
 listed here.
 
+## 2026-09-30#03 -- Batch operations that can't be derailed
+
+- Rename/Export by Pattern, Search & Replace on filenames, Delete Files
+  and Generate Cover now show a progress dialog (with Cancel) on larger
+  selections, and one failing book no longer aborts the rest of a rename
+  or export batch.
+- Save As Copy no longer overwrites a copy when two books share a file
+  name (from different folders): the second gets " (2)".
+- Refresh List survives a file that can't be reopened (it keeps the
+  previous entry), and removing/deleting many books at once is fast.
+- Files that fail to load are described accurately: only the ones that
+  stay in the list are "highlighted in red".
+- Books already loaded are recognised regardless of path case or
+  slashes; Generate/Replace Cover warns about books whose cover is
+  DRM-encrypted; a non-http(s) server address is no longer opened in
+  the browser; a convert failure (including a file-name collision
+  error) is reported per file instead of aborting the batch.
+
 ## 2026-09-30#02 -- Safer saving and loading
 
 - Books whose manifest uses percent-encoded file names (`ch%201.xhtml`,

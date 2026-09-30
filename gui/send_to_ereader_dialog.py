@@ -22,6 +22,7 @@ from __future__ import annotations
 
 import os
 import webbrowser
+from urllib.parse import urlparse
 
 from PyQt6.QtWidgets import (
     QComboBox,
@@ -143,5 +144,14 @@ class SendToEreaderDialog(QDialog):
             QMessageBox.information(self, "No book selected", "Select a book to send first.")
             return
 
-        webbrowser.open(server)
+        # Only a web address: the server text is user-entered and could be
+        # a file:// path or another scheme handler.
+        if urlparse(server).scheme.lower() in ("http", "https"):
+            webbrowser.open(server)
+        else:
+            QMessageBox.information(
+                self, "Not a web address",
+                "The server must be an http:// or https:// address to open in the browser.",
+            )
+            return
         reveal_in_file_manager(self.books[row].path)

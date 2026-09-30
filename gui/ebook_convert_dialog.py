@@ -159,12 +159,12 @@ class EbookConvertDialog(QDialog):
         def _step(source: str, _index: int) -> None:
             directory = os.path.dirname(source)
             stem = os.path.splitext(os.path.basename(source))[0]
-            output_path = unique_path(directory, stem, ".epub", taken)
             try:
+                output_path = unique_path(directory, stem, ".epub", taken)
                 convert_to_epub(self._tool_path, source, output_path)
                 succeeded.append(output_path)
                 taken.add(os.path.normcase(os.path.abspath(output_path)))
-            except EbookConvertError as exc:
+            except (EbookConvertError, OSError) as exc:
                 errors.append(f"{os.path.basename(source)}: {exc}")
 
         run_with_progress(

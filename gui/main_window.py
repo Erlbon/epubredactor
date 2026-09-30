@@ -67,7 +67,7 @@ from core import perf_log
 from core.languages import is_blank_or_unknown_language
 from core.rename_pattern import DEFAULT_PATTERN, PLACEHOLDERS, placeholder_values, unique_path
 from core.sigil_tools import DOWNLOAD_URL as SIGIL_DOWNLOAD_URL
-from core.sigil_tools import SigilLaunchError, find_sigil
+from core.sigil_tools import SigilLaunchError, find_sigil, sigil_file_filter
 from core.sigil_tools import open_in_sigil as launch_sigil
 from core.version import APP_NAME, APP_REPO_URL, APP_VERSION, RELEASE_LABEL
 from redactor_common.core.error_summary import summarize_errors
@@ -946,7 +946,7 @@ class MainWindow(QMainWindow):
             webbrowser.open(SIGIL_DOWNLOAD_URL)
 
     def _browse_for_sigil(self, books: list[EpubBook]) -> None:
-        path, _ = QFileDialog.getOpenFileName(self, "Locate Sigil", "", "Sigil (sigil.exe)")
+        path, _ = QFileDialog.getOpenFileName(self, "Locate Sigil", "", sigil_file_filter())
         if not path:
             return
         app_settings.save_sigil_path(path)
@@ -1284,13 +1284,23 @@ class MainWindow(QMainWindow):
         # doesn't normalize, so the Path column would otherwise show a
         # mix of slash styles instead of native backslashes.
         paths = [os.path.normpath(p) for p in paths]
-        already_loaded = {b.path for b in self.books}
-        new_paths = [p for p in paths if p not in already_loaded]
+        # Compared case/abspath-normalized, like unique_path() does: on
+        # Windows C:\Books\a.epub and c:\books\A.EPUB are one file.
+        def _key(p: str) -> str:
+            return os.path.normcase(os.path.abspath(p))
+
+        already_loaded = {_key(b.path) for b in self.books}
+        new_paths = []
+        for p in paths:
+            if _key(p) not in already_loaded:
+                already_loaded.add(_key(p))  # the same file twice in one drop/selection
+                new_paths.append(p)
         if not new_paths:
             return
 
         added = 0
         failed = []
+        dropped_paths: list[str] = []  # raised during load, so never added to the table
 
         def _step(path: str, _index: int) -> None:
             nonlocal added
@@ -1304,6 +1314,7 @@ class MainWindow(QMainWindow):
                 # yet anticipate, so one file can't crash loading for
                 # every other file in the same batch.
                 failed.append((path, traceback.format_exc(limit=2)))
+                dropped_paths.append(path)
                 return
             self.books.append(book)
             if book.load_error:
@@ -1320,11 +1331,18 @@ class MainWindow(QMainWindow):
             self._rebuild_table()
         if failed:
             details = "\n".join(f"- {os.path.basename(p)}: {err}" for p, err in failed)
+            in_table = len(failed) - len(dropped_paths)
+            parts = []
+            if in_table:
+                parts.append(f"{in_table} file(s) could not be read as valid EPUBs and are "
+                             f"shown highlighted in red. They will be skipped on save.")
+            if dropped_paths:
+                parts.append(f"{len(dropped_paths)} file(s) failed so badly they were not "
+                             f"added to the list at all.")
             QMessageBox.warning(
                 self,
                 "Some files failed to load",
-                f"{len(failed)} file(s) could not be read as valid EPUBs and are "
-                f"shown highlighted in red. They will be skipped on save.\n\n{details}",
+                " ".join(parts) + f"\n\n{details}",
             )
         self._refresh_status()
 
@@ -1962,7 +1980,10 @@ class MainWindow(QMainWindow):
         errors: list[tuple[str, str]] = []
         succeeded = 0
         renamed: list[tuple[str, str]] = []
-        for i, new_filename in changes.items():
+
+        def _rename(item: tuple[int, str], _n: int) -> None:
+            nonlocal succeeded
+            i, new_filename = item
             book = books[i]
             try:
                 stem, ext = os.path.splitext(new_filename)
@@ -1976,6 +1997,11 @@ class MainWindow(QMainWindow):
                 succeeded += 1
             except OSError as exc:
                 errors.append((book.path, str(exc)))
+
+        run_with_progress(
+            self, list(changes.items()), _rename, "Renaming files…", threshold=LOAD_PROGRESS_THRESHOLD,
+            label_for=lambda item: f"Renaming: {os.path.basename(books[item[0]].path)}",
+        )
         _rename_log().record("Search/Replace (filename)", renamed)
 
         self._rebuild_table()
@@ -2015,9 +2041,9 @@ class MainWindow(QMainWindow):
         mime = mimetypes.guess_type(path)[0] or "image/jpeg"
 
         self._push_undo("Change cover", books)
-        for book in books:
-            book.set_cover(image_bytes, mime)
+        skipped = [b for b in books if not b.set_cover(image_bytes, mime)]
         self._refresh_affected_rows(books)
+        self._warn_drm_covers_skipped(skipped)
 
     def on_cover_generate(self) -> None:
         """The panel's own "Generate" button -- applies directly to the
@@ -2034,11 +2060,35 @@ class MainWindow(QMainWindow):
             )
             return
         self._push_undo("Generate cover from metadata", books)
-        for book in books:
+        drm_skipped: list[EpubBook] = []
+
+        def _generate(book: EpubBook, _i: int) -> None:
             m = book.metadata
             image_bytes = generate_cover_image(m.title, m.authors_str, m.series, m.series_index)
-            book.set_cover(image_bytes, "image/png")
+            if not book.set_cover(image_bytes, "image/png"):
+                drm_skipped.append(book)
+
+        # Cancellable: books already done keep their new cover (and the
+        # one Undo entry covers them all, unchanged ones included).
+        run_with_progress(
+            self, books, _generate, "Generating covers…", threshold=LOAD_PROGRESS_THRESHOLD,
+            label_for=lambda book: f"Generating: {os.path.basename(book.path)}",
+        )
         self._refresh_affected_rows(books)
+        self._warn_drm_covers_skipped(drm_skipped)
+
+    def _warn_drm_covers_skipped(self, books: list[EpubBook]) -> None:
+        """Books whose cover file is DRM-encrypted are left alone by
+        EpubBook.set_cover(); tell the user which ones."""
+        if not books:
+            return
+        names = "\n".join(f"- {os.path.basename(b.path)}" for b in books[:10])
+        more = f"\n...and {len(books) - 10} more" if len(books) > 10 else ""
+        QMessageBox.warning(
+            self, "Cover not changed",
+            f"{len(books)} book(s) have a DRM-encrypted cover image, which can't be replaced "
+            f"without corrupting it, so they were left as they are:\n\n{names}{more}",
+        )
 
     def on_cover_delete(self) -> None:
         books = self._currently_selected_books()
@@ -2264,7 +2314,8 @@ class MainWindow(QMainWindow):
         to_remove = self._books_for_rows(self._selected_rows(), exclude_errors=False)
         if not to_remove:
             return
-        self.books = [b for b in self.books if b not in to_remove]
+        remove_ids = {id(b) for b in to_remove}  # O(N), not O(N*M)
+        self.books = [b for b in self.books if id(b) not in remove_ids]
         self._rebuild_table()
         self._refresh_status()
 
@@ -2311,14 +2362,23 @@ class MainWindow(QMainWindow):
 
         deleted: list[EpubBook] = []
         errors: list[tuple[str, str]] = []
-        for book in to_delete:
+
+        def _trash(book: EpubBook, _i: int) -> None:
             try:
                 move_to_trash(book.path)  # redactor_common's shared Recycle Bin helper
                 deleted.append(book)
             except TrashError as exc:
                 errors.append((book.path, str(exc)))
 
-        self.books = [b for b in self.books if b not in deleted]
+        # Cancellable: each file is trashed independently, so stopping
+        # partway leaves the rest untouched and in the list.
+        run_with_progress(
+            self, to_delete, _trash, "Deleting files…", threshold=LOAD_PROGRESS_THRESHOLD,
+            label_for=lambda book: f"Deleting: {os.path.basename(book.path)}",
+        )
+
+        deleted_ids = {id(b) for b in deleted}
+        self.books = [b for b in self.books if id(b) not in deleted_ids]
         self._rebuild_table()
         self._refresh_status()
 
@@ -2370,8 +2430,20 @@ class MainWindow(QMainWindow):
         # large library froze the window. Not cancellable: the old list
         # is being replaced, so stopping halfway would drop books.
         reloaded: list[EpubBook] = []
+        old_by_path = {os.path.normpath(b.path): b for b in self.books}
+
+        def _reload(path: str, _i: int) -> None:
+            try:
+                reloaded.append(EpubBook(path))
+            except Exception:  # noqa: BLE001 - one bad file must not abort the refresh
+                # Keep the previous object for a file that was already in
+                # the list; a brand-new file that can't even be opened is skipped.
+                old = old_by_path.get(path)
+                if old is not None:
+                    reloaded.append(old)
+
         run_with_progress(
-            self, existing_paths + new_paths, lambda path, _i: reloaded.append(EpubBook(path)),
+            self, existing_paths + new_paths, _reload,
             "Refreshing...", threshold=3, cancellable=False,
             label_for=lambda path: f"Loading: {os.path.basename(path)}",
         )
@@ -2477,11 +2549,16 @@ class MainWindow(QMainWindow):
 
     def _save_books(self, books: list[EpubBook], output_folder: str | None) -> list[tuple[str, str]]:
         errors: list[tuple[str, str]] = []
+        taken: set[str] = set()  # copies already claimed in output_folder this run
 
         def _step(book: EpubBook, _index: int) -> None:
             try:
                 if output_folder:
-                    out_path = os.path.join(output_folder, os.path.basename(book.path))
+                    # Same basename from different subfolders (or an
+                    # existing file there) gets " (2)" instead of overwriting.
+                    stem, ext = os.path.splitext(os.path.basename(book.path))
+                    out_path = unique_path(output_folder, stem, ext, taken)
+                    taken.add(os.path.normcase(os.path.abspath(out_path)))
                     book.save(out_path)
                     # Save As Copy doesn't touch this book's own file, so
                     # a past save_error here (from an earlier in-place
@@ -2593,14 +2670,17 @@ class MainWindow(QMainWindow):
         errors: list[str] = []
         succeeded = 0
         renamed: list[tuple[str, str]] = []
-        for book, old_path, new_path in planned:
+
+        def _step(item: tuple[EpubBook, str, str], _i: int) -> None:
+            nonlocal succeeded
+            book, old_path, new_path = item
             try:
                 if export:
                     book.save(new_path)
                 else:
                     if os.path.normcase(os.path.abspath(old_path)) == os.path.normcase(os.path.abspath(new_path)):
                         succeeded += 1
-                        continue
+                        return
                     if book.dirty:
                         book.save()  # embed current metadata before renaming
                     previous = book.path
@@ -2610,6 +2690,14 @@ class MainWindow(QMainWindow):
                 succeeded += 1
             except (EpubError, OSError) as exc:
                 errors.append(f"{os.path.basename(old_path)}: {exc}")
+            except Exception:  # noqa: BLE001 - one bad book must not abort the batch (as in _save_books)
+                errors.append(f"{os.path.basename(old_path)}: {traceback.format_exc(limit=2)}")
+
+        run_with_progress(
+            self, planned, _step, "Exporting books…" if export else "Renaming books…",
+            threshold=LOAD_PROGRESS_THRESHOLD,
+            label_for=lambda item: f"{'Exporting' if export else 'Renaming'}: {os.path.basename(item[1])}",
+        )
         _rename_log().record("Rename by Pattern", renamed)
 
         self._rebuild_table()
