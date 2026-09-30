@@ -49,7 +49,7 @@ import posixpath
 import re
 import uuid
 import zipfile
-from urllib.parse import unquote
+from urllib.parse import quote, unquote
 from dataclasses import dataclass, field
 from typing import Optional
 
@@ -304,6 +304,17 @@ class EpubBook:
         # (see Operations -> Compress Images (Lossy)), applied on the next
         # save() the same way cover_changed is.
         self._image_replacements: dict[str, bytes] = {}
+
+        # Generated table of contents (see Repair -> Generate Table of
+        # Contents and core/toc_generate.py): {"nav"/"ncx": (archive_path,
+        # bytes)}. The files go into the zip on the next save(); the
+        # matching manifest items + <spine toc> are added to the OPF tree
+        # at that same moment (_write_toc), like a new cover, so the tree
+        # never lists files the archive doesn't hold yet.
+        # _toc_in_tree remembers that step already ran (a Save As Copy
+        # mutates the tree; a later in-place save must not add them twice).
+        self._toc_files: dict[str, tuple[str, bytes]] = {}
+        self._toc_in_tree = False
 
         # Validation state, recomputed on load and after apply_fixes().
         self.validation_issues: list[ValidationIssue] = []
@@ -715,9 +726,12 @@ class EpubBook:
         # --- table of contents present (either flavor)
         has_nav = any("nav" in (item.get("properties") or "").split() for item in manifest_items)
         has_ncx = spine is not None and bool(spine.get("toc"))
-        if not has_nav and not has_ncx:
+        if not has_nav and not has_ncx and not self._toc_files:
             issues.append(ValidationIssue(
-                "NO_TOC", SEVERITY_WARNING, "No table of contents (nav or NCX) found.", fixable=False
+                "NO_TOC", SEVERITY_WARNING,
+                "No table of contents (nav or NCX) found. Use Repair → Generate Table of "
+                "Contents to build one from the book's headings.",
+                fixable=False,
             ))
 
         # --- DRM detection (detection only -- this tool will never
@@ -1200,6 +1214,9 @@ class EpubBook:
         doesn't exist in the archive."""
         if archive_path in self._image_replacements:
             return self._image_replacements[archive_path]
+        for staged_path, staged_bytes in self._toc_files.values():
+            if staged_path == archive_path:
+                return staged_bytes
         try:
             with zipfile.ZipFile(self.path, "r") as zf:
                 return zf.read(archive_path)
@@ -1211,6 +1228,17 @@ class EpubBook:
         next save(). Marks the book dirty."""
         self._image_replacements[archive_path] = new_bytes
         self.dirty = True
+
+    def stage_generated_toc(self, files: dict[str, tuple[str, bytes]]) -> None:
+        """Stages generated TOC documents ({"nav"/"ncx": (archive_path,
+        bytes)}; see core/toc_generate.py) to be added to the archive,
+        and to the manifest/spine, on the next save(). Marks the book
+        dirty and clears its NO_TOC warning right away. Not pushed to
+        Undo, same convention as the other structural repairs."""
+        self._toc_files = dict(files)
+        self._toc_in_tree = False
+        self.dirty = True
+        self.revalidate()
 
     # ------------------------------------------------------------------
     # Writing metadata back into the in-memory OPF tree
@@ -1358,6 +1386,7 @@ class EpubBook:
 
         self._write_isbn(md)
         self._write_cover(md, file_ops)
+        self._write_toc(md, file_ops)
         file_ops["remove"].update(self._orphan_files_to_remove)
         file_ops["add"].update(self._image_replacements)
 
@@ -1467,6 +1496,55 @@ class EpubBook:
 
         file_ops["add"][archive_path] = self.cover_bytes
 
+    def _write_toc(self, md: etree._Element, file_ops: dict) -> None:
+        """Adds the staged generated TOC documents to file_ops and, the
+        first time, to the manifest (nav with properties="nav", NCX) and
+        the spine's toc attribute. Hrefs are written percent-encoded,
+        relative to the OPF. A no-op when nothing is staged."""
+        if not self._toc_files:
+            return
+        for archive_path, data in self._toc_files.values():
+            file_ops["add"][archive_path] = data
+        if self._toc_in_tree:
+            return
+
+        manifest = self._manifest_el()
+        if manifest is None:
+            return
+        opf_dir = posixpath.dirname(self.opf_path)
+        existing_ids = {e.get("id") for e in md.iter() if e.get("id")}
+        existing_ids.update(e.get("id") for e in manifest.iter() if e.get("id"))
+
+        def unique_id(base: str) -> str:
+            candidate, n = base, 2
+            while candidate in existing_ids:
+                candidate = f"{base}-{n}"
+                n += 1
+            existing_ids.add(candidate)
+            return candidate
+
+        ncx_id = ""
+        for kind in ("nav", "ncx"):
+            if kind not in self._toc_files:
+                continue
+            archive_path = self._toc_files[kind][0]
+            rel = posixpath.relpath(archive_path, opf_dir or ".")
+            item = etree.SubElement(manifest, f"{{{NS['opf']}}}item")
+            item_id = unique_id(kind)
+            item.set("id", item_id)
+            item.set("href", quote(rel, safe="/"))
+            if kind == "nav":
+                item.set("media-type", "application/xhtml+xml")
+                item.set("properties", "nav")
+            else:
+                item.set("media-type", "application/x-dtbncx+xml")
+                ncx_id = item_id
+
+        spine = self._opf_tree.getroot().find("opf:spine", namespaces=NS)
+        if spine is not None and ncx_id and not spine.get("toc"):
+            spine.set("toc", ncx_id)
+        self._toc_in_tree = True
+
     # ------------------------------------------------------------------
     # Saving
     # ------------------------------------------------------------------
@@ -1551,3 +1629,5 @@ class EpubBook:
             self.cover_removed = False
             self._orphan_files_to_remove = set()
             self._image_replacements = {}
+            self._toc_files = {}
+            self._toc_in_tree = False

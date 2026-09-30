@@ -835,6 +835,7 @@ core/save_errors.py                     - recognizes+explains common save failur
 core/error_summary.py                   - bounds a batch of per-book error messages into a short, safe-to-display preview
 core/app_paths.py                       - where this app's persistent files live (settings, crash log)
 core/crash_log.py                       - global crash logging + faulthandler for native-level crashes
+core/toc_generate.py                    - heading-based table-of-contents generation (Generate Table of Contents)
 core/missing_space.py                   - punctuation-adjacent-to-letter detection (Detect Missing Spaces)
 core/case_conversion.py                - UPPERCASE/lowercase/Title Case/Sentence case transforms
 core/series_numbering.py                - sequential Series # generator (Number Series)
@@ -856,6 +857,7 @@ gui/polish_book_dialog.py          - the Polish Book dialog
 gui/send_to_kobo_dialog.py          - the Send to Kobo (USB) dialog
 gui/missing_space_dialog.py          - the Detect Missing Spaces dialog
 gui/manifest_rebuild_dialog.py       - the Rebuild Manifest dialog
+gui/toc_generate_dialog.py           - the Generate Table of Contents dialog
 gui/send_to_ereader_dialog.py        - the Send to eReader (Wireless) dialog
 gui/os_utils.py                       - shared OS helpers (reveal a file in the file manager)
 gui/open_library_dialog.py         - the Import Metadata from Open Library dialog

@@ -4,6 +4,17 @@ All notable changes to The ƎPUB Redactor, by version. Trimmed to new
 functionality and real fixes — cosmetic/UX-only adjustments aren't
 listed here.
 
+## 2026-09-30#04 -- Generate Table of Contents
+
+- New Repair -> Generate Table of Contents: books with no table of
+  contents at all (typical of badly converted scanned-PDF EPUBs) get one
+  built from their h1-h3 headings (or page titles) in reading order. The
+  dialog lists the affected books, previews the first entries of the
+  selected one, and only ticked books are touched. An NCX is written for
+  every book, plus an EPUB3 nav document for EPUB3 books; chapter files
+  are never modified, and nothing is written until you save. Headings
+  repeated across many files (running page headers) are ignored.
+
 ## 2026-09-30#03 -- Batch operations that can't be derailed
 
 - Rename/Export by Pattern, Search & Replace on filenames, Delete Files

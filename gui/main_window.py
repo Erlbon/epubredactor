@@ -119,9 +119,11 @@ from gui.google_books_dialog import GoogleBooksDialog
 from gui.image_compress import recompress_jpeg
 from redactor_common.gui.manage_list_dialog import ManageListDialog
 from gui.manifest_dedupe_dialog import ManifestDedupeDialog
+from core.toc_generate import stage_generated_toc_for
 from gui.manifest_rebuild_dialog import ManifestRebuildDialog
 from gui.missing_space_dialog import MissingSpaceDialog
 from gui.nav_repair_dialog import NavRepairDialog
+from gui.toc_generate_dialog import TocGenerateDialog
 from gui.open_library_dialog import OpenLibraryDialog
 from gui.polish_book_dialog import PolishBookDialog
 from redactor_common.gui.search_replace_dialog import FILENAME_FIELD_KEY, SearchReplaceDialog
@@ -655,6 +657,10 @@ class MainWindow(QMainWindow):
             MenuAction(
                 "repair_navigation", "Repair &Navigation…",
                 self.open_nav_repair_dialog,
+            ),
+            MenuAction(
+                "generate_toc", "Generate &Table of Contents…",
+                self.open_toc_generate_dialog,
             ),
             MenuAction("missing_space", "Detect &Missing Spaces…", self.open_missing_space_dialog),
             MenuAction(
@@ -3209,6 +3215,57 @@ class MainWindow(QMainWindow):
             f"{total_orphans} orphaned file(s) for removal across {len(affected_books)} "
             f"book(s). Remember to save.",
         )
+
+    # ------------------------------------------------------------------
+    # Generate Table of Contents
+    # ------------------------------------------------------------------
+
+    def open_toc_generate_dialog(self) -> None:
+        target_books = self._selection_or_all_books()
+        if not target_books:
+            QMessageBox.information(
+                self, "No books", "Load some books first (or select the ones to check)."
+            )
+            return
+
+        dialog = TocGenerateDialog(target_books, self)
+        if dialog.exec() != TocGenerateDialog.DialogCode.Accepted:
+            return
+
+        indices = dialog.accepted_book_indices()
+        if not indices:
+            return
+
+        # Staged on the book (written on save), not pushed to Undo: a
+        # structural repair, same convention as Repair Navigation. The
+        # dialog's preview is the safeguard instead.
+        work = [(dialog.books[i], dialog.entries_for(i)) for i in indices]
+        done: list[EpubBook] = []
+        errors: list[str] = []
+
+        def _step(item: tuple, _index: int) -> None:
+            book, entries = item
+            try:
+                stage_generated_toc_for(book, entries)
+                done.append(book)
+            except Exception as exc:  # noqa: BLE001 - one bad book must not abort the batch
+                errors.append(f"{os.path.basename(book.path)}: {exc}")
+
+        run_with_progress(
+            self, work, _step, "Generating tables of contents…",
+            cancellable=True, update_every=5,
+            label_for=lambda item: f"Generating: {os.path.basename(item[0].path)}",
+        )
+        self._refresh_rows_full(done)
+        self._refresh_status()
+        self._on_selection_changed()
+        message = f"Generated a table of contents for {len(done)} book(s). Remember to save."
+        if errors:
+            QMessageBox.warning(
+                self, "Table of Contents", f"{message}\n\nFailed: {summarize_errors(errors)}"
+            )
+        else:
+            QMessageBox.information(self, "Table of Contents Generated", message)
 
     # ------------------------------------------------------------------
     # Detect Missing Spaces
