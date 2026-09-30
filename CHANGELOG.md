@@ -4,6 +4,17 @@ All notable changes to The ƎPUB Redactor, by version. Trimmed to new
 functionality and real fixes — cosmetic/UX-only adjustments aren't
 listed here.
 
+## 2026-09-30#13 -- Shortcut fixes
+
+- Save All (formerly Save Files) is now Ctrl+Shift+A, the family key; Ctrl+S
+  still works as a second shortcut for one more release.
+- Delete Files is now Shift+Delete (the Explorer key); F8 still works for one
+  more release.
+- F1 no longer opens About (F1 is Help contents everywhere else; About is in
+  the Help menu). No replacement key, so nothing else uses F1 by accident.
+- Ctrl++ / Ctrl+- / Ctrl+0 zoom from the View menu; the keys were bound
+  twice before (menu and toolbar buttons), now the menu owns them.
+
 ## 2026-09-30#12 -- Command palette
 
 - New: Ctrl+K (View > Command Palette) opens a search box over every menu

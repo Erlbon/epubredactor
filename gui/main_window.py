@@ -31,7 +31,6 @@ regardless of where sorting/reordering puts the row.
 from __future__ import annotations
 
 import copy
-import dataclasses
 import mimetypes
 import os
 import sys
@@ -115,6 +114,7 @@ from redactor_common.gui.standard_menus import (
     standard_help_items,
     standard_tools_items,
     standard_view_items,
+    with_aliases,
 )
 from redactor_common.gui.overwrite_review_dialog import resolve_overwrite_conflicts
 from redactor_common.gui.colors import (
@@ -230,28 +230,6 @@ def _rename_log() -> RenameLog:
 
 def _field_label(key: str) -> str:
     return _FIELD_LABELS.get(key, key.replace("_", " ").title())
-
-
-# Shortcuts the actions had before the menu-skeleton restructure; the
-# standard_*_items helpers would otherwise hand out the new family keys.
-LEGACY_SHORTCUTS: dict[str, list[str]] = {
-    "save_all": ["Ctrl+S"],  # was "Save Files"
-    "delete_files": ["F8"],
-    "zoom_in": [],  # the zoom toolbar's own StandardKey actions own these
-    "zoom_out": [],
-    "about": ["F1"],
-}
-
-
-def _with_shortcuts(items: MenuItems, overrides: dict[str, list[str]]) -> MenuItems:
-    """Copies `items` with the listed actions' shortcuts replaced ([] = none)."""
-    out: MenuItems = []
-    for item in items:
-        if isinstance(item, MenuAction) and item.key in overrides:
-            keys = overrides[item.key]
-            item = dataclasses.replace(item, shortcut=None, shortcuts=keys or None)
-        out.append(item)
-    return out
 
 
 def _drop_keys(items: MenuItems, keys: set[str]) -> MenuItems:
@@ -735,23 +713,28 @@ class MainWindow(QMainWindow):
             APP_NAME, self.open_changelog_dialog, self.open_credits_dialog, self.open_about_dialog,
         )
 
-        # Commit-1 migration: every action keeps the shortcut it had before
-        # the restructure (the shortcut fixes are a separate step).
         spec = StandardMenuSpec(
-            file=_with_shortcuts(file_items, LEGACY_SHORTCUTS),
+            file=file_items,
             edit=edit_items,
-            view=_with_shortcuts(view_items, LEGACY_SHORTCUTS),
+            view=view_items,
             app_menus=[
                 AppMenu(labels.MENU_METADATA, metadata_items),
                 AppMenu(labels.MENU_REPAIR, repair_items),
                 AppMenu(labels.MENU_SEND, send_items),
             ],
             tools=tools_items,
-            help=_with_shortcuts(help_items, LEGACY_SHORTCUTS),
+            help=help_items,
         )
         build_standard_menu_bar(self, spec)
         actions = get_action_registry(self)
         add_command_palette(self, actions)  # Ctrl+K, View > Command Palette…
+
+        # Shortcuts that moved keep their old key as a secondary one for one
+        # release (remove these aliases in the release after this one):
+        with_aliases(actions["save_all"], "Ctrl+S")  # was "Save Files"; Save All is Ctrl+Shift+A
+        with_aliases(actions["delete_files"], "F8")  # family key is Shift+Delete
+        # F1 used to open About; F1 is Help contents everywhere else, so it is
+        # simply unbound now (no alias: lint forbids F1 on About).
 
         # Back-compat: the rest of this file (toolbar, context menus)
         # references these as self.<x>_act attributes directly.
@@ -851,6 +834,15 @@ class MainWindow(QMainWindow):
         # which was extracted from this app's own version (2026-09-23 it
         # replaced the original copy here).
         self.zoom = TableZoomController(self.table, parent=self)
+        # View > Zoom In/Out own Ctrl++ / Ctrl+- now. The +/- buttons were
+        # built from the same StandardKey bindings, which would make the keys
+        # ambiguous, so the menu actions take over every binding the buttons
+        # had (e.g. Ctrl+= where the platform lists it) and the buttons keep
+        # only their click.
+        registry = get_action_registry(self)
+        for menu_key, button in (("zoom_in", self.zoom.zoom_in_action), ("zoom_out", self.zoom.zoom_out_action)):
+            with_aliases(registry[menu_key], *[s.toString() for s in button.shortcuts()])
+            button.setShortcuts([])
         toolbar.addAction(self.zoom.zoom_out_action)
         toolbar.addWidget(self.zoom.label)
         toolbar.addAction(self.zoom.zoom_in_action)

@@ -10,6 +10,7 @@ from types import SimpleNamespace
 os.environ.setdefault("QT_QPA_PLATFORM", "offscreen")
 sys.path.insert(0, os.path.dirname(__file__))
 
+from PyQt6.QtGui import QAction  # noqa: E402
 from PyQt6.QtWidgets import QApplication, QToolBar  # noqa: E402
 
 import gui.main_window as mw  # noqa: E402
@@ -133,12 +134,41 @@ def test_every_action_is_owned_and_shared_with_the_window():
     assert window.rename_files_act is registry["rename_export_move"]
 
 
-def test_save_all_is_save_files_renamed_and_keeps_ctrl_s():
+def _keys(action):
+    return [s.toString() for s in action.shortcuts()]
+
+
+def test_save_all_is_save_files_renamed_and_keeps_ctrl_s_as_an_alias():
     window = mw.MainWindow()
     registry = get_action_registry(window)
     assert "save" not in registry  # there is no save-selected to offer
     assert labels.plain_label(window.save_act.text()) == "Save All"
-    assert window.save_act.shortcut().toString() == "Ctrl+S"
+    assert _keys(window.save_act) == ["Ctrl+Shift+A", "Ctrl+S"]
+
+
+def test_shortcut_fixes_and_their_aliases():
+    registry = get_action_registry(mw.MainWindow())
+    assert _keys(registry["delete_files"]) == ["Shift+Del", "F8"]
+    assert _keys(registry["about"]) == []  # F1 is Help contents, never About
+    assert _keys(registry["refresh_list"]) == ["F5", "Ctrl+R"]
+    assert _keys(registry["command_palette"]) == ["Ctrl+K"]
+    assert _keys(registry["filter_list"]) == ["Ctrl+F"]
+    assert _keys(registry["reset_zoom"]) == ["Ctrl+0"]
+
+
+def test_zoom_keys_are_owned_by_the_menu_not_ambiguous_with_the_toolbar():
+    window = mw.MainWindow()
+    registry = get_action_registry(window)
+    assert "Ctrl++" in _keys(registry["zoom_in"]) and "Ctrl+-" in _keys(registry["zoom_out"])
+    assert window.zoom.zoom_in_action.shortcuts() == [] and window.zoom.zoom_out_action.shortcuts() == []
+    # No key is bound to two actions anywhere on the window.
+    from collections import Counter
+    bound = Counter(k for a in window.findChildren(QAction) for k in _keys(a))
+    assert [k for k, n in bound.items() if n > 1] == []
+    # The menu action still zooms.
+    before = window.table.font().pointSize()
+    registry["zoom_in"].trigger()
+    assert window.table.font().pointSize() == before + 1
 
 
 def test_no_dead_planned_entries():
@@ -228,10 +258,7 @@ def test_context_menu():
 
 # Violations lint_menu_bar() is allowed to report on the real window, each
 # with the reason it is still there. Empty = fully conforming.
-DOCUMENTED_LINT_EXCEPTIONS = [
-    # F1 stays on About until the shortcut-fix step (old key kept as an alias).
-    "Help > About The ƎPUB Redactor is bound to F1: F1 is Help contents and must not be bound to About",
-]
+DOCUMENTED_LINT_EXCEPTIONS: list[str] = []
 
 
 def test_lint_menu_bar_is_clean():
