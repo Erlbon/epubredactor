@@ -52,7 +52,7 @@ def test_menu_contents_and_order():
     ]
     assert _plain_items(m["View"]) == [
         "Show Metadata Panel", "-", "Zoom In", "Zoom Out", "Reset Zoom", "-",
-        "Text Wrapping", "-", "Refresh List",
+        "Text Wrapping", "-", "Refresh List", "Command Palette",
     ]
     assert _plain_items(m["Metadata"]) == [
         "Parse Filename", "Scan File Content", "-", "Look Up", "-",
@@ -222,3 +222,32 @@ def test_context_menu():
     assert _names(sub("Cover").items) == ["Find Better Covers"]  # no cover on this book: nothing to flag
     # Several books: no single-file rename.
     assert "Rename File" not in _names(window._context_menu_items([book, book]))
+
+
+# --- lint + command palette -------------------------------------------------
+
+# Violations lint_menu_bar() is allowed to report on the real window, each
+# with the reason it is still there. Empty = fully conforming.
+DOCUMENTED_LINT_EXCEPTIONS = [
+    # F1 stays on About until the shortcut-fix step (old key kept as an alias).
+    "Help > About The ƎPUB Redactor is bound to F1: F1 is Help contents and must not be bound to About",
+]
+
+
+def test_lint_menu_bar_is_clean():
+    from redactor_common.gui.menu_lint import lint_menu_bar
+
+    assert lint_menu_bar(mw.MainWindow()) == DOCUMENTED_LINT_EXCEPTIONS
+
+
+def test_command_palette_lists_every_action_and_runs_one():
+    window = mw.MainWindow()
+    registry = get_action_registry(window)
+    palette = window.command_palette
+    palette.show_palette()
+    titles = {c.title for c in palette.visible_commands()}
+    assert {"Open Files", "Redact", "Validate and Fix", "Open in Sigil", "Scan File Content"} <= titles
+    palette.filter_edit.setText("refresh")
+    assert [c.title for c in palette.visible_commands()][0] == "Refresh List"
+    assert registry["command_palette"].shortcut().toString() == "Ctrl+K"
+    palette.close()

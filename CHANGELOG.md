@@ -4,6 +4,14 @@ All notable changes to The ƎPUB Redactor, by version. Trimmed to new
 functionality and real fixes — cosmetic/UX-only adjustments aren't
 listed here.
 
+## 2026-09-30#12 -- Command palette
+
+- New: Ctrl+K (View > Command Palette) opens a search box over every menu
+  command: type a few letters, Enter runs it. Greyed commands are listed but
+  cannot be run.
+- Internal: a test checks the real menu bar against the shared menu rules
+  (heading order, unique mnemonics, no clashing shortcuts, canonical labels).
+
 ## 2026-09-30#11 -- New menu structure
 
 - The menu bar now follows the shared Redactor skeleton: File, Edit, View,

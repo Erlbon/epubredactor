@@ -101,6 +101,7 @@ from redactor_common.gui.async_hash_cache import AsyncHashCache
 from redactor_common.gui.async_icon_cache import AsyncIconCache
 from redactor_common.gui.quick_series_number import prompt_and_generate_series_numbers
 from redactor_common.core import labels
+from redactor_common.gui.command_palette import add_command_palette
 from redactor_common.gui.menu_builder import MenuAction, MenuItems, Separator, Submenu
 from redactor_common.gui.standard_menus import (
     AppMenu,
@@ -625,17 +626,14 @@ class MainWindow(QMainWindow):
                 lambda: self.set_text_overflow_mode("clip"), checkable=True,
             ),
         ])
-        view_items = _drop_keys(
-            standard_view_items(
-                show_metadata_panel=self.toggle_tag_panel,
-                # self.zoom is created with the toolbar, after this menu.
-                zoom_in=lambda: self.zoom.zoom_in(),
-                zoom_out=lambda: self.zoom.zoom_out(),
-                reset_zoom=lambda: self.zoom.zoom_reset(),
-                refresh_list=self.refresh_list,
-                extra_view=[text_wrapping],
-            ),
-            {"command_palette"},  # wired in the command-palette commit
+        view_items = standard_view_items(
+            show_metadata_panel=self.toggle_tag_panel,
+            # self.zoom is created with the toolbar, after this menu.
+            zoom_in=lambda: self.zoom.zoom_in(),
+            zoom_out=lambda: self.zoom.zoom_out(),
+            reset_zoom=lambda: self.zoom.zoom_reset(),
+            refresh_list=self.refresh_list,
+            extra_view=[text_wrapping],
         )
 
         metadata_items = [
@@ -753,6 +751,7 @@ class MainWindow(QMainWindow):
         )
         build_standard_menu_bar(self, spec)
         actions = get_action_registry(self)
+        add_command_palette(self, actions)  # Ctrl+K, View > Command Palette…
 
         # Back-compat: the rest of this file (toolbar, context menus)
         # references these as self.<x>_act attributes directly.
