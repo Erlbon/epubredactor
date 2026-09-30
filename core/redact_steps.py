@@ -54,6 +54,7 @@ from typing import Any, Callable, Iterable
 from redactor_common.core import rename_pattern as shared_rename
 from redactor_common.core.move_plan import execute_move, plan_moves
 from redactor_common.core.os_utils import rename_no_clobber
+from redactor_common.core.path_parser import is_path_pattern
 from redactor_common.core.pipeline import (
     CommitError,
     FileReport,
@@ -70,6 +71,12 @@ from core.better_cover import IsbnCoverError, IsbnCoverLimitError, fetch_cover_b
 from core.content_scan import ContentScanResult, scan_book
 from core.description_html import has_html_markup, strip_html
 from core.epub_metadata import EpubBook, EpubError
+from core.filename_parser import (
+    folder_metadata_field_counts,
+    parse_book_path,
+    parsed_to_metadata_kwargs,
+    path_corroborator,
+)
 from core.google_books_lookup import (
     GoogleBooksLookupError,
     download_cover_image as download_google_cover,
@@ -880,6 +887,74 @@ class CoverStep(Step):
         return f"cover replaced ({cand.source})"
 
 
+DEFAULT_PATH_PATTERN = "%authors%/%series%/%title%"
+
+
+def _is_under(path: str, root: str) -> bool:
+    try:
+        root_abs = os.path.normcase(os.path.abspath(root))
+        return os.path.commonpath([root_abs, os.path.normcase(os.path.abspath(path))]) == root_abs
+    except ValueError:  # different drives
+        return False
+
+
+class PathTagsStep(Step):
+    key = "path_tags"
+    label = "Fill empty fields from the folder path"
+    description = (
+        "Fills EMPTY fields from the folders the file sits in, read against the library root chosen in "
+        "File > Rename Files (Pattern) > Move into folders (the reverse of Move into folders). Needs a library "
+        "root and a file under it. Applied at or above the confidence threshold, else listed for review."
+    )
+
+    def __init__(self, pattern: str = "", default_enabled: bool | None = None):
+        # The default pattern is the most recent saved PATH pattern.
+        self.options = (
+            OptionSpec(
+                "pattern", "Pattern", "str", pattern or DEFAULT_PATH_PATTERN, max_length=300,
+                tooltip="Folders and file name under the library root, e.g. %authors%/%series%/%title%",
+            ),
+        )
+        super().__init__(default_enabled=True if default_enabled is None else default_enabled)
+
+    def run(self, ctx: EpubCtx) -> StepResult:
+        pattern = self.options_for(ctx)["pattern"].strip()
+        env = ctx.env
+        if not is_path_pattern(pattern):
+            return StepResult.nothing(note="the folder pattern needs a / between folder and file name parts")
+        if not env.library_root or not os.path.isdir(env.library_root):
+            return StepResult.nothing(
+                note="no library root is set (choose one in File > Rename Files (Pattern) > Move into folders)"
+            )
+        if not _is_under(ctx.live.path, env.library_root):
+            return StepResult.nothing(note="not under the library root, so its folders were not read")
+
+        def metadata_counts(directory: str, field: str) -> dict[str, int]:
+            return env.cached(
+                ("folder_metadata", directory, field), lambda: folder_metadata_field_counts(directory, field)
+            )
+
+        parsed = parse_book_path(
+            ctx.live.path, pattern, env.library_root,
+            path_corroborator(ctx.live.path, None, metadata_counts, ctx.live.metadata),
+        )
+        if not parsed.matched:
+            return StepResult.nothing(note="folder pattern: " + " ".join(parsed.notes[:1]))
+        current = placeholder_values(ctx.work.metadata)
+        fills = {k: v for k, v in parsed.values.items() if v and k in current and not current[k]}
+        if not fills:
+            return StepResult.nothing()
+        found = " | ".join(text for _seg, text in parsed.matched_segments)
+        reason = f"folders: {found}"
+        if parsed.missing_segments:
+            reason += f" (no folder for {', '.join(parsed.missing_segments)})"
+        return StepResult.suggestion(FieldFill(parsed_to_metadata_kwargs(fills)), parsed.confidence, reason)
+
+    def apply_suggestion(self, ctx: EpubCtx, result: StepResult) -> str:
+        ctx.work.apply_metadata(dict(result.value))
+        return f"from the folder path: {result.value}"
+
+
 # --- rename and move (pinned last) -------------------------------------------
 
 
@@ -985,11 +1060,13 @@ class MoveIntoFoldersStep(Step):
 # --- catalogue and recipe storage ---------------------------------------------
 
 
-def build_catalogue(rename_pattern: str = "") -> list[Step]:
+def build_catalogue(rename_pattern: str = "", path_pattern: str = "") -> list[Step]:
     """The steps the recipe editor offers, in default order.
     `rename_pattern` (the most recent saved one) is the Rename step's
-    default and turns it on. Scan steps come before the online lookups
-    so an ISBN found in the front matter can feed them."""
+    default and turns it on. `path_pattern` (the most recent saved
+    pattern with a / in it) is the folder-path step's default. The
+    folder-path and scan steps come before the online lookups so what
+    they find can feed them."""
     return [
         ValidateFixStep(),
         DedupeManifestIdsStep(),
@@ -998,6 +1075,7 @@ def build_catalogue(rename_pattern: str = "") -> list[Step]:
         GenerateTocStep(),
         StripDescriptionHtmlStep(),
         LanguageStep(),
+        PathTagsStep(path_pattern),
         ScanIsbnStep(),
         ScanPublisherStep(),
         ScanYearStep(),
@@ -1009,9 +1087,9 @@ def build_catalogue(rename_pattern: str = "") -> list[Step]:
     ]
 
 
-def run_catalogue(rename_pattern: str = "") -> list[Step]:
+def run_catalogue(rename_pattern: str = "", path_pattern: str = "") -> list[Step]:
     """build_catalogue() plus the internal guard step, for the engine."""
-    return [GuardStep()] + build_catalogue(rename_pattern)
+    return [GuardStep()] + build_catalogue(rename_pattern, path_pattern)
 
 
 def recipe_for_run(recipe: Recipe) -> Recipe:

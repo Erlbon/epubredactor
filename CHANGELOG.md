@@ -4,6 +4,25 @@ All notable changes to The ƎPUB Redactor, by version. Trimmed to new
 functionality and real fixes — cosmetic/UX-only adjustments aren't
 listed here.
 
+## 2026-09-30#09 -- Metadata from the folder path
+
+- Parse Filename -> Metadata now reads folders too: a pattern with "/" in
+  it (%authors%/%series%/%title%) is matched against the book's path below
+  the library root (the one Move into folders uses; a Library Root row
+  appears and the choice is remembered). The preview shows the fields, a
+  confidence and the matched folders; rows start ticked from 50%. Folders
+  that several books share, or that match the saved author/series of other
+  files in the same folder, raise the confidence. An author folder in
+  "Tolkien, J.R.R." form is filled as "J.R.R. Tolkien". Patterns without a
+  "/" work exactly as before, and path patterns are kept apart from
+  filename patterns in the pattern history.
+- Redact gains "Fill empty fields from the folder path", on by default, placed
+  before the scan and lookup steps. It fills only empty fields, applies a
+  match at or above the confidence threshold, and lists lower ones under
+  Needs review with the folders that matched or were missing. It does
+  nothing without a library root or for a file outside it, and says so.
+- Uses redactor_common 2026-09-30-11.
+
 ## 2026-09-30#08 -- Move into folders
 
 - File > Rename Files (Pattern) gains a third action, Move into folders:

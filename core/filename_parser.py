@@ -233,3 +233,80 @@ def folder_metadata_field_counts(
         for value in values:
             counts[normalize_field_value(value)] += 1
     return dict(counts)
+
+
+# ---------------------------------------------------------------------------
+# Folder-path parsing (a pattern containing "/" or "\"), on redactor_common's
+# core/path_parser.py. Shared by the Parse Filename dialog and the Redact
+# "path_tags" step.
+# ---------------------------------------------------------------------------
+
+
+def folder_authors_to_display(value: str) -> str:
+    """An author FOLDER is usually in author-sort form ("Tolkien, J.R.R.")
+    while the Author(s) field holds display names ("J.R.R. Tolkien"):
+    "A & B" is split first (as for filenames), then each "Last, First"
+    entry is flipped with core.author_sort. A name with no comma is left
+    as it is, so "Terry Pratchett" folders work unchanged."""
+    from core.author_sort import author_sort_to_authors
+
+    return author_sort_to_authors(split_author_ampersands(value))
+
+
+# Same clean-up as a filename parse, except %authors% also accepts
+# author-sort form.
+PATH_NORMALIZERS = {**NORMALIZERS, "authors": folder_authors_to_display}
+
+
+def parse_book_path(path: str, pattern: str, root: str = "", corroborate=None):
+    """redactor_common's parse_path_detailed() with this app's field
+    shapes: a PathParseResult (values, confidence, matched/missing
+    segments, notes). `root` is the library root ("" = use the last
+    folders of the path)."""
+    from redactor_common.core.path_parser import parse_path_detailed
+
+    return parse_path_detailed(
+        path, pattern, root, VALID_FIELD_KEYS,
+        strip_leading_zeros_fields=STRIP_LEADING_ZEROS_FIELDS,
+        field_patterns=FIELD_PATTERNS, normalizers=PATH_NORMALIZERS, corroborate=corroborate,
+    )
+
+
+def _saved_keys(metadata, field: str) -> set[str]:
+    """The comparison keys folder_metadata_field_counts() counts for one book."""
+    if field == "authors":
+        names = [a for a in metadata.authors if a]
+        keys = [normalize_field_value(a) for a in names]
+        if len(names) > 1:
+            keys.append(normalize_field_value("; ".join(names)))
+        return set(keys)
+    return {normalize_field_value(metadata.series)} if field == "series" and metadata.series else set()
+
+
+def path_corroborator(book_path: str, batch_counts: dict | None = None, metadata_counts=None, own_metadata=None):
+    """A `corroborate(field, value)` callback for parse_book_path(): how
+    many books in all share this folder value, this one included (the
+    parser lifts a folder from 2). `batch_counts` is redactor_common's
+    folder_value_counts() over the batch; `metadata_counts(directory,
+    field)` returns folder_metadata_field_counts() for the book's own
+    folder, i.e. the saved author/series of the files there (this book's
+    own saved value, `own_metadata`, is taken out of that). Only authors
+    and series are checked; a folder author is converted to display form
+    first, so it compares with the saved metadata."""
+    directory = os.path.dirname(book_path)
+
+    def corroborate(field: str, value: str) -> int:
+        if field not in ("authors", "series"):
+            return 0
+        if field == "authors":
+            value = folder_authors_to_display(value)
+        key = normalize_field_value(value)
+        count = max((batch_counts or {}).get((field, key), 0), 1)
+        if metadata_counts is not None:
+            saved = metadata_counts(directory, field).get(key, 0)
+            if saved and own_metadata is not None and key in _saved_keys(own_metadata, field):
+                saved -= 1
+            count += saved
+        return count
+
+    return corroborate

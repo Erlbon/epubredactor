@@ -17,11 +17,19 @@ there's rarely a conveniently well-tagged book sitting in the very
 batch that needs fixing, so it added a manual step that usually had
 nothing to work with. Matching a batch of filenames against known-good
 templates needs nothing pre-existing to work from at all.
+
+A pattern containing "/" or "\\" is a PATH pattern
+("%authors%/%series%/%title%"): it is read against the book's folders
+under the library root (the same setting Move into folders and Redact use),
+with redactor_common's core/path_parser.py, and the preview shows a
+confidence and the matched folders. A pattern without a separator behaves
+exactly as it always did.
 """
 
 from __future__ import annotations
 
 import os
+from typing import Callable
 
 from PyQt6.QtCore import Qt
 from PyQt6.QtWidgets import (
@@ -29,6 +37,7 @@ from PyQt6.QtWidgets import (
     QCheckBox,
     QDialog,
     QDialogButtonBox,
+    QFileDialog,
     QHBoxLayout,
     QHeaderView,
     QLabel,
@@ -40,6 +49,7 @@ from PyQt6.QtWidgets import (
     QTableWidget,
     QTableWidgetItem,
     QVBoxLayout,
+    QWidget,
 )
 
 from core.epub_metadata import EpubBook
@@ -48,12 +58,23 @@ from core.filename_parser import (
     field_value_counts,
     folder_metadata_field_counts,
     normalize_field_value,
+    parse_book_path,
     parse_filename,
     parsed_to_metadata_kwargs,
+    path_corroborator,
     sibling_epub_stems,
 )
 from core.rename_pattern import DEFAULT_PATTERN, PLACEHOLDERS, SUGGESTED_PATTERNS
 from gui import app_settings
+from redactor_common.core.path_parser import (
+    HIGH_CONFIDENCE,
+    folder_value_counts,
+    is_path_pattern,
+    relative_segments,
+    split_path_pattern,
+    split_pattern_history,
+)
+from redactor_common.gui.progress import run_with_progress
 
 # Fields worth cross-checking for repetition across other books -- ones
 # a real library commonly has SEVERAL entries sharing the exact same
@@ -70,16 +91,32 @@ _CONFIRMABLE_FIELDS = ("authors", "series")
 RECENT_BUTTON_GLYPH = "\u25bc"
 RECENT_BUTTON_WIDTH = 26
 BOOK_COL, EXTRACTED_COL, APPLY_COL = range(3)
+# Path mode adds two columns between "Extracted fields" and "Apply".
+PATH_CONFIDENCE_COL, PATH_SEGMENTS_COL, PATH_APPLY_COL = 2, 3, 4
+# A path row starts ticked from this confidence (the shared dialog's rule).
+PATH_TICK_CONFIDENCE = 0.5
 
 
 class FilenameParseDialog(QDialog):
-    def __init__(self, books: list[EpubBook], parent=None):
+    def __init__(
+        self, books: list[EpubBook], parent=None, library_root: str | None = None,
+        on_library_root_changed: Callable[[str], None] | None = None,
+    ):
+        """`library_root` / `on_library_root_changed` default to the saved
+        library root setting (the one Move into folders uses); they only
+        matter for a path pattern."""
         super().__init__(parent)
         self.setWindowTitle("Parse Filename \u2192 Metadata")
         self.resize(1060, 560)
         self.books = books
         self._checkboxes: dict[int, QCheckBox] = {}
         self._parsed: dict[int, dict[str, str]] = {}
+        self._library_root = app_settings.load_library_root() if library_root is None else library_root
+        self._on_library_root_changed = (
+            app_settings.save_library_root if on_library_root_changed is None else on_library_root_changed
+        )
+        self._path_mode = False
+        self._path_results: dict[int, object] = {}  # book index -> PathParseResult (path mode only)
         self._filename_stems = [os.path.splitext(os.path.basename(b.path))[0] for b in self.books]
         # Directory -> sibling .epub stems, populated lazily and kept for
         # the dialog's whole lifetime -- the listing itself never changes
@@ -93,6 +130,7 @@ class FilenameParseDialog(QDialog):
         # filename), so it's cached for the dialog's whole lifetime too,
         # never invalidated by editing the pattern field.
         self._folder_metadata_cache: dict[tuple[str, str], dict[str, int]] = {}
+        self._folder_all_metadata_cache: dict[tuple[str, str], dict[str, int]] = {}  # path mode, none excluded
 
         self._build_ui()
         self._refresh_preview()
@@ -135,7 +173,10 @@ class FilenameParseDialog(QDialog):
             starting_pattern = best[0]
             self._auto_detected_pattern = best[0]
         else:
-            starting_pattern = app_settings.load_last_pattern(DEFAULT_PATTERN)
+            # A path pattern is only ever the starting point when it is all
+            # there is, so the filename dialog opens as it always did.
+            names, paths = split_pattern_history(app_settings.load_pattern_history())
+            starting_pattern = (names or paths or [DEFAULT_PATTERN])[0]
             self._auto_detected_pattern = None
         self.pattern_edit = QLineEdit(starting_pattern)
         self.pattern_edit.textChanged.connect(self._refresh_preview)
@@ -147,6 +188,21 @@ class FilenameParseDialog(QDialog):
         self.recent_btn.clicked.connect(self._show_recent_menu)
         pattern_row.addWidget(self.recent_btn)
         layout.addLayout(pattern_row)
+
+        # Library root: only shown (and only used) for a path pattern.
+        self._root_row = QWidget()
+        root_layout = QHBoxLayout(self._root_row)
+        root_layout.setContentsMargins(0, 0, 0, 0)
+        root_layout.addWidget(QLabel("Library root:"))
+        self.root_label = QLabel(self._library_root or "(no library root chosen)")
+        self.root_label.setWordWrap(True)
+        root_layout.addWidget(self.root_label, 1)
+        self.root_btn = QPushButton("Choose\u2026")
+        self.root_btn.setToolTip("The folder the path pattern is read relative to (same as Move into folders)")
+        self.root_btn.clicked.connect(self._choose_root)
+        root_layout.addWidget(self.root_btn)
+        layout.addWidget(self._root_row)
+        self._root_row.setVisible(False)
 
         # Recent patterns are also shown as a small always-visible,
         # directly-clickable list right below the field -- not just
@@ -243,7 +299,7 @@ class FilenameParseDialog(QDialog):
         built-in template only actually outranks something from history
         when it genuinely fits these files better, not merely because
         it's listed first."""
-        history = app_settings.load_pattern_history()
+        history, _paths = split_pattern_history(app_settings.load_pattern_history())
         combined = [(p, True) for p in history] + [(p, False) for p in SUGGESTED_PATTERNS if p not in history]
         scored = [
             (pattern, count_matching_filenames(self._filename_stems, pattern), is_history)
@@ -264,7 +320,26 @@ class FilenameParseDialog(QDialog):
         for pattern, count, is_history in scored:
             suffix = "" if is_history else "  (built-in template)"
             labels.append((pattern, f"{pattern}   \u2014   {count}/{len(self.books)} match{suffix}"))
+        for pattern, count in self._scored_path_candidates():
+            labels.append((pattern, f"{pattern}   \u2014   {count}/{len(self.books)} match  (folder path)"))
         return labels
+
+    def _scored_path_candidates(self) -> list[tuple[str, int]]:
+        """(pattern, match_count) for each saved PATH pattern (one with a
+        / in it), best first, parsed against the library root. Kept apart
+        from the filename candidates so the two kinds are never ranked
+        against each other or picked automatically for one another."""
+        _names, paths = split_pattern_history(app_settings.load_pattern_history())
+        scored = []
+        for pattern in paths:
+            count = 0
+            for book in self.books:
+                result = parse_book_path(book.path, pattern, self._library_root)
+                if result.matched and any(result.values.values()):
+                    count += 1
+            scored.append((pattern, count))
+        scored.sort(key=lambda t: t[1], reverse=True)
+        return scored
 
     def _on_recent_list_clicked(self, item: QListWidgetItem) -> None:
         pattern = item.data(Qt.ItemDataRole.UserRole)
@@ -289,6 +364,17 @@ class FilenameParseDialog(QDialog):
         if cached is None:
             cached = folder_metadata_field_counts(directory, field, exclude_path=book_path)
             self._folder_metadata_cache[key] = cached
+        return cached
+
+    def _metadata_counts_in(self, directory: str, field: str) -> dict[str, int]:
+        """Saved author/series counts of every file in `directory` (none
+        excluded: path_corroborator() takes each book's own value out),
+        cached for the dialog's lifetime like the filename-mode tier."""
+        key = (directory, field)
+        cached = self._folder_all_metadata_cache.get(key)
+        if cached is None:
+            cached = folder_metadata_field_counts(directory, field)
+            self._folder_all_metadata_cache[key] = cached
         return cached
 
     def _confirmation_note(
@@ -345,6 +431,15 @@ class FilenameParseDialog(QDialog):
 
     def _refresh_preview(self) -> None:
         pattern = self.pattern_edit.text()
+        self._path_mode = is_path_pattern(pattern)
+        self._root_row.setVisible(self._path_mode)
+        if self._path_mode:
+            self._refresh_path_preview(pattern)
+            return
+        self._path_results = {}
+        self.preview_table.setRowCount(0)
+        self.preview_table.setColumnCount(3)
+        self.preview_table.setHorizontalHeaderLabels(["Book", "Extracted fields", "Apply"])
         self._checkboxes = {}
         self._parsed = {}
 
@@ -395,6 +490,108 @@ class FilenameParseDialog(QDialog):
             )
         else:
             self.status_label.setText(f"{matched_count} of {len(self.books)} filename(s) match this pattern.")
+
+    def _parse_paths(self, pattern: str) -> dict[int, object]:
+        """Path-mode parse of every book: a first pass counts how many
+        books share each folder value, then a second pass lets that (and
+        other files' saved author/series in the same folder) lift the
+        confidence of folder segments that agree. Opening those other
+        files is the slow part, so it goes through a progress dialog."""
+        def parse(book, callback):
+            return parse_book_path(book.path, pattern, self._library_root, callback)
+
+        first = {i: parse(book, None) for i, book in enumerate(self.books)}
+        counts = folder_value_counts([r for r in first.values() if r.matched])
+        wanted = [f for f in _CONFIRMABLE_FIELDS if f"%{f}%" in pattern]
+        if wanted:
+            dirs = sorted({os.path.dirname(b.path) for i, b in enumerate(self.books) if first[i].matched})
+            todo = [d for d in dirs if any((d, f) not in self._folder_all_metadata_cache for f in wanted)]
+            run_with_progress(
+                self, todo, lambda d, _i: [self._metadata_counts_in(d, f) for f in wanted],
+                "Checking other books in the same folders\u2026", cancellable=False,
+            )
+        return {
+            i: parse(book, path_corroborator(book.path, counts, self._metadata_counts_in, book.metadata))
+            for i, book in enumerate(self.books)
+        }
+
+    def _refresh_path_preview(self, pattern: str) -> None:
+        """Path-mode preview: one row per book with its path below the
+        library root, the fields read from the folders, the confidence
+        and the folders that matched. Only rows from 50% start ticked."""
+        self._checkboxes = {}
+        self._parsed = {}
+        self._path_results = self._parse_paths(pattern)
+        count = len(split_path_pattern(pattern))
+
+        self.preview_table.setRowCount(0)
+        self.preview_table.setColumnCount(5)
+        self.preview_table.setHorizontalHeaderLabels(
+            ["Book", "Extracted fields", "Confidence", "Matched path segments", "Apply"]
+        )
+        self.preview_table.setRowCount(len(self.books))
+        matched_count = high = 0
+        for row, book in enumerate(self.books):
+            result = self._path_results[row]
+            shown = "/".join(relative_segments(book.path, self._library_root, count))
+            self.preview_table.setItem(row, BOOK_COL, self._readonly_item(shown))
+            cb = QCheckBox()
+            fields = parsed_to_metadata_kwargs({k: v for k, v in result.values.items() if v}) if result.matched else {}
+            if fields:
+                self.preview_table.setItem(
+                    row, EXTRACTED_COL, self._readonly_item("; ".join(f"{k}: {v}" for k, v in fields.items()))
+                )
+                conf_item = self._readonly_item(f"{round(result.confidence * 100)}%")
+                if result.notes:
+                    conf_item.setToolTip("\n".join(result.notes))
+                self.preview_table.setItem(row, PATH_CONFIDENCE_COL, conf_item)
+                matched = " | ".join(text for _seg, text in result.matched_segments)
+                if result.missing_segments:
+                    matched += f"  (missing: {', '.join(result.missing_segments)})"
+                self.preview_table.setItem(row, PATH_SEGMENTS_COL, self._readonly_item(matched))
+                cb.setChecked(result.confidence >= PATH_TICK_CONFIDENCE)
+                self._parsed[row] = fields
+                matched_count += 1
+                high += result.confidence >= HIGH_CONFIDENCE
+            else:
+                self.preview_table.setItem(row, EXTRACTED_COL, self._readonly_item("(no match)"))
+                cb.setEnabled(False)
+            self._checkboxes[row] = cb
+            self.preview_table.setCellWidget(row, PATH_APPLY_COL, cb)
+
+        self.preview_table.resizeColumnsToContents()
+        text = (
+            f"{matched_count} of {len(self.books)} path(s) match this pattern; "
+            f"{high} with high confidence (>= {round(HIGH_CONFIDENCE * 100)}%)."
+        )
+        if not self._library_root:
+            text += " No library root chosen: the last folders of each path are used."
+        self.status_label.setText(text)
+
+    def _choose_root(self) -> None:
+        folder = QFileDialog.getExistingDirectory(self, "Choose Library Root Folder", self._library_root)
+        if folder:
+            self.set_library_root(folder)
+
+    def set_library_root(self, folder: str) -> None:
+        """Use (and remember, through on_library_root_changed) `folder`
+        as the library root; re-reads the preview."""
+        self._library_root = folder
+        self.root_label.setText(folder or "(no library root chosen)")
+        self._on_library_root_changed(folder)
+        self._refresh_preview()
+
+    def library_root(self) -> str:
+        return self._library_root
+
+    def is_path_mode(self) -> bool:
+        """True while the pattern contains a folder separator."""
+        return self._path_mode
+
+    def parse_results(self) -> dict[int, object]:
+        """Path mode only: book index -> PathParseResult (confidence,
+        matched/missing segments) for every matching book; {} otherwise."""
+        return {i: r for i, r in self._path_results.items() if r.matched}
 
     @staticmethod
     def _readonly_item(text: str) -> QTableWidgetItem:

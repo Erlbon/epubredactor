@@ -86,6 +86,7 @@ from redactor_common.core.rename_log import RenameLog
 from redactor_common.gui.rename_undo import undo_last_rename
 from core.app_paths import base_dir
 from redactor_common.gui.move_runner import run_planned_moves
+from redactor_common.core.path_parser import split_pattern_history
 from redactor_common.gui.rename_pattern_dialog import RenamePatternDialog
 from redactor_common.gui.redact_dialog import (
     RecipeEditorDialog,
@@ -2782,16 +2783,26 @@ class MainWindow(QMainWindow):
     def _last_rename_pattern() -> str:
         """The most recently applied Rename/Export pattern ("" if none):
         the Redact recipe's Rename step default, and what turns it on."""
-        history = app_settings.load_pattern_history()
-        return history[0] if history else ""
+        names, _paths = split_pattern_history(app_settings.load_pattern_history())
+        return names[0] if names else ""
+
+    @staticmethod
+    def _last_path_pattern() -> str:
+        """The most recent saved pattern with a / in it ("" if none): the
+        Redact recipe's folder-path step default."""
+        _names, paths = split_pattern_history(app_settings.load_pattern_history())
+        return paths[0] if paths else ""
+
+    def _redact_catalogue(self):
+        return build_catalogue(self._last_rename_pattern(), self._last_path_pattern())
 
     def _redact_recipe(self):
-        return recipe_from_setting(app_settings.load_redact_recipe(), build_catalogue(self._last_rename_pattern()))
+        return recipe_from_setting(app_settings.load_redact_recipe(), self._redact_catalogue())
 
     def edit_redact_recipe(self) -> None:
         """Operations > Edit Redact Recipe...: the shared recipe editor over
         this app's steps; the result is stored in the settings file."""
-        dialog = RecipeEditorDialog(build_catalogue(self._last_rename_pattern()), self._redact_recipe(), self)
+        dialog = RecipeEditorDialog(self._redact_catalogue(), self._redact_recipe(), self)
         if dialog.exec() == dialog.DialogCode.Accepted:
             app_settings.save_redact_recipe(recipe_to_setting(dialog.recipe()))
 
@@ -2853,7 +2864,7 @@ class MainWindow(QMainWindow):
 
         env = self._redact_env()
         env.begin()
-        catalogue = run_catalogue(self._last_rename_pattern())
+        catalogue = run_catalogue(self._last_rename_pattern(), self._last_path_pattern())
         report = run_redact_dialog(
             self, targets, recipe_for_run(self._redact_recipe()), catalogue,
             make_context=lambda book: EpubCtx(book, env),
