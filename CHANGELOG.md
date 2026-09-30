@@ -4,6 +4,10 @@ All notable changes to The ƎPUB Redactor, by version. Trimmed to new
 functionality and real fixes — cosmetic/UX-only adjustments aren't
 listed here.
 
+## 2026-09-30#05 -- Open in Default App
+
+- Right-click menu gains Open in Default App (redactor_common 2026-09-30-04).
+
 ## 2026-09-30#04 -- Generate Table of Contents
 
 - New Repair -> Generate Table of Contents: books with no table of
