@@ -67,6 +67,7 @@ from core import perf_log
 from core.languages import is_blank_or_unknown_language
 from core.rename_pattern import DEFAULT_PATTERN, PLACEHOLDERS, placeholder_values, unique_path
 from core.sigil_tools import DOWNLOAD_URL as SIGIL_DOWNLOAD_URL
+from core.calibre_tools import find_install_dir as find_calibre_install_dir
 from core.sigil_tools import SigilLaunchError, find_sigil, sigil_file_filter
 from core.sigil_tools import open_in_sigil as launch_sigil
 from core.version import APP_NAME, APP_REPO_URL, APP_VERSION, RELEASE_LABEL
@@ -77,6 +78,7 @@ from redactor_common.core.save_errors import describe_save_error
 from redactor_common.core.undo import UndoManager
 from redactor_common.gui.action_factory import make_action
 from redactor_common.gui.progress import run_with_progress
+from redactor_common.gui.settings_bundle_dialogs import export_settings, import_settings
 from redactor_common.gui.sortable_table import NumericTableWidgetItem, suspend_sorting
 
 from gui import cover_quality
@@ -166,6 +168,7 @@ from redactor_common.gui.search_replace_dialog import FILENAME_FIELD_KEY, Search
 from gui.series_number_dialog import SeriesNumberDialog
 from gui.send_to_ereader_dialog import SendToEreaderDialog
 from gui.send_to_kobo_dialog import SendToKoboDialog
+from gui.settings_adapter import EpubSettingsAdapter
 from gui.strip_description_html_dialog import StripDescriptionHtmlDialog
 from gui.tag_panel import TagPanel
 from gui.validation_dialog import ValidationDialog
@@ -544,6 +547,7 @@ class MainWindow(QMainWindow):
         self.status.addPermanentWidget(self.status_label)
 
     def _build_menu_bar(self) -> None:
+        self._settings_adapter = EpubSettingsAdapter(COLUMN_KEYS, redetect=self._redetect_tools)
         # Built through redactor_common's standard menu skeleton (File, Edit,
         # View, Metadata, Repair, Send, Tools, Help): the shared items come
         # from the standard_*_items helpers with their canonical labels
@@ -556,9 +560,7 @@ class MainWindow(QMainWindow):
                 import_and_convert=self.open_ebook_convert_dialog,
                 # "Save Files" has always saved EVERY changed book (there is
                 # no save-selected), so it is Save All here, not Save. The
-                # helper's separate Save entry would be a dead duplicate, and
-                # Export/Import Settings have no settings adapter in this app
-                # yet: both are dropped rather than shown greyed out.
+                # helper's separate Save entry would be a dead duplicate.
                 save_all=self.save_changed,
                 save_as=self.save_as_copies,
                 rename_file=self.rename_selected_file,
@@ -566,12 +568,14 @@ class MainWindow(QMainWindow):
                 # The dialog's modes are rename in place, export a copy and
                 # Move into folders, hence "Rename / Export / Move".
                 rename_export_move=self.open_rename_dialog,
+                export_settings=self.export_settings,
+                import_settings=self.import_settings,
                 remove_from_list=self.remove_selected,
                 clear_list=self.clear_list,
                 delete_files=self.delete_files,
                 exit_slot=self.close,
             ),
-            {"save", "export_settings", "import_settings"},
+            {"save"},
         ))
 
         edit_items = standard_edit_items(
@@ -1579,6 +1583,61 @@ class MainWindow(QMainWindow):
         remembers it for next launch."""
         self._apply_text_overflow_mode(mode)
         app_settings.save_text_overflow_mode(mode)
+
+    # ------------------------------------------------------------------
+    # File > Export Settings... / Import Settings... (gui/settings_adapter.py)
+    # ------------------------------------------------------------------
+
+    def export_settings(self) -> None:
+        export_settings(self, self._settings_adapter)
+
+    def import_settings(self) -> None:
+        import_settings(self, self._settings_adapter, on_applied=self._on_settings_imported)
+
+    def _on_settings_imported(self, result) -> None:
+        """Brings the live window in line with what an import just wrote.
+        Recipe, patterns, field defaults, genre/language lists and the
+        eReader services are read fresh by their dialogs, so they need
+        nothing here."""
+        applied = set(result.applied)
+        if "columns" in applied:
+            hidden = app_settings.load_hidden_column_keys(COLUMN_KEYS)
+            widths = app_settings.load_column_widths_by_key(COLUMN_KEYS)
+            for i, key in enumerate(COLUMN_KEYS):
+                self.table.setColumnHidden(i, key in hidden and key != "filename")
+                if key in widths:
+                    self.table.setColumnWidth(i, widths[key])
+            self._columns_sized = self._columns_sized or bool(widths)
+            self._on_columns_changed()
+        if "view" in applied:
+            mode = app_settings.load_text_overflow_mode()
+            self._apply_text_overflow_mode(mode)
+            get_action_registry(self)[f"text_wrap_mode_{mode}"].setChecked(True)
+        if "covers" in applied:
+            self._junk_cover_hashes = app_settings.load_junk_cover_hashes()
+            self._refresh_all_junk_cover_cells()
+            self._on_selection_changed()
+        if "field_defaults" in applied:
+            self._update_blank_language_default_action_state()
+
+    def _redetect_tools(self) -> None:
+        """Offered after an import: looks for Calibre and Sigil on THIS
+        computer (PATH, then the usual install folders) and remembers what
+        it finds, instead of trusting another machine's paths."""
+        found = []
+        calibre = find_calibre_install_dir(app_settings.load_calibre_install_dir())
+        if calibre:
+            app_settings.save_calibre_install_dir(calibre)
+            found.append(f"Calibre: {calibre}")
+        sigil = find_sigil(configured_path=app_settings.load_sigil_path())
+        if sigil:
+            app_settings.save_sigil_path(sigil)
+            found.append(f"Sigil: {sigil}")
+        QMessageBox.information(
+            self, "Re-detect tools",
+            ("Found:\n" + "\n".join(found)) if found
+            else "Neither Calibre nor Sigil was found on this computer.",
+        )
 
     def _refresh_multiline_field_cells(self) -> None:
         """Re-derives every multiline field's (currently just

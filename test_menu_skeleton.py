@@ -44,6 +44,7 @@ def test_menu_contents_and_order():
         "Open Files", "Open Folder", "Import and Convert", "-",
         "Save As", "Save All", "-",
         "Rename File", "Undo Last Rename", "Rename / Export / Move", "-",
+        "Export Settings", "Import Settings", "-",
         "Remove from List", "Clear List", "Delete Files", "-",
         "Exit",
     ]
@@ -88,7 +89,8 @@ def test_submenus():
 OLD_TO_NEW_KEYS = {
     "load_files": "open_files", "load_folder": "open_folder", "save": "save_all", "save_as": "save_as",
     "rename_file": "rename_file", "undo_rename": "undo_last_rename",
-    "rename_files": "rename_export_move", "remove_files": "remove_from_list",
+    "rename_files": "rename_export_move", "export_settings": "export_settings",
+    "import_settings": "import_settings", "remove_files": "remove_from_list",
     "delete_files": "delete_files", "refresh": "refresh_list", "clear": "clear_list", "exit": "exit",
     "import_from_filename": "import_from_filename", "import_google_books": "import_google_books",
     "import_file_content": "import_file_content", "suggest_genres": "suggest_genres",
@@ -173,7 +175,7 @@ def test_zoom_keys_are_owned_by_the_menu_not_ambiguous_with_the_toolbar():
 
 def test_no_dead_planned_entries():
     registry = get_action_registry(mw.MainWindow())
-    for key in ("export_settings", "import_settings", "find_duplicates", "auto_number"):
+    for key in ("find_duplicates", "auto_number"):
         assert key not in registry
     # Only state-dependent actions may start greyed out.
     greyed = {e.key for e in registry.entries() if not e.action.isEnabled()}

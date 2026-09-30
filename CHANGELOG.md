@@ -4,6 +4,18 @@ All notable changes to The ƎPUB Redactor, by version. Trimmed to new
 functionality and real fixes — cosmetic/UX-only adjustments aren't
 listed here.
 
+## 2026-09-30#14 -- Export / Import Settings
+
+- New: File > Export Settings... / Import Settings... save your preferences
+  to one `epubredactor-settings.json` and load them on another computer or
+  a fresh install. Import shows every change first and applies only what you
+  tick. Included by default: Redact recipe, pattern history, field defaults
+  (blank-language default, ASCII and zero-pad choices), column visibility and
+  widths, text wrapping, custom/hidden genres and languages, junk cover list.
+  Unticked by default (this computer only): Calibre/Sigil paths, last-used and
+  library folders, eReader services. After an import you can re-detect
+  Calibre and Sigil. No secrets are ever exported (the app stores none).
+
 ## 2026-09-30#13 -- Shortcut fixes
 
 - Save All (formerly Save Files) is now Ctrl+Shift+A, the family key; Ctrl+S
