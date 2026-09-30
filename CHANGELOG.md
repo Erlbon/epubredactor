@@ -4,6 +4,15 @@ All notable changes to The ƎPUB Redactor, by version. Trimmed to new
 functionality and real fixes — cosmetic/UX-only adjustments aren't
 listed here.
 
+## 2026-09-30#16 -- Redact never rewrites a book just to stamp it
+
+- Changed: a validation stamp alone no longer counts as a change in Redact
+  (same rule as cbzredactor). Redact stamps the final verdict only into books
+  it saves anyway because another step changed them; untouched books stay
+  unstamped, are not rewritten and are not reported as changed, until you run
+  Validate / Fix Issues. This supersedes the #15 note that the first Redact
+  run rewrites every clean book.
+
 ## 2026-09-30#15 -- Validation results are stamped into the book
 
 - New: Validate / Fix Issues now records when a book was checked and the

@@ -227,3 +227,19 @@ def test_validation_dialog_is_an_explicit_check_that_stamps(epub, qtbot=None):
     dialog = ValidationDialog([book])
     assert book.scan_stamp is not None and book.stamp_only_dirty
     assert dialog.table.item(0, 1).text().startswith("OK · ")
+
+
+def test_redact_does_not_rewrite_an_unchanged_book_just_to_stamp_it(tmp_path, redact_env):
+    path = make_epub(str(tmp_path / "u.epub"))
+    before = open(path, "rb").read()
+    report = run([load(path)], redact_env, only("validate_fix"))
+    entry = only_entry(report)
+    assert entry.status.value == "unchanged" and "CHANGED" not in report.to_text()
+    assert open(path, "rb").read() == before and stamp_metas(path) == 0
+    assert redact_env.trash.trashed == []
+
+
+def test_redact_stamps_a_book_it_saves_anyway(tmp_path, redact_env):
+    path = make_epub(str(tmp_path / "v.epub"), dup_ids=True)
+    run([load(path)], redact_env, only("validate_fix", "dedupe_manifest_ids"))
+    assert load(path).scan_stamp is not None and stamp_metas(path) == 1

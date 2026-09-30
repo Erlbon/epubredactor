@@ -334,7 +334,11 @@ class EpubCtx:
         if self._save_done:
             return self.save_problem is None
         self._save_done = True
-        if not self.work.dirty:
+        # A pending validation stamp alone is not a change (the same rule as
+        # cbzredactor): a book no step touched is left as it is, unstamped, until
+        # the user runs Validate / Fix Issues. The stamp rides along only when the
+        # book is saved anyway (any other edit clears stamp_only_dirty).
+        if not self.work.dirty or self.work.stamp_only_dirty:
             return True
         if self.work._stamp_follows_save:  # noqa: SLF001
             # Later steps (dedupe, rebuild, repair...) may have fixed things since the
@@ -473,8 +477,8 @@ class ValidateFixStep(Step):
         work = ctx.work
         fixable = {i.code for i in work.validation_issues if i.fixable and i.code in SAFE_FIX_CODES}
         fixed = work.apply_fixes(fixable) if fixable else []
-        # The verdict after the fixes goes into the saved file as the validation
-        # stamp. A book whose stamp already matches (same files, same verdict) is
+        # The verdict after the fixes goes into the file as the validation stamp,
+        # but only if the book is saved anyway (see ensure_saved). A book whose stamp already matches (same files, same verdict) is
         # left alone, so a re-run doesn't rewrite every book just to move a
         # timestamp. follow_save: later steps (cover, toc) change content files
         # before the save, so the fingerprint is taken from what gets written.
