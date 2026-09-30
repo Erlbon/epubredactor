@@ -4,6 +4,15 @@ All notable changes to The ƎPUB Redactor, by version. Trimmed to new
 functionality and real fixes — cosmetic/UX-only adjustments aren't
 listed here.
 
+## 2026-09-30#08 -- Move into folders
+
+- File > Rename Files (Pattern) gains a third action, Move into folders:
+  pick a library root and a pattern with "/" in it
+  (%authors%/%series%/%title%) and the books' files are moved into that
+  folder tree, collisions numbered, nothing overwritten. The root is
+  remembered. File > Undo Last Rename moves everything back and offers to
+  remove the folders the move created. Rename and Export work as before.
+
 ## 2026-09-30#07 -- Redact
 
 - New Operations > Redact (Ctrl+Shift+E, toolbar): one click repairs and

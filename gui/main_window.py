@@ -85,6 +85,7 @@ from redactor_common.gui.visible_rows import VisibleRowsWatcher
 from redactor_common.core.rename_log import RenameLog
 from redactor_common.gui.rename_undo import undo_last_rename
 from core.app_paths import base_dir
+from redactor_common.gui.move_runner import run_planned_moves
 from redactor_common.gui.rename_pattern_dialog import RenamePatternDialog
 from redactor_common.gui.redact_dialog import (
     RecipeEditorDialog,
@@ -2677,6 +2678,8 @@ class MainWindow(QMainWindow):
             on_ascii_only_changed=app_settings.save_ascii_filenames,
             zero_pad_initial=app_settings.load_rename_zero_pad(),
             on_zero_pad_changed=app_settings.save_rename_zero_pad,
+            library_root=app_settings.load_library_root(),
+            on_library_root_changed=app_settings.save_library_root,
             parent=self,
         )
         if dialog.exec() != dialog.DialogCode.Accepted:
@@ -2684,7 +2687,27 @@ class MainWindow(QMainWindow):
         # Only patterns actually applied get remembered, not every
         # keystroke while experimenting.
         app_settings.save_pattern_used(dialog.pattern_edit.text())
+        if dialog.is_move_mode():
+            self.perform_move_into_folders(dialog.planned_moves())
+            return
         self.perform_rename_export(dialog.planned_renames(), export=dialog.is_export_mode())
+
+    def perform_move_into_folders(self, planned: list) -> None:
+        """The dialog's third mode: moves each book's file into the folder
+        tree planned under the library root (redactor_common's
+        run_planned_moves: progress, per-file errors, created folders,
+        the tidy-up question) and points the books at their new paths.
+        Recorded in the rename log as one batch, so File > Undo Last Rename
+        moves everything back. Unsaved edits stay unsaved: moving a file
+        doesn't touch its content, and the book keeps its in-memory state."""
+        summary = run_planned_moves(
+            self, planned, copy=False, rename_log=_rename_log(), label="Move into folders",
+        )
+        for book, _old_path, new_path in summary.done:
+            book.path = new_path
+        if summary.done:
+            self._rebuild_table()
+            self._refresh_status()
 
     def perform_rename_export(self, planned: list[tuple[EpubBook, str, str]], export: bool) -> None:
         """Rename in place, or export renamed copies, for the dialog's
