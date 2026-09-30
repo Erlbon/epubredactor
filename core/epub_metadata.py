@@ -49,13 +49,19 @@ import posixpath
 import re
 import uuid
 import zipfile
+import zlib
 from urllib.parse import quote, unquote
 from dataclasses import dataclass, field
 from typing import Optional
 
 from lxml import etree
+from redactor_common.core.scan_stamp import ScanStamp, make_stamp, parse_stamp
 
+from core.epub_fingerprint import entries_fingerprint, zip_fingerprint
 from core.validation_issue import (
+    STATUS_INVALID,
+    STATUS_ISSUES,
+    STATUS_OK,
     SEVERITY_ERROR,
     SEVERITY_LOCKED,
     SEVERITY_WARNING,
@@ -68,6 +74,13 @@ NS = {
     "dc": "http://purl.org/dc/elements/1.1/",
     "container": "urn:oasis:names:tc:opendocument:xmlns:container",
 }
+
+# The validation stamp lives in one OPF <meta name=... content="STATUS;time;fp"/>
+# (the EPUB2-style form, which EPUB3 readers and Calibre also tolerate).
+STAMP_META_NAME = "redactor:validation"
+# Verdicts worth stamping. DRM is left out on purpose: this tool refuses to
+# edit DRM-protected books, so it should not rewrite one just to note a scan.
+STAMPABLE_STATUSES = (STATUS_OK, STATUS_ISSUES, STATUS_INVALID)
 
 # Matches an ISBN embedded in a URN-style identifier, e.g. "urn:isbn:9780141439518".
 _URN_ISBN_RE = re.compile(r"urn:isbn:(.+)", re.IGNORECASE)
@@ -320,7 +333,34 @@ class EpubBook:
         self.validation_issues: list[ValidationIssue] = []
         self.validation_status: str = "OK"
 
+        # Validation stamp (see record_validation): the scan record read
+        # from / written to the OPF. Loaded from disk it is the last-known
+        # result and does NOT make the book dirty; only an explicit
+        # validation (Validate / Fix dialog, Redact) sets a new one.
+        self.scan_stamp: Optional[ScanStamp] = None
+        # Whether the loaded stamp still matches the book's files: True =
+        # content changed since, False = matches, None = can't be told (the
+        # stamp has no fingerprint). Meaningless without a stamp.
+        self.stamp_stale: Optional[bool] = None
+        # Redact only: the content files may still change after the verdict
+        # (cover, toc), so save() re-fingerprints what it is about to write.
+        self._stamp_follows_save = False
+
         self._load()
+
+    def __setattr__(self, name, value):
+        # Any other change to `dirty` means there is more than a stamp to save.
+        if name == "dirty":
+            object.__setattr__(self, "stamp_only_dirty", False)
+        object.__setattr__(self, name, value)
+
+    # True while the ONLY unsaved change is a fresh validation stamp, so a
+    # repair/Redact right after a check isn't refused for "unsaved changes".
+    # Class defaults so test doubles that skip __init__ still have them.
+    stamp_only_dirty: bool = False
+    scan_stamp: Optional[ScanStamp] = None
+    stamp_stale: Optional[bool] = None
+    _stamp_follows_save: bool = False
 
     # ------------------------------------------------------------------
     # Loading
@@ -335,6 +375,7 @@ class EpubBook:
                 self.metadata = self._read_metadata()
                 self._load_cover(zf)
                 self._validate(zf)
+                self._read_stamp(zf)
         except Exception as exc:  # noqa: BLE001 - one bad file must never abort a batch load
             # Deliberately broad: a hostile or damaged zip can raise
             # NotImplementedError (unsupported compression), RuntimeError
@@ -874,6 +915,93 @@ class EpubBook:
         self.revalidate()
         return fixed
 
+    # ------------------------------------------------------------------
+    # Validation stamp
+    # ------------------------------------------------------------------
+
+    def _read_stamp(self, zf: zipfile.ZipFile) -> None:
+        """Loads the stamp from the OPF and checks it against the zip. Never
+        marks the book dirty; a garbled value counts as no stamp."""
+        self.scan_stamp = None
+        self.stamp_stale = None
+        for meta_el in self._metadata_el().findall("opf:meta", namespaces=NS):
+            if meta_el.get("name") == STAMP_META_NAME:
+                self.scan_stamp = parse_stamp(meta_el.get("content"))
+                break
+        self._refresh_stamp_staleness(zf)
+
+    def _refresh_stamp_staleness(self, zf: Optional[zipfile.ZipFile] = None) -> None:
+        stamp = self.scan_stamp
+        self.stamp_stale = None
+        if stamp is None or not stamp.fingerprint:
+            return
+        try:
+            if zf is not None:
+                now = zip_fingerprint(zf, self.opf_path)
+            else:
+                with zipfile.ZipFile(self.path, "r") as handle:
+                    now = zip_fingerprint(handle, self.opf_path)
+        except (zipfile.BadZipFile, OSError):
+            return
+        self.stamp_stale = now != stamp.fingerprint
+
+    def record_validation(self, follow_save: bool = False) -> bool:
+        """Keeps the current validation verdict as a scan stamp (status, now,
+        a fingerprint of the files on disk) and marks the book dirty so Save
+        writes it like any other metadata. Call it only after an EXPLICIT
+        validation; the automatic check on load never stamps. A book that
+        failed to load, is DRM-protected, or whose file can't be read gets no
+        stamp. Returns whether one was recorded."""
+        if self.load_error or self.validation_status not in STAMPABLE_STATUSES:
+            return False
+        try:
+            with zipfile.ZipFile(self.path, "r") as zf:
+                fingerprint = zip_fingerprint(zf, self.opf_path)
+        except (zipfile.BadZipFile, OSError):
+            return False
+        self.scan_stamp = make_stamp(self.validation_status, fingerprint)
+        self.stamp_stale = False
+        self._stamp_follows_save = follow_save
+        only_stamp = not self.dirty or self.stamp_only_dirty
+        self.dirty = True
+        self.stamp_only_dirty = only_stamp
+        return True
+
+    def check_and_stamp(self) -> bool:
+        """An explicit validation: re-runs it against the file as it is now
+        and stamps the verdict. False (nothing changed) if the file can't be
+        re-read or the result isn't stampable."""
+        if self.load_error:
+            return False
+        try:
+            with zipfile.ZipFile(self.path, "r") as zf:
+                self._validate(zf)
+        except (zipfile.BadZipFile, KeyError, EpubError, OSError):
+            return False
+        return self.record_validation()
+
+    @property
+    def status_text(self) -> str:
+        """What the Status column shows: the plain validation status for a
+        book with no stamp, else `STATUS · 2026-09-30 14:05`, plus
+        "(changed since)" when the files (or the verdict) no longer match
+        the stamp, or "(unverified)" when the stamp has no fingerprint."""
+        stamp = self.scan_stamp
+        if stamp is None or self.load_error:
+            return self.validation_status
+        text = ScanStamp(self.validation_status, stamp.timestamp).display()
+        if self.stamp_stale or stamp.status != self.validation_status:
+            return f"{text} (changed since)"
+        if self.stamp_stale is None:
+            return f"{text} (unverified)"
+        return text
+
+    def status_tooltip(self) -> str:
+        message = "; ".join(i.message for i in self.validation_issues) or "No issues found. Double-click for details."
+        if self.scan_stamp is None or self.load_error:
+            return message
+        return self.scan_stamp.tooltip(message)
+
     def revalidate(self) -> None:
         """Re-run validation against the file as it exists on disk right
         now, combined with the current in-memory OPF tree. Used both
@@ -1389,11 +1517,48 @@ class EpubBook:
         self._write_toc(md, file_ops)
         file_ops["remove"].update(self._orphan_files_to_remove)
         file_ops["add"].update(self._image_replacements)
+        self._write_stamp(md, file_ops)
 
         new_opf_bytes = etree.tostring(
             self._opf_tree, xml_declaration=True, encoding="UTF-8", standalone=True
         )
         return new_opf_bytes, file_ops
+
+    def _write_stamp(self, md: etree._Element, file_ops: dict) -> None:
+        """Writes the validation stamp as the one redactor:validation meta
+        (any existing one, garbled or not, is replaced, never duplicated;
+        other metas are untouched). With no stamp in memory the meta is
+        removed."""
+        for meta_el in md.findall("opf:meta", namespaces=NS):
+            if meta_el.get("name") == STAMP_META_NAME:
+                md.remove(meta_el)
+        stamp = self.scan_stamp
+        if stamp is None:
+            return
+        if self._stamp_follows_save:
+            predicted = self._predicted_fingerprint(file_ops)
+            if predicted:
+                stamp = ScanStamp(stamp.status, stamp.timestamp, predicted)
+                self.scan_stamp = stamp
+        meta = etree.SubElement(md, f"{{{NS['opf']}}}meta")
+        meta.set("name", STAMP_META_NAME)
+        meta.set("content", stamp.to_text())
+
+    def _predicted_fingerprint(self, file_ops: dict) -> str:
+        """The fingerprint the archive will have once save() has applied
+        file_ops (removed/added/replaced files, the canonical mimetype)."""
+        try:
+            with zipfile.ZipFile(self.path, "r") as src:
+                entries = {i.filename: (i.CRC, i.file_size) for i in src.infolist()}
+        except (zipfile.BadZipFile, OSError):
+            return ""
+        mimetype = b"application/epub+zip"
+        entries["mimetype"] = (zlib.crc32(mimetype), len(mimetype))
+        for name in file_ops["remove"]:
+            entries.pop(name, None)
+        for name, data in file_ops["add"].items():
+            entries[name] = (zlib.crc32(data), len(data))
+        return entries_fingerprint(((n, c, s) for n, (c, s) in entries.items()), self.opf_path)
 
     def _write_isbn(self, md: etree._Element) -> None:
         """Update or create the ISBN dc:identifier, without ever touching
@@ -1631,3 +1796,5 @@ class EpubBook:
             self._image_replacements = {}
             self._toc_files = {}
             self._toc_in_tree = False
+            self._stamp_follows_save = False
+            self._refresh_stamp_staleness()

@@ -210,11 +210,17 @@ def test_default_recipe_repairs_a_damaged_book_in_place(tmp_path, env, trash):
     assert env.touched == {book: path}
 
 
-def test_a_clean_book_is_left_alone(tmp_path, env, trash):
+def test_a_clean_book_is_stamped_once_then_left_alone(tmp_path, env, trash):
     path = make_epub(str(tmp_path / "ok.epub"), description="Plain text.", publisher="P", isbn="9783161484100")
+    steps = only("validate_fix", "dedupe_manifest_ids", "rebuild_manifest",
+                 "repair_navigation", "strip_description_html", "cover")
+    # the first run has nothing to fix, but the validation verdict is stamped into the file
+    assert only_entry(run([load(path)], env, steps)).status is FileStatus.CHANGED
+    assert load(path).scan_stamp is not None and len(trash.trashed) == 1
+    env.touched.clear()
+    trash.trashed.clear()
     before = (os.path.getmtime(path), open(path, "rb").read())
-    report = run([load(path)], env, only("validate_fix", "dedupe_manifest_ids", "rebuild_manifest",
-                                         "repair_navigation", "strip_description_html", "cover"))
+    report = run([load(path)], env, steps)
     assert only_entry(report).status is FileStatus.UNCHANGED
     assert trash.trashed == [] and env.touched == {}
     assert (os.path.getmtime(path), open(path, "rb").read()) == before

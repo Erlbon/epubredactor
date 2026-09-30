@@ -296,7 +296,7 @@ class EpubCtx:
         live = self.live
         if live.load_error:
             self.skip_reason = f"it could not be loaded ({live.load_error})"
-        elif live.dirty:
+        elif live.dirty and not live.stamp_only_dirty:
             self.skip_reason = "it has unsaved edits in the list (save or discard them, then run Redact again)"
         if self.skip_reason:
             return
@@ -336,6 +336,12 @@ class EpubCtx:
         self._save_done = True
         if not self.work.dirty:
             return True
+        if self.work._stamp_follows_save:  # noqa: SLF001
+            # Later steps (dedupe, rebuild, repair...) may have fixed things since the
+            # validate_fix step stamped: re-check the working tree so the stamp carries
+            # the verdict of what is about to be written.
+            self.work.revalidate()
+            self.work.record_validation(follow_save=True)
         try:
             self.save_result = self._save()
         except _SaveProblem as problem:
@@ -464,10 +470,17 @@ class ValidateFixStep(Step):
     )
 
     def run(self, ctx: EpubCtx) -> StepResult:
-        fixable = {i.code for i in ctx.work.validation_issues if i.fixable and i.code in SAFE_FIX_CODES}
-        if not fixable:
-            return StepResult.nothing()
-        fixed = ctx.work.apply_fixes(fixable)
+        work = ctx.work
+        fixable = {i.code for i in work.validation_issues if i.fixable and i.code in SAFE_FIX_CODES}
+        fixed = work.apply_fixes(fixable) if fixable else []
+        # The verdict after the fixes goes into the saved file as the validation
+        # stamp. A book whose stamp already matches (same files, same verdict) is
+        # left alone, so a re-run doesn't rewrite every book just to move a
+        # timestamp. follow_save: later steps (cover, toc) change content files
+        # before the save, so the fingerprint is taken from what gets written.
+        stamp = work.scan_stamp
+        if fixed or stamp is None or work.stamp_stale is not False or stamp.status != work.validation_status:
+            work.record_validation(follow_save=True)
         return StepResult.applied(*fixed) if fixed else StepResult.nothing()
 
 

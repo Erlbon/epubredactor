@@ -4,6 +4,18 @@ All notable changes to The ƎPUB Redactor, by version. Trimmed to new
 functionality and real fixes — cosmetic/UX-only adjustments aren't
 listed here.
 
+## 2026-09-30#15 -- Validation results are stamped into the book
+
+- New: Validate / Fix Issues now records when a book was checked and the
+  result. The stamp is kept like any other metadata: held in memory (the book
+  shows as unsaved) and written into the EPUB's OPF (`redactor:validation`)
+  when you Save, so it follows the file when you copy it. The Status column
+  shows `OK · 2026-09-30 14:05` instead of the bare status; if the book's
+  files changed since, it adds "(changed since)". Loading a library never
+  stamps or marks anything unsaved. Redact stamps the final verdict too (a
+  book whose stamp is already current is not rewritten again). DRM and
+  unreadable books are never stamped.
+
 ## 2026-09-30#14 -- Export / Import Settings
 
 - New: File > Export Settings... / Import Settings... save your preferences

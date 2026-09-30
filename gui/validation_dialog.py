@@ -50,6 +50,7 @@ class ValidationDialog(QDialog):
         self._checkboxes: dict[int, QCheckBox] = {}
 
         self._build_ui()
+        self._check_books()
         self._refresh_table()
 
     def _build_ui(self) -> None:
@@ -78,6 +79,16 @@ class ValidationDialog(QDialog):
         apply_btn.clicked.connect(self._apply_fixes)
         layout.addWidget(buttons)
 
+    def _check_books(self) -> None:
+        """Opening this dialog is an explicit validation: each book is
+        re-checked against its file and the verdict is stamped (kept in
+        memory and marked unsaved; written into the EPUB on Save). The
+        automatic check on load never stamps."""
+        run_with_progress(
+            self, self.books, lambda book, _row: book.check_and_stamp(),
+            "Validating…", cancellable=False, update_every=25,
+        )
+
     def _refresh_table(self) -> None:
         self.table.setRowCount(len(self.books))
         self._checkboxes = {}
@@ -85,7 +96,8 @@ class ValidationDialog(QDialog):
         def _step(book: EpubBook, row: int) -> None:
             self.table.setItem(row, BOOK_COL, self._readonly_item(os.path.basename(book.path)))
 
-            status_item = self._readonly_item(book.validation_status)
+            status_item = self._readonly_item(book.status_text)
+            status_item.setToolTip(book.status_tooltip())
             color = STATUS_COLORS.get(book.validation_status)
             if color:
                 status_item.setBackground(QColor(color))
@@ -126,6 +138,7 @@ class ValidationDialog(QDialog):
                 fixed = book.apply_fixes()
                 if fixed:
                     fixed_count += 1
+                    book.record_validation()  # the post-fix verdict replaces the old stamp
 
         run_with_progress(
             self, self.books, _step, "Applying fixes…", cancellable=False, update_every=25,

@@ -1719,7 +1719,7 @@ class MainWindow(QMainWindow):
             self._apply_cached_cover_icon_only(name_item, book)
 
         with accum.section("status cell"):
-            status_item = QTableWidgetItem(book.validation_status)
+            status_item = QTableWidgetItem(book.status_text)
             status_item.setFlags(status_item.flags() & ~Qt.ItemFlag.ItemIsEditable)
             self.table.setItem(row, STATUS_COL, status_item)
             self._update_status_cell(row, book)
@@ -1782,11 +1782,10 @@ class MainWindow(QMainWindow):
             item.setBackground(SAVE_FAILED_COLOR)
             item.setForeground(HIGHLIGHT_TEXT_COLOR)
             return
-        item.setText(book.validation_status)
-        item.setToolTip(
-            "; ".join(i.message for i in book.validation_issues)
-            or "No issues found. Double-click for details."
-        )
+        # A stamped book shows "STATUS · date" (see EpubBook.status_text);
+        # the colour always follows the live verdict.
+        item.setText(book.status_text)
+        item.setToolTip(book.status_tooltip())
         color = STATUS_CELL_COLORS.get(book.validation_status)
         if color is not None:
             item.setBackground(color)
@@ -2991,7 +2990,7 @@ class MainWindow(QMainWindow):
         targets = self._redact_targets()
         if not targets:
             return
-        unsaved = [b for b in targets if b.dirty and not b.load_error]
+        unsaved = [b for b in targets if b.dirty and not b.stamp_only_dirty and not b.load_error]
         if unsaved and QMessageBox.question(
             self, "Unsaved changes",
             f"{len(unsaved)} of the {len(targets)} book(s) have unsaved edits. Redact works on the saved "
