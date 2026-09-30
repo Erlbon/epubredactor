@@ -4,6 +4,10 @@ All notable changes to The ƎPUB Redactor, by version. Trimmed to new
 functionality and real fixes — cosmetic/UX-only adjustments aren't
 listed here.
 
+## 2026-09-30#17 -- Adopt redactor_common 2026-09-30-15
+
+- Changed: Redact saves retry briefly when Windows antivirus/indexer briefly locks a file.
+
 ## 2026-09-30#16 -- Redact never rewrites a book just to stamp it
 
 - Changed: a validation stamp alone no longer counts as a change in Redact
