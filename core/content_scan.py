@@ -22,7 +22,7 @@ from dataclasses import dataclass, field
 
 import lxml.html
 
-from core.epub_metadata import EpubBook
+from core.epub_metadata import EpubBook, href_to_archive_path
 from core.isbn import best_isbn13, is_valid_isbn
 
 DEFAULT_MAX_DOCS = 4
@@ -104,7 +104,7 @@ def extract_text_from_epub(
                 href = id_to_href.get(itemref.get("idref"))
                 if not href:
                     continue
-                archive_path = posixpath.normpath(posixpath.join(opf_dir, href)) if opf_dir else href
+                archive_path = href_to_archive_path(opf_dir, href)
                 try:
                     raw = zf.read(archive_path)
                 except KeyError:

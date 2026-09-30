@@ -44,12 +44,12 @@ from __future__ import annotations
 
 import hashlib
 import mimetypes
+import os
 import posixpath
 import re
-import shutil
 import uuid
 import zipfile
-import zlib
+from urllib.parse import unquote
 from dataclasses import dataclass, field
 from typing import Optional
 
@@ -211,13 +211,43 @@ def format_date_parts(year: str, month: str, day: str) -> str:
     return f"{year}-{month.zfill(2)}-{day.zfill(2)}"
 
 
+def _xml_parser() -> etree.XMLParser:
+    """Parser for untrusted book XML: no entity expansion (billion-laughs,
+    local-file entities) and no network fetches."""
+    return etree.XMLParser(remove_blank_text=False, resolve_entities=False, no_network=True)
+
+
+# encryption.xml algorithms that only obfuscate embedded FONTS (IDPF and
+# Adobe); the book's text/images stay readable, so these are not DRM.
+_FONT_OBFUSCATION_ALGORITHMS = {
+    "http://www.idpf.org/2008/embedding",
+    "http://ns.adobe.com/pdf/enc#RC",
+}
+
+
+def href_to_archive_path(opf_dir: str, href: str) -> str:
+    """Resolves a manifest/guide `href` (relative to the OPF, and a URL
+    reference: may carry a #fragment or ?query and be percent-encoded,
+    e.g. "ch%201.xhtml" for a file really named "ch 1.xhtml") to the
+    member name it has inside the zip. The one place this lives, so
+    every lookup (validation, orphan scan, cover, compress) agrees.
+    Hrefs WRITTEN back into the OPF must keep their original encoded
+    form -- only the archive-side lookup is decoded. "" for an href with
+    nothing left after stripping the fragment/query."""
+    href = href.split("#", 1)[0].split("?", 1)[0]
+    if not href:
+        return ""
+    href = unquote(href)
+    return posixpath.normpath(posixpath.join(opf_dir, href)) if opf_dir else posixpath.normpath(href)
+
+
 def _find_opf_path(zf: zipfile.ZipFile) -> str:
     try:
         container_data = zf.read("META-INF/container.xml")
     except KeyError as exc:
         raise EpubError("Not a valid EPUB: missing META-INF/container.xml") from exc
 
-    tree = etree.fromstring(container_data)
+    tree = etree.fromstring(container_data, parser=_xml_parser())
     rootfile = tree.find(".//container:rootfile", namespaces=NS)
     if rootfile is None:
         raise EpubError("Not a valid EPUB: no <rootfile> in container.xml")
@@ -229,6 +259,10 @@ def _find_opf_path(zf: zipfile.ZipFile) -> str:
 
 class EpubBook:
     """Represents one EPUB file loaded for metadata editing."""
+
+    # Class-level empty default (an instance shadows it in _validate()) so
+    # cheap test doubles that skip __init__ still get "nothing encrypted".
+    _encrypted_paths: frozenset = frozenset()
 
     def __init__(self, path: str):
         self.path = path
@@ -262,6 +296,10 @@ class EpubBook:
         # to this book's own path, not on a "Save As Copy" to elsewhere.
         self._orphan_files_to_remove: set[str] = set()
 
+        # Archive paths encryption.xml says are really encrypted (DRM) --
+        # font obfuscation entries excluded. Filled by _validate().
+        self._encrypted_paths: set[str] = set()
+
         # archive_path -> new bytes, staged by stage_image_replacement()
         # (see Operations -> Compress Images (Lossy)), applied on the next
         # save() the same way cover_changed is.
@@ -282,23 +320,20 @@ class EpubBook:
             with zipfile.ZipFile(self.path, "r") as zf:
                 self.opf_path = _find_opf_path(zf)
                 opf_data = zf.read(self.opf_path)
-                self._opf_tree = etree.fromstring(
-                    opf_data, parser=etree.XMLParser(remove_blank_text=False)
-                ).getroottree()
+                self._opf_tree = etree.fromstring(opf_data, parser=_xml_parser()).getroottree()
                 self.metadata = self._read_metadata()
                 self._load_cover(zf)
                 self._validate(zf)
-        except (zipfile.BadZipFile, KeyError, etree.XMLSyntaxError, EpubError, OSError, zlib.error) as exc:
-            # zlib.error specifically: raised when a zip ENTRY's own
-            # compressed bytes are corrupted (truncated download, bit
-            # rot, a bad write) -- distinct from zipfile.BadZipFile,
-            # which is about the zip's own structure/header being
-            # malformed. Neither is a subclass of the other, so both
-            # need to be listed here explicitly; a file hit by this
-            # previously crashed the entire load operation outright
-            # (every other file in the same batch included) instead of
-            # just failing gracefully on its own, the same as every
-            # other kind of corruption already handled here.
+        except Exception as exc:  # noqa: BLE001 - one bad file must never abort a batch load
+            # Deliberately broad: a hostile or damaged zip can raise
+            # NotImplementedError (unsupported compression), RuntimeError
+            # (encrypted entry), ValueError, AttributeError (an OPF
+            # missing its expected structure), zipfile.LargeZipFile and
+            # zlib.error (corrupt entry data) as well as the usual
+            # BadZipFile/KeyError/XMLSyntaxError/EpubError/OSError --
+            # none of which should crash the load of every other file in
+            # the same batch. Unknown-type failures still surface to the
+            # user as this book's load_error.
             self.load_error = str(exc)
             self.validation_issues = [
                 ValidationIssue("LOAD_FAILED", SEVERITY_ERROR, str(exc), fixable=False)
@@ -473,8 +508,7 @@ class EpubBook:
         return None
 
     def _cover_archive_path(self, href: str) -> str:
-        opf_dir = posixpath.dirname(self.opf_path)
-        return posixpath.normpath(posixpath.join(opf_dir, href)) if opf_dir else href
+        return href_to_archive_path(posixpath.dirname(self.opf_path), href)
 
     def _load_cover(self, zf: zipfile.ZipFile) -> None:
         item = self._find_cover_item()
@@ -492,14 +526,19 @@ class EpubBook:
         media_type = item.get("media-type") or mimetypes.guess_type(href)[0] or ""
         self.cover_mime = media_type
 
-    def set_cover(self, image_bytes: bytes, mime: str) -> None:
+    def set_cover(self, image_bytes: bytes, mime: str) -> bool:
         """Stage a new cover image (add, or replace the existing one).
-        Not written to disk until save()."""
+        Not written to disk until save(). Returns False, staging nothing,
+        when the existing cover file is DRM-encrypted (overwriting it
+        would corrupt it -- see cover_is_encrypted())."""
+        if self.cover_is_encrypted():
+            return False
         self.cover_bytes = image_bytes
         self.cover_mime = mime
         self.cover_changed = True
         self.cover_removed = False
         self.dirty = True
+        return True
 
     def remove_cover(self) -> None:
         """Stage removal of the cover image. Not written to disk until
@@ -685,7 +724,9 @@ class EpubBook:
         # attempt to remove or work around DRM). SEVERITY_LOCKED, not
         # SEVERITY_ERROR: a DRM-protected book isn't broken or corrupt --
         # it's a perfectly valid EPUB, just off-limits to editing here.
+        self._encrypted_paths = set()
         if "META-INF/encryption.xml" in names:
+            self._encrypted_paths = self._read_encrypted_paths(zf)
             issues.append(ValidationIssue(
                 "DRM_DETECTED", SEVERITY_LOCKED,
                 "This book appears to be DRM-protected (META-INF/encryption.xml present). "
@@ -696,6 +737,40 @@ class EpubBook:
 
         self.validation_issues = issues
         self.validation_status = status_for_issues(issues)
+
+    @staticmethod
+    def _read_encrypted_paths(zf: zipfile.ZipFile) -> set[str]:
+        """Archive paths listed in META-INF/encryption.xml with a real
+        (non-font-obfuscation) encryption method. Best effort: an
+        unparseable file yields an empty set."""
+        try:
+            tree = etree.fromstring(zf.read("META-INF/encryption.xml"), parser=_xml_parser())
+        except Exception:  # noqa: BLE001
+            return set()
+        paths: set[str] = set()
+        for enc in tree.iter("{*}EncryptedData"):
+            method = enc.find("{*}EncryptionMethod")
+            algorithm = method.get("Algorithm") if method is not None else ""
+            if algorithm in _FONT_OBFUSCATION_ALGORITHMS:
+                continue
+            for ref in enc.iter("{*}CipherReference"):
+                uri = ref.get("URI")
+                if uri:
+                    paths.add(posixpath.normpath(unquote(uri)))
+        return paths
+
+    def is_path_encrypted(self, archive_path: str) -> bool:
+        """True if encryption.xml lists `archive_path` as really encrypted
+        (DRM). Overwriting such a file would corrupt it for readers."""
+        return archive_path in self._encrypted_paths
+
+    def cover_is_encrypted(self) -> bool:
+        """True if this book's current cover image file is DRM-encrypted."""
+        if not self._encrypted_paths:
+            return False
+        item = self._find_cover_item()
+        href = item.get("href") if item is not None else None
+        return bool(href) and self.is_path_encrypted(self._cover_archive_path(href))
 
     def apply_fixes(self, issue_codes: Optional[set[str]] = None) -> list[str]:
         """Apply whichever currently-fixable validation issues are
@@ -815,7 +890,7 @@ class EpubBook:
             href = item.get("href")
             if not href:
                 continue
-            archive_path = posixpath.normpath(posixpath.join(opf_dir, href)) if opf_dir else href
+            archive_path = href_to_archive_path(opf_dir, href)
             if archive_path not in names:
                 missing.append((item.get("id") or "", href))
         return missing
@@ -1005,7 +1080,7 @@ class EpubBook:
             href = raw_href.split("#", 1)[0]  # a #fragment doesn't affect whether the FILE exists
             if not href:
                 continue
-            archive_path = posixpath.normpath(posixpath.join(opf_dir, href)) if opf_dir else href
+            archive_path = href_to_archive_path(opf_dir, href)
             if archive_path not in names:
                 broken.append((ref.get("type") or "", ref.get("title") or "", raw_href))
         return broken
@@ -1054,7 +1129,7 @@ class EpubBook:
             for item in manifest.findall("opf:item", namespaces=NS):
                 href = item.get("href")
                 if href:
-                    archive_path = posixpath.normpath(posixpath.join(opf_dir, href)) if opf_dir else href
+                    archive_path = href_to_archive_path(opf_dir, href)
                     referenced.add(archive_path)
         orphans = []
         for name in sorted(names):
@@ -1111,8 +1186,8 @@ class EpubBook:
             href = item.get("href")
             if media_type not in media_types or not href:
                 continue
-            archive_path = posixpath.normpath(posixpath.join(opf_dir, href)) if opf_dir else href
-            if archive_path in sizes:
+            archive_path = href_to_archive_path(opf_dir, href)
+            if archive_path in sizes and not self.is_path_encrypted(archive_path):  # DRM'd image: don't rewrite
                 results.append((archive_path, sizes[archive_path]))
         return results
 
@@ -1412,48 +1487,59 @@ class EpubBook:
         target = output_path or self.path
         tmp_fd_path = target + ".tmp_write"
 
-        with zipfile.ZipFile(self.path, "r") as src:
-            names = src.namelist()
-            infos = {i.filename: i for i in src.infolist()}
+        try:
+            with zipfile.ZipFile(self.path, "r") as src:
+                names = src.namelist()
+                infos = {i.filename: i for i in src.infolist()}
 
-            with zipfile.ZipFile(tmp_fd_path, "w") as dst:
-                written: set[str] = set()
+                with zipfile.ZipFile(tmp_fd_path, "w") as dst:
+                    written: set[str] = set()
 
-                # Always write a spec-correct mimetype entry -- first,
-                # uncompressed, exact required content -- regardless of
-                # what the source had (even if it was missing entirely).
-                # This is what validation's MIMETYPE_* issues refer to
-                # when they say "corrected automatically on next save".
-                dst.writestr(
-                    zipfile.ZipInfo("mimetype"),
-                    b"application/epub+zip",
-                    compress_type=zipfile.ZIP_STORED,
-                )
-                written.add("mimetype")
+                    # Always write a spec-correct mimetype entry -- first,
+                    # uncompressed, exact required content -- regardless of
+                    # what the source had (even if it was missing entirely).
+                    # This is what validation's MIMETYPE_* issues refer to
+                    # when they say "corrected automatically on next save".
+                    dst.writestr(
+                        zipfile.ZipInfo("mimetype"),
+                        b"application/epub+zip",
+                        compress_type=zipfile.ZIP_STORED,
+                    )
+                    written.add("mimetype")
 
-                for name in names:
-                    if name == "mimetype" or name in file_ops["remove"]:
-                        continue
-                    if name == self.opf_path:
-                        data = new_opf_bytes
-                    elif name in file_ops["add"]:
-                        data = file_ops["add"][name]
-                    else:
-                        data = src.read(name)
-                    info = infos[name]
-                    new_info = zipfile.ZipInfo(name, date_time=info.date_time)
-                    new_info.compress_type = info.compress_type
-                    new_info.external_attr = info.external_attr
-                    dst.writestr(new_info, data)
-                    written.add(name)
+                    for name in names:
+                        # `written` also skips a name the source lists twice
+                        # (a malformed zip): writing it again would produce a
+                        # duplicate-entry archive.
+                        if name in written or name in file_ops["remove"]:
+                            continue
+                        if name == self.opf_path:
+                            data = new_opf_bytes
+                        elif name in file_ops["add"]:
+                            data = file_ops["add"][name]
+                        else:
+                            data = src.read(name)
+                        info = infos[name]
+                        new_info = zipfile.ZipInfo(name, date_time=info.date_time)
+                        new_info.compress_type = info.compress_type
+                        new_info.external_attr = info.external_attr
+                        dst.writestr(new_info, data)
+                        written.add(name)
 
-                # Brand-new files not present in the original archive
-                # (e.g. a cover added to a book that had none before).
-                for path, data in file_ops["add"].items():
-                    if path not in written:
-                        dst.writestr(path, data)
-
-        shutil.move(tmp_fd_path, target)
+                    # Brand-new files not present in the original archive
+                    # (e.g. a cover added to a book that had none before).
+                    for path, data in file_ops["add"].items():
+                        if path not in written:
+                            dst.writestr(path, data)
+            os.replace(tmp_fd_path, target)
+        finally:
+            # Gone after a successful replace; left behind by ANY failure
+            # mid-write (disk full, locked target, a corrupt source entry).
+            if os.path.exists(tmp_fd_path):
+                try:
+                    os.remove(tmp_fd_path)
+                except OSError:
+                    pass
         # Only treat this as "saved" (clear dirty, adopt new path) when we
         # actually overwrote this book's own file. Saving to a *different*
         # path is a copy -- the original book is still exactly as dirty

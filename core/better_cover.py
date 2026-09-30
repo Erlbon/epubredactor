@@ -26,6 +26,7 @@ from core.version import APP_VERSION
 COVER_BY_ISBN_URL = "https://covers.openlibrary.org/b/isbn/{isbn}-L.jpg?default=false"
 USER_AGENT = f"EpubRedactor/{APP_VERSION} (https://github.com/Erlbon/epubredactor)"
 TIMEOUT = 20
+MAX_COVER_BYTES = 10 * 1024 * 1024  # a cover is never anywhere near this; don't buffer a runaway response
 
 
 class IsbnCoverError(Exception):
@@ -39,7 +40,10 @@ class IsbnCoverLimitError(IsbnCoverError):
 def _default_get(url: str) -> bytes:
     request = urllib.request.Request(url, headers={"User-Agent": USER_AGENT})
     with urllib.request.urlopen(request, timeout=TIMEOUT) as response:
-        return response.read()
+        data = response.read(MAX_COVER_BYTES + 1)
+    if len(data) > MAX_COVER_BYTES:
+        raise IsbnCoverError("Open Library sent an unreasonably large cover image")
+    return data
 
 
 def fetch_cover_by_isbn(isbn: str, get: Optional[Callable[[str], bytes]] = None) -> Optional[bytes]:

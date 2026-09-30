@@ -60,6 +60,21 @@ def convert_to_epub(
         raise EbookConvertError(f"Unsupported source format: {ext}")
 
     args = [exe_path, source_path, output_path]
+    preexisting = os.path.exists(output_path)
+    try:
+        _run_convert(args, timeout, run_fn)
+    except EbookConvertError:
+        # A failed/timed-out conversion can leave a half-written output
+        # file behind; it would otherwise look like a real book.
+        if not preexisting and os.path.isfile(output_path):
+            try:
+                os.remove(output_path)
+            except OSError:
+                pass
+        raise
+
+
+def _run_convert(args: list, timeout: int, run_fn) -> None:
     try:
         proc = run_fn(args, capture_output=True, timeout=timeout, **no_console_window_kwargs())
     except subprocess.TimeoutExpired as exc:

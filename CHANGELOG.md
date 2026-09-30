@@ -4,6 +4,29 @@ All notable changes to The ƎPUB Redactor, by version. Trimmed to new
 functionality and real fixes — cosmetic/UX-only adjustments aren't
 listed here.
 
+## 2026-09-30#02 -- Safer saving and loading
+
+- Books whose manifest uses percent-encoded file names (`ch%201.xhtml`,
+  accented names) are read correctly: no more false "files missing from
+  the manifest", and Rebuild Manifest / orphan removal no longer delete
+  files that are really there. Replacing the cover of such a book now
+  overwrites the old image instead of adding a second one.
+- Saving replaces the original atomically on Windows too, leaves no
+  `.tmp_write` file behind after a failed save, and never writes the same
+  entry twice.
+- One unreadable or unusual file can no longer abort loading a batch
+  (any error now just marks that file as failed to load).
+- Books whose cover is DRM-encrypted keep it: Replace Cover, Generate
+  Cover and Compress Images skip the encrypted image (font obfuscation
+  alone doesn't count).
+- Send to Kobo finds the reader on Linux (`/media/$USER`,
+  `/run/media/$USER`) and macOS (`/Volumes`), not just Windows drives.
+- Book XML is parsed without expanding entities or touching the network;
+  Open Library cover downloads are capped at 10 MB; a failed
+  ebook-convert run no longer leaves a half-written EPUB behind; the
+  "Locate Sigil" dialog no longer insists on `sigil.exe` outside Windows.
+- redactor_common 2026-09-30-02 (from 2026-09-30-01).
+
 ## 2026-09-30#01 -- Lookups in the right-click menu, zero-padding remembered
 
 - Right-clicking a book now has a **Look Up** submenu with Google Books,

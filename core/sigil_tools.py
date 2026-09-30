@@ -17,10 +17,20 @@ from __future__ import annotations
 import os
 import shutil
 import subprocess
+import sys
 
 from redactor_common.core.tool_locator import find_tool, windows_program_dirs
 
 DOWNLOAD_URL = "https://sigil-ebook.com/sigil/download/"
+
+
+def sigil_file_filter() -> str:
+    """File-dialog filter for locating the Sigil executable, per platform
+    (a bare sigil.exe filter hides it everywhere but Windows)."""
+    if sys.platform == "win32":
+        return "Sigil (sigil.exe)"
+    return "Sigil (sigil Sigil *.AppImage);;All files (*)"
+
 
 def _default_install_dirs() -> list[str]:
     """Well-known install folders (empty off Windows). Tests patch this
