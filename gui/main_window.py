@@ -845,7 +845,12 @@ class MainWindow(QMainWindow):
             items.append(self.delete_files_act)
             items.append(Separator())
             items.append(MenuAction("validate", "Validate / Fix Issues…", self.open_validation_dialog))
-            items.append(MenuAction("calibre_lookup", "Look Up via Calibre…", self.open_calibre_lookup_dialog))
+            # Every lookup source from the Import menu, in one place.
+            items.append(Submenu("Look Up", [
+                MenuAction("google_books_lookup", "Google Books…", self.open_google_books_dialog),
+                MenuAction("open_library_lookup", "Open Library…", self.open_open_library_dialog),
+                MenuAction("calibre_lookup", "Calibre…", self.open_calibre_lookup_dialog),
+            ]))
             items.append(MenuAction("polish_book", "Polish Book…", self.open_polish_book_dialog))
             items.append(MenuAction("number_series", "Number Series…", self.quick_number_series))
             books_with_covers = [b for b in books if b.cover_hash is not None]
@@ -2556,6 +2561,8 @@ class MainWindow(QMainWindow):
             zero_pad_label="Zero-pad series number to:",
             ascii_only=app_settings.load_ascii_filenames(),
             on_ascii_only_changed=app_settings.save_ascii_filenames,
+            zero_pad_initial=app_settings.load_rename_zero_pad(),
+            on_zero_pad_changed=app_settings.save_rename_zero_pad,
             parent=self,
         )
         if dialog.exec() != dialog.DialogCode.Accepted:

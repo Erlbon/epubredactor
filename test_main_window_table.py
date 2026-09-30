@@ -218,3 +218,17 @@ if __name__ == "__main__":
     test_wrap_mode_still_shows_raw_multiline_text()
     test_refresh_rows_full_is_efficient_for_a_large_batch()
     print("\nALL MAIN WINDOW TABLE TESTS PASSED")
+
+
+def test_every_lookup_is_in_the_right_click_menu(monkeypatch):
+    window = MainWindow()
+    seen = {}
+
+    def fake_show(win, table, pos, get_selected_items, get_path, extra_items=None):
+        seen["items"] = extra_items([])
+
+    monkeypatch.setattr(mw, "show_table_context_menu", fake_show)
+    window._show_table_context_menu(None)
+    sub = next(i for i in seen["items"] if isinstance(i, mw.Submenu))
+    assert sub.text == "Look Up"
+    assert [i.text for i in sub.items] == ["Google Books…", "Open Library…", "Calibre…"]

@@ -4,6 +4,14 @@ All notable changes to The ƎPUB Redactor, by version. Trimmed to new
 functionality and real fixes — cosmetic/UX-only adjustments aren't
 listed here.
 
+## 2026-09-30#01 -- Lookups in the right-click menu, zero-padding remembered
+
+- Right-clicking a book now has a **Look Up** submenu with Google Books,
+  Open Library and Calibre (only Calibre was there before).
+- Rename Files (Pattern) remembers the zero-pad checkbox and width.
+- redactor_common 2026-09-30-01 (from 2026-09-29-04): the shared dialogs
+  that make this possible.
+
 ## 2026-09-29#05 -- Shared library update
 
 - redactor_common 2026-09-29-04 (from 2026-09-29-03): a fix to the shared preview loader, which this app doesn't use -- no change in behavior here.

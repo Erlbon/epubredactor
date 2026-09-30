@@ -372,3 +372,12 @@ if __name__ == "__main__":
     test_parse_junk_cover_hashes_not_a_list()
     test_parse_junk_cover_hashes_drops_malformed_entries()
     print("\nALL APP SETTINGS TESTS PASSED")
+
+
+def test_zero_pad_choice_is_remembered(monkeypatch, tmp_path):
+    from gui import app_settings
+
+    monkeypatch.setattr(app_settings, "_settings_ini_path", lambda: str(tmp_path / "s.ini"))
+    assert app_settings.load_rename_zero_pad() == (False, 2)
+    app_settings.save_rename_zero_pad(True, 3)
+    assert app_settings.load_rename_zero_pad() == (True, 3)
