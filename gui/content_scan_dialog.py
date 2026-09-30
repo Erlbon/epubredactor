@@ -2,7 +2,8 @@
 gui/content_scan_dialog.py
 
 Scans each selected book's first few pages for metadata patterns
-(publisher, author, ISBN, year, DDC -- see core/content_scan.py) and
+(publisher, author, ISBN, year, DDC, language, series, contributors --
+see core/content_scan.py) and
 lets you review and selectively apply the results. Same "find
 candidates, human decides" pattern as the Google Books/Open Library
 lookups -- this is a heuristic best-guess tool, not a reliable parser,
@@ -51,8 +52,10 @@ class ContentScanDialog(QDialog):
     def _build_ui(self) -> None:
         layout = QVBoxLayout(self)
         info = QLabel(
-            f"Scanning the first few pages of {len(self.books)} book(s) for publisher, "
-            "author, ISBN, year, and DDC classification.\n"
+            f"Scanning the first and last few pages of {len(self.books)} book(s) for publisher, "
+            "author, ISBN, year, DDC classification, language and series.\n"
+            "Each value shows how confident the guess is. Translator, editor, illustrator and "
+            "edition are shown for information only -- the app has no field to store them.\n"
             "This is a best guess from the book's own text, not a reliable parser -- "
             "review before applying."
         )
@@ -95,15 +98,34 @@ class ContentScanDialog(QDialog):
                 result = None
 
             fields = result.as_dict() if result else {}
+            # A language guess that agrees with what the book already says
+            # (en vs en-GB) is not a change worth offering.
+            current_language = (getattr(book.metadata, "language", "") or "").lower()
+            if fields.get("language") and current_language.split("-")[0] == fields["language"]:
+                del fields["language"]
+            info = result.info_dict() if result else {}
             cb = QCheckBox()
-            if fields:
-                summary = "; ".join(f"{k}: {v}" for k, v in fields.items())
-                self.table.setItem(row, FOUND_COL, self._readonly_item(summary))
-                cb.setChecked(True)
-                self._results[row] = fields
+            if fields or info:
+                confidence = result.confidence
+                parts = [
+                    f"{k}: {v} ({confidence[k]:.0%})" if k in confidence else f"{k}: {v}"
+                    for k, v in fields.items()
+                ]
+                if info:
+                    parts.append(
+                        "[info only, not applied] " + ", ".join(f"{k}: {v}" for k, v in info.items())
+                    )
+                item = self._readonly_item("; ".join(parts))
+                if result.language_evidence:
+                    item.setToolTip(f"Language guess: {result.language_evidence}")
+                self.table.setItem(row, FOUND_COL, item)
                 found_count += 1
             else:
                 self.table.setItem(row, FOUND_COL, self._readonly_item("(nothing found)"))
+            if fields:
+                cb.setChecked(True)
+                self._results[row] = fields
+            else:
                 cb.setEnabled(False)
             self._checkboxes[row] = cb
             self.table.setCellWidget(row, APPLY_COL, cb)

@@ -214,9 +214,11 @@ them in one go.
   count against the current batch. Every available field code is also
   listed in a clickable side panel — double-click one to insert it at
   the cursor's current position in the pattern.
-- **Scan Content for Metadata** — reads the first few pages of each book
-  (title/copyright page) for ISBN, publisher, author, year, and DDC
-  classification. A best-guess heuristic tool, not a reliable parser —
+- **Scan Content for Metadata** — reads the first and last few pages of each
+  book (title/copyright page, colophon) for ISBN, publisher, author, year,
+  DDC classification, language and series/volume, in English, Norwegian,
+  Italian, German and French. Translator, editor, illustrator and edition
+  are shown for information only. A best-guess heuristic tool, not a reliable parser —
   review the matches before applying, same as the Google Books and Open
   Library lookups.
 - Load individual files, or one or more folders of `.epub` files (the
@@ -821,6 +823,7 @@ core/rename_pattern.py         - "Tag to Filename" pattern engine (no GUI code)
 core/author_sort.py             - Author(s) <-> Author Sort naive guess conversions, both directions
 core/filename_parser.py         - "Filename to Tag" parser, the reverse (no GUI code)
 core/content_scan.py             - heuristic metadata extraction from book content
+core/language_detect.py          - stopword-based en/no/it/de/fr language guess
 core/genres.py                  - common genre list + quick-pick merge logic
 core/languages.py                - default language list for the quick-pick menu
 core/isbn.py                      - ISBN-10/13 validation, normalization, conversion
@@ -899,6 +902,7 @@ test_validation.py                  - automated test for validation + fix-applic
 test_validation_issue.py             - automated test for status classification
 test_filename_parser.py               - automated test for the filename parser
 test_content_scan.py                   - automated test for content-scan heuristics
+test_content_scan_multilingual.py       - multilingual patterns, language, series, back matter, dialog
 test_rename_pattern.py              - automated test for the filename pattern engine
 test_genres.py                       - automated test for the genre quick-pick logic
 test_isbn.py                          - automated test for ISBN validation/conversion

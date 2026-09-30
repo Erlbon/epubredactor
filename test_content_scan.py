@@ -151,7 +151,7 @@ def test_extract_text_from_epub_reads_spine_order():
 def test_extract_text_respects_max_docs():
     path = os.path.join(TEST_DIR, "scan2.epub")
     book = build_book(path)
-    text = extract_text_from_epub(book, max_docs=1)
+    text = extract_text_from_epub(book, max_docs=1, tail_docs=0)
     assert "The Great Test Novel" in text
     assert "Chapter One begins here." not in text
     print("PASS: max_docs limits how many spine documents are scanned")

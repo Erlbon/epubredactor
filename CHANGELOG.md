@@ -4,6 +4,21 @@ All notable changes to The ƎPUB Redactor, by version. Trimmed to new
 functionality and real fixes — cosmetic/UX-only adjustments aren't
 listed here.
 
+## 2026-09-30#06 -- Scan Content: five languages, language, series
+
+- Scan Content for Metadata now understands English, Norwegian, Italian,
+  German and French front matter (Utgitt av, Verlag, Editions, Casa
+  editrice, Erstausgabe, Première édition, Traduzione di, ...),
+  with or without accents. It also reads the last three pages (colophon,
+  about the publisher), not just the first four; front-page matches win.
+- New suggestions: the book's language (from its text, en/no/it/de/fr),
+  series and volume ("(The Expanse #2)", "Bind 2", "Tome 4", "Volume II",
+  ...), and each one shows a confidence. Translator, editor, illustrator
+  and edition are listed for information only: the app has no field to
+  store them. Nothing is applied without review, as before.
+- Book pages without a charset hint no longer turn "Første" into mojibake
+  when scanned.
+
 ## 2026-09-30#05 -- Open in Default App
 
 - Right-click menu gains Open in Default App (redactor_common 2026-09-30-04).
