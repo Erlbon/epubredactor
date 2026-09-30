@@ -4,6 +4,10 @@ All notable changes to The ƎPUB Redactor, by version. Trimmed to new
 functionality and real fixes — cosmetic/UX-only adjustments aren't
 listed here.
 
+## 2026-09-30#18 -- Kobo USB tests no longer assume Windows
+
+- Fixed: the Kobo drive-detection tests now pin sys.platform to win32, so they pass on Linux CI (no product change).
+
 ## 2026-09-30#17 -- Adopt redactor_common 2026-09-30-15
 
 - Changed: Redact saves retry briefly when Windows antivirus/indexer briefly locks a file.

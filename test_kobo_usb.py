@@ -13,7 +13,8 @@ shutil.rmtree(TEST_DIR, ignore_errors=True)  # clean slate each run, avoids stal
 os.makedirs(TEST_DIR, exist_ok=True)
 
 
-def test_find_connected_kobos_detects_one():
+def test_find_connected_kobos_detects_one(monkeypatch):
+    monkeypatch.setattr(sys, "platform", "win32")  # Windows drive-letter branch, on any host OS
     def fake_isdir(path):
         return path == "E:\\.kobo"
 
@@ -22,7 +23,8 @@ def test_find_connected_kobos_detects_one():
     print("PASS: finds a single connected Kobo by its .kobo marker folder")
 
 
-def test_find_connected_kobos_multiple():
+def test_find_connected_kobos_multiple(monkeypatch):
+    monkeypatch.setattr(sys, "platform", "win32")  # Windows drive-letter branch, on any host OS
     def fake_isdir(path):
         return path in ("E:\\.kobo", "G:\\.kobo")
 
@@ -31,13 +33,15 @@ def test_find_connected_kobos_multiple():
     print("PASS: finds multiple connected Kobos")
 
 
-def test_find_connected_kobos_none():
+def test_find_connected_kobos_none(monkeypatch):
+    monkeypatch.setattr(sys, "platform", "win32")  # Windows drive-letter branch, on any host OS
     result = find_connected_kobos(isdir_fn=lambda path: False)
     assert result == []
     print("PASS: no Kobo connected -> empty list, not an error")
 
 
-def test_find_connected_kobos_custom_drive_letters():
+def test_find_connected_kobos_custom_drive_letters(monkeypatch):
+    monkeypatch.setattr(sys, "platform", "win32")  # Windows drive-letter branch, on any host OS
     result = find_connected_kobos(drive_letters="XY", isdir_fn=lambda path: path == "Y:\\.kobo")
     assert result == ["Y:\\"], result
     print("PASS: only checks the given drive letters when a custom set is provided")
@@ -103,12 +107,6 @@ def test_send_to_kobo_copy_failure_wrapped():
 
 
 if __name__ == "__main__":
-    test_find_connected_kobos_detects_one()
-    test_find_connected_kobos_multiple()
-    test_find_connected_kobos_none()
-    test_find_connected_kobos_custom_drive_letters()
-    test_send_to_kobo_copies_file()
-    test_send_to_kobo_missing_source_raises()
-    test_send_to_kobo_collision_auto_numbers()
-    test_send_to_kobo_copy_failure_wrapped()
-    print("\nALL KOBO USB TESTS PASSED")
+    import pytest
+
+    raise SystemExit(pytest.main([__file__, "-q"]))
