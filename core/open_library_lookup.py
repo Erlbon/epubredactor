@@ -28,6 +28,7 @@ import urllib.error
 from dataclasses import dataclass
 from urllib.parse import quote
 
+from core.isbn import normalize_isbn
 from redactor_common.core.lookup_client import fetch_bytes, make_default_fetch
 
 SEARCH_URL = "https://openlibrary.org/search.json"
@@ -129,23 +130,21 @@ def parse_search_response(raw: bytes) -> list[OpenLibraryCandidate]:
     return candidates
 
 
-def search_open_library(
-    title: str, author: str = "", fetch=None, max_results: int = 6, sleep_fn=time.sleep
-) -> list[OpenLibraryCandidate]:
-    """Search for candidates. Raises OpenLibraryLookupError on missing
-    title, network failure, or an unparseable response. Returns an
-    empty list (not an error) when the search succeeds but finds
-    nothing. An HTTP 429 (rate limited) is retried a couple of times
-    with a short backoff before giving up -- see
-    RATE_LIMIT_RETRY_DELAYS."""
-    fetch = fetch or _default_fetch
-    url = build_search_url(title, author, max_results)
+def build_isbn_search_url(isbn: str, max_results: int = 3) -> str:
+    isbn = normalize_isbn(isbn or "")
+    if not isbn:
+        raise OpenLibraryLookupError("An ISBN is required to search Open Library by ISBN.")
+    return f"{SEARCH_URL}?isbn={quote(isbn)}&limit={max_results}"
 
+
+def _fetch_with_retry(url: str, fetch, sleep_fn) -> bytes:
+    """One GET with the rate-limit policy shared by both searches: an
+    HTTP 429 is retried a couple of times with a short backoff before
+    giving up -- see RATE_LIMIT_RETRY_DELAYS."""
     remaining_delays = list(RATE_LIMIT_RETRY_DELAYS)
     while True:
         try:
-            raw = fetch(url)
-            break
+            return fetch(url)
         except urllib.error.HTTPError as exc:
             if exc.code == 429 and remaining_delays:
                 sleep_fn(remaining_delays.pop(0))
@@ -164,7 +163,25 @@ def search_open_library(
                 f"Could not reach Open Library (check your internet connection): {exc}"
             ) from exc
 
-    return parse_search_response(raw)
+
+def search_open_library(
+    title: str, author: str = "", fetch=None, max_results: int = 6, sleep_fn=time.sleep
+) -> list[OpenLibraryCandidate]:
+    """Search for candidates. Raises OpenLibraryLookupError on missing
+    title, network failure, or an unparseable response. Returns an
+    empty list (not an error) when the search succeeds but finds
+    nothing."""
+    url = build_search_url(title, author, max_results)
+    return parse_search_response(_fetch_with_retry(url, fetch or _default_fetch, sleep_fn))
+
+
+def search_open_library_by_isbn(
+    isbn: str, fetch=None, max_results: int = 3, sleep_fn=time.sleep
+) -> list[OpenLibraryCandidate]:
+    """Works Open Library lists for exactly this ISBN (used by the Redact
+    recipe). Same errors and retry policy as search_open_library()."""
+    url = build_isbn_search_url(isbn, max_results)
+    return parse_search_response(_fetch_with_retry(url, fetch or _default_fetch, sleep_fn))
 
 
 def download_cover_image(candidate: OpenLibraryCandidate, fetch=None) -> bytes:

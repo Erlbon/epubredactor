@@ -623,3 +623,36 @@ def save_rename_zero_pad(enabled: bool, width: int) -> None:
     settings = _settings()
     settings.setValue(_ZERO_PAD_ENABLED_KEY, bool(enabled))
     settings.setValue(_ZERO_PAD_WIDTH_KEY, int(width))
+
+
+# ------------------------------------------------------------------
+# Redact recipe (Edit > Edit Redact Recipe...) -- one-line JSON from
+# redactor_common's Recipe. QSettings writes the ini atomically.
+# ------------------------------------------------------------------
+
+_REDACT_RECIPE_KEY = "redact/recipe"
+
+
+def load_redact_recipe() -> str:
+    """The saved recipe JSON, or "" (= every step at its default)."""
+    return str(_settings().value(_REDACT_RECIPE_KEY, "", type=str) or "")
+
+
+def save_redact_recipe(text: str) -> None:
+    _settings().setValue(_REDACT_RECIPE_KEY, text)
+
+
+# ------------------------------------------------------------------
+# Library root for the Rename dialog's "Move into folders" mode -- also
+# what the Redact recipe's Move into folders step moves under.
+# ------------------------------------------------------------------
+
+_LIBRARY_ROOT_KEY = "move/library_root"
+
+
+def load_library_root() -> str:
+    return str(_settings().value(_LIBRARY_ROOT_KEY, "", type=str) or "")
+
+
+def save_library_root(path: str) -> None:
+    _settings().setValue(_LIBRARY_ROOT_KEY, path)

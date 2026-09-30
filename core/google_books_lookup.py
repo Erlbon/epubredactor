@@ -23,7 +23,7 @@ import urllib.error
 from dataclasses import dataclass
 from urllib.parse import quote
 
-from core.isbn import best_isbn13
+from core.isbn import best_isbn13, normalize_isbn
 
 from redactor_common.core.lookup_client import fetch_bytes, make_default_fetch
 
@@ -156,29 +156,22 @@ def parse_response(raw: bytes) -> list[GoogleBooksCandidate]:
     return candidates
 
 
-def search_google_books(
-    title: str,
-    authors_str: str = "",
-    fetch=None,
-    max_results: int = 5,
-    sleep_fn=time.sleep,
-) -> list[GoogleBooksCandidate]:
-    """Search for candidates matching the given title/author(s).
+def build_isbn_query_url(isbn: str, max_results: int = 3) -> str:
+    isbn = normalize_isbn(isbn or "")
+    if not isbn:
+        raise GoogleBooksLookupError("An ISBN is required to search Google Books by ISBN.")
+    return f"{API_URL}?q={quote('isbn:' + isbn)}&maxResults={max_results}"
 
-    Raises GoogleBooksLookupError on missing title, network failure, or
-    an unparseable response. Returns an empty list (not an error) when
-    the search succeeds but simply finds nothing. An HTTP 429 (rate
-    limited) is retried a couple of times with a short backoff before
+
+def _fetch_with_retry(url: str, fetch, sleep_fn) -> bytes:
+    """One GET with the rate-limit policy shared by both searches: an
+    HTTP 429 is retried a couple of times with a short backoff before
     giving up -- see RATE_LIMIT_RETRY_DELAYS -- since this is usually a
     transient, short-lived limit, not a real failure."""
-    fetch = fetch or _default_fetch
-    url = build_query_url(title, authors_str, max_results)
-
     remaining_delays = list(RATE_LIMIT_RETRY_DELAYS)
     while True:
         try:
-            raw = fetch(url)
-            break
+            return fetch(url)
         except urllib.error.HTTPError as exc:
             if exc.code == 429 and remaining_delays:
                 sleep_fn(remaining_delays.pop(0))
@@ -197,7 +190,31 @@ def search_google_books(
                 f"Could not reach Google Books (check your internet connection): {exc}"
             ) from exc
 
-    return parse_response(raw)
+
+def search_google_books(
+    title: str,
+    authors_str: str = "",
+    fetch=None,
+    max_results: int = 5,
+    sleep_fn=time.sleep,
+) -> list[GoogleBooksCandidate]:
+    """Search for candidates matching the given title/author(s).
+
+    Raises GoogleBooksLookupError on missing title, network failure, or
+    an unparseable response. Returns an empty list (not an error) when
+    the search succeeds but simply finds nothing."""
+    url = build_query_url(title, authors_str, max_results)
+    return parse_response(_fetch_with_retry(url, fetch or _default_fetch, sleep_fn))
+
+
+def search_google_books_by_isbn(
+    isbn: str, fetch=None, max_results: int = 3, sleep_fn=time.sleep
+) -> list[GoogleBooksCandidate]:
+    """Candidates Google Books lists for exactly this ISBN (used by the
+    Redact recipe, where an ISBN match is trusted far more than a title
+    search). Same errors and retry policy as search_google_books()."""
+    url = build_isbn_query_url(isbn, max_results)
+    return parse_response(_fetch_with_retry(url, fetch or _default_fetch, sleep_fn))
 
 
 def download_cover_image(candidate: GoogleBooksCandidate, fetch=None) -> bytes:

@@ -4,6 +4,32 @@ All notable changes to The ƎPUB Redactor, by version. Trimmed to new
 functionality and real fixes — cosmetic/UX-only adjustments aren't
 listed here.
 
+## 2026-09-30#07 -- Redact
+
+- New Operations > Redact (Ctrl+Shift+E, toolbar): one click repairs and
+  fills in the selected books (or, after asking, all loaded ones) with no
+  dialogs. Each changed book is written to a temp file, checked (reopens,
+  nothing lost, no new errors), then swapped in place; the original goes
+  to the Recycle Bin. A results window lists changes, notes, skipped books
+  and a Needs review tab.
+- Steps, in order: fix validation issues, deduplicate manifest ids,
+  rebuild manifest, repair navigation (orphan-file removal is an option,
+  off), generate a table of contents (a real one from headings is applied;
+  a "Section N" one goes to review), strip HTML from the description,
+  detect a blank language, ISBN / publisher / year / series from the front
+  matter, fill EMPTY fields online by ISBN (Google Books, Open Library),
+  cover (by ISBN for a missing or junk-flagged one, else a generated
+  cover when there is none at all), rename by your latest pattern (on only
+  if you have used one) and Move into folders (off).
+- Guesses are applied only at confidence 90% or more (configurable);
+  lower ones are listed, never applied. Books with unsaved edits, a load
+  error or DRM are skipped and named in the report. Edit Redact Recipe
+  turns steps on/off, reorders them and sets options and the threshold.
+- Renames and moves done by Redact are undone with File > Undo Last Rename.
+- Selecting several books is now restored properly after a reload
+  (only the last one stayed selected before).
+- redactor_common 2026-09-30-10.
+
 ## 2026-09-30#06 -- Scan Content: five languages, language, series
 
 - Scan Content for Metadata now understands English, Norwegian, Italian,

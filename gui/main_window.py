@@ -37,7 +37,7 @@ import sys
 import traceback
 import webbrowser
 
-from PyQt6.QtCore import QSize, Qt, QTimer
+from PyQt6.QtCore import QItemSelectionModel, QSize, Qt, QTimer
 from PyQt6.QtGui import QActionGroup, QColor, QGuiApplication, QIcon
 from PyQt6.QtWidgets import (
     QAbstractItemView,
@@ -86,6 +86,13 @@ from redactor_common.core.rename_log import RenameLog
 from redactor_common.gui.rename_undo import undo_last_rename
 from core.app_paths import base_dir
 from redactor_common.gui.rename_pattern_dialog import RenamePatternDialog
+from redactor_common.gui.redact_dialog import (
+    RecipeEditorDialog,
+    RedactResultsDialog,
+    edit_recipe_menu_action,
+    redact_menu_action,
+)
+from redactor_common.gui.redact_dialog import run_redact as run_redact_dialog
 from redactor_common.gui.rename_single_file import rename_single_file as prompt_rename_single_file
 from redactor_common.gui.async_hash_cache import AsyncHashCache
 from redactor_common.gui.async_icon_cache import AsyncIconCache
@@ -119,6 +126,16 @@ from gui.google_books_dialog import GoogleBooksDialog
 from gui.image_compress import recompress_jpeg
 from redactor_common.gui.manage_list_dialog import ManageListDialog
 from gui.manifest_dedupe_dialog import ManifestDedupeDialog
+from core.redact_steps import (
+    EpubCtx,
+    RedactEnv,
+    build_catalogue,
+    recipe_for_run,
+    recipe_from_setting,
+    recipe_to_setting,
+    run_catalogue,
+    save_finalize,
+)
 from core.toc_generate import stage_generated_toc_for
 from gui.manifest_rebuild_dialog import ManifestRebuildDialog
 from gui.missing_space_dialog import MissingSpaceDialog
@@ -571,6 +588,12 @@ class MainWindow(QMainWindow):
                 # "Apply to N selected book(s)" text and enabled state
                 # never drift out of sync between the two.
                 MenuAction("apply_bulk_edit", "&Apply to 0 selected book(s)", self.tag_panel.apply_bulk_edit),
+                # One click: the recipe's repairs and fill-ins on the selected
+                # books (or all loaded, if none selected), each saved in place
+                # with its original in the Recycle Bin. See redact_books().
+                redact_menu_action(self.redact_books, text="Re&dact"),
+                edit_recipe_menu_action(self.edit_redact_recipe, text="Edit Redact Reci&pe…"),
+                Separator(),
                 MenuAction("case_conversion", "&Case Conversion…", self.open_case_conversion_dialog),
                 MenuAction(
                     "author_sort_convert", "Author Sor&t Conversion…",
@@ -696,6 +719,7 @@ class MainWindow(QMainWindow):
         self.delete_files_act = actions["delete_files"]
         self.apply_bulk_edit_act = actions["apply_bulk_edit"]
         self.apply_bulk_edit_act.setEnabled(False)
+        self.redact_act = actions["redact"]
         self.undo_act = actions["undo"]
         self.undo_act.setEnabled(False)
         self.redo_act = actions["redo"]
@@ -735,6 +759,7 @@ class MainWindow(QMainWindow):
         toolbar.addAction(self.save_act)
         toolbar.addSeparator()
         toolbar.addAction(self.apply_bulk_edit_act)
+        toolbar.addAction(self.redact_act)
         toolbar.addSeparator()
         toolbar.addAction(self.undo_act)
         toolbar.addAction(self.redo_act)
@@ -1364,10 +1389,16 @@ class MainWindow(QMainWindow):
         self.table.clearSelection()
         rows_by_book = self._rows_by_book()
         first_row = None
+        model, selection = self.table.model(), self.table.selectionModel()
         for book in books:
             row = rows_by_book.get(book)
             if row is not None:
-                self.table.selectRow(row)
+                # Not table.selectRow(): in ExtendedSelection mode that
+                # replaces the selection, so only the last book stayed selected.
+                selection.select(
+                    model.index(row, 0),
+                    QItemSelectionModel.SelectionFlag.Select | QItemSelectionModel.SelectionFlag.Rows,
+                )
                 if first_row is None:
                     first_row = row
         if first_row is not None:
@@ -2719,6 +2750,130 @@ class MainWindow(QMainWindow):
                 "Some files failed",
                 f"{succeeded} of {total} succeeded.\n\nFailed: {summarize_errors(errors)}",
             )
+
+    # ------------------------------------------------------------------
+    # Redact
+    # ------------------------------------------------------------------
+
+    @staticmethod
+    def _last_rename_pattern() -> str:
+        """The most recently applied Rename/Export pattern ("" if none):
+        the Redact recipe's Rename step default, and what turns it on."""
+        history = app_settings.load_pattern_history()
+        return history[0] if history else ""
+
+    def _redact_recipe(self):
+        return recipe_from_setting(app_settings.load_redact_recipe(), build_catalogue(self._last_rename_pattern()))
+
+    def edit_redact_recipe(self) -> None:
+        """Operations > Edit Redact Recipe...: the shared recipe editor over
+        this app's steps; the result is stored in the settings file."""
+        dialog = RecipeEditorDialog(build_catalogue(self._last_rename_pattern()), self._redact_recipe(), self)
+        if dialog.exec() == dialog.DialogCode.Accepted:
+            app_settings.save_redact_recipe(recipe_to_setting(dialog.recipe()))
+
+    def _redact_env(self) -> RedactEnv:
+        """What one run's steps share (see core/redact_steps.py). Lookups
+        run off the main thread so the progress dialog stays alive."""
+        from redactor_common.gui.background_call import call_in_background
+
+        return RedactEnv(
+            rename_log=_rename_log(),
+            library_root=app_settings.load_library_root(),
+            ascii_only=app_settings.load_ascii_filenames(),
+            zero_pad=app_settings.load_rename_zero_pad(),
+            junk_hashes=self._junk_cover_hashes,
+            make_cover=generate_cover_image,
+            image_size=cover_quality.image_size,
+            net=call_in_background,
+        )
+
+    def _redact_targets(self) -> list[EpubBook]:
+        """The selected books, else -- after asking -- every loaded book.
+        (Unlike the other batch actions, nothing selected is not an error:
+        Redact is meant to be one click on a whole library.) Books that
+        failed to load are included so the report can say they were skipped."""
+        targets = self._books_for_rows(self._selected_rows(), exclude_errors=False)
+        if targets:
+            return targets
+        if not self.books:
+            QMessageBox.information(self, "No books loaded", "Load some books first.")
+            return []
+        reply = QMessageBox.question(
+            self, "Redact all books?",
+            f"Nothing is selected. Redact all {len(self.books)} loaded book(s)?\n\n"
+            "Each book is repaired and saved in place; the original goes to the Recycle Bin.",
+            QMessageBox.StandardButton.Yes | QMessageBox.StandardButton.Cancel,
+        )
+        return list(self.books) if reply == QMessageBox.StandardButton.Yes else []
+
+    def redact_books(self) -> None:
+        """Operations > Redact (Ctrl+Shift+E): runs the saved recipe on the
+        targets through redactor_common's engine (progress, cancel, results
+        with Needs review). A book with unsaved edits is skipped and named
+        in the report, never overwritten; so is one that failed to load or
+        is DRM-protected. Redact is not on the Undo stack -- the Recycle Bin
+        copy of each original is the undo (and Undo Last Rename for renames
+        and moves) -- so the stack is cleared, like Refresh List does, rather
+        than left pointing at books that were just reloaded."""
+        targets = self._redact_targets()
+        if not targets:
+            return
+        unsaved = [b for b in targets if b.dirty and not b.load_error]
+        if unsaved and QMessageBox.question(
+            self, "Unsaved changes",
+            f"{len(unsaved)} of the {len(targets)} book(s) have unsaved edits. Redact works on the saved "
+            "files, so those will be skipped (and listed in the report). Continue with the rest?",
+            QMessageBox.StandardButton.Yes | QMessageBox.StandardButton.Cancel,
+        ) != QMessageBox.StandardButton.Yes:
+            return
+
+        env = self._redact_env()
+        env.begin()
+        catalogue = run_catalogue(self._last_rename_pattern())
+        report = run_redact_dialog(
+            self, targets, recipe_for_run(self._redact_recipe()), catalogue,
+            make_context=lambda book: EpubCtx(book, env),
+            describe=lambda book: os.path.basename(book.path),
+            title="Redact", show_results=False,
+            finalize=save_finalize, finalize_label="Save",
+        )
+        env.flush_log()
+        self.undo_manager = UndoManager(max_entries=UNDO_MAX_ENTRIES)
+        self.undo_act.setEnabled(False)
+        self.redo_act.setEnabled(False)
+        self._reload_redacted(env.touched)
+        if report is not None:
+            RedactResultsDialog(
+                report, self, title="Redact results",
+                header="Each changed book was saved in place and its original is in the Recycle Bin: "
+                       "restore it from there to undo. File > Undo Last Rename reverses renames and moves.",
+                extra_notes=env.notes_text().splitlines(),
+            ).exec()
+
+    def _reload_redacted(self, touched: dict) -> None:
+        """Points the list at what Redact wrote: every book in `touched`
+        (live book -> its final path) is re-read from disk, so the table
+        shows the saved metadata, cover and path."""
+        if not touched:
+            return
+        selected = self._currently_selected_books()
+        fresh: dict[EpubBook, EpubBook] = {}
+
+        def _reload(item: tuple[EpubBook, str], _i: int) -> None:
+            live, path = item
+            fresh[live] = EpubBook(path)  # a file that can't be read shows as a load error
+
+        run_with_progress(
+            self, list(touched.items()), _reload, "Reloading…",
+            threshold=LOAD_PROGRESS_THRESHOLD, cancellable=False,
+            label_for=lambda item: f"Loading: {os.path.basename(item[1])}",
+        )
+        self.books = [fresh.get(book, book) for book in self.books]
+        self._rebuild_table()
+        self._select_books([fresh.get(book, book) for book in selected])
+        self._refresh_status()
+        self._on_selection_changed()
 
     # ------------------------------------------------------------------
     # Google Books lookup
