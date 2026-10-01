@@ -31,6 +31,10 @@ SAFE rules
   caps            "STEPHEN KING" -> "Stephen King" (plain names only)
   suffix          "Jr" -> "Jr."
   duplicate       the same author twice (order, case, punctuation, spacing)
+  sort_from_author  "Last, First" written in Author(s) with no file-as: that
+                  text (tidied) becomes the file-as and the display name is
+                  generated from it; a different existing file-as is kept
+                  and reported as a sort_mismatch review row
   sort_fill       a missing file-as is generated
   sort_format     a file-as with sloppy spacing / initials is tidied
   sort_not_inverted  a file-as that is just the display name is inverted
@@ -175,6 +179,7 @@ class _Name:
     surname: str = ""  # a mono name is kept here
     suffix: str = ""
     text: str = ""  # opaque: as it was
+    from_sort: bool = False  # written "Last, First" in Authors: that text is the sort value
 
     @property
     def display(self) -> str:
@@ -486,9 +491,10 @@ def _parse_part(text: str, ctx: _Ctx) -> _Name:
         if norm != suffix:
             ctx.gate("suffix", True, f"{suffix!r} -> {norm!r}")
         suffix = norm
+    from_sort = kind in ("inverted", "inverted_suffix")
     if not given:
-        return _Name("mono", surname=surname, suffix=suffix)
-    return _Name("person", given=given, surname=surname, suffix=suffix)
+        return _Name("mono", surname=surname, suffix=suffix, from_sort=from_sort)
+    return _Name("person", given=given, surname=surname, suffix=suffix, from_sort=from_sort)
 
 
 # --- the sort value --------------------------------------------------------------------
@@ -543,7 +549,11 @@ def _decide_sort(name: _Name, sort_text: str, ctx: _Ctx) -> str:
         return sort_text
     computed = name.sort
     if not sort_text:
-        ctx.gate("sort_fill", True, f"{name.display!r} -> {computed!r}")
+        if name.from_sort:
+            # the sort-form text in Authors IS the author sort (tidied), not a guess
+            ctx.gate("sort_from_author", True, f"{computed!r} moved from Authors to Author Sort")
+        else:
+            ctx.gate("sort_fill", True, f"{name.display!r} -> {computed!r}")
         return computed
     parsed = _parse_sort(sort_text)
     inverted = parsed is not None and "," in sort_text

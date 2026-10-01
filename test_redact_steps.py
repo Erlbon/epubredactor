@@ -611,6 +611,17 @@ def test_clean_authors_step_applies_safe_fixes_and_only_names_review_items(tmp_p
     assert "needs review" in report.to_text()
 
 
+def test_clean_authors_step_moves_sort_form_authors_into_the_sort(tmp_path, env, trash):
+    path = make_epub(str(tmp_path / "s.epub"), authors=("van Gogh, Vincent", "King, Martin Luther, Jr."))
+    report = run([load(path)], env, only("clean_authors"))
+    assert only_entry(report).status is FileStatus.CHANGED, report.to_text()
+    saved = load(path)
+    assert saved.metadata.authors == ["Vincent van Gogh", "Martin Luther King Jr."]
+    assert saved.metadata.author_sort == ["van Gogh, Vincent", "King, Martin Luther, Jr."]
+    again = run([load(path)], env, only("clean_authors"))
+    assert only_entry(again).status is FileStatus.UNCHANGED
+
+
 def test_clean_authors_step_leaves_a_clean_book_alone(tmp_path, env, trash):
     path = make_epub(str(tmp_path / "ok.epub"), authors=("Jane Doe",))
     book = load(path)

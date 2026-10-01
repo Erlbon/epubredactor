@@ -29,6 +29,12 @@ def test_rows_split_safe_review_and_flag():
     assert both[0].new_authors == "Jane Doe; Simon & Schuster"      # guess not in the safe row
     assert both[1].new_authors == "Jane Doe; Simon; Schuster"       # included in the review row
 
+    moved = build_rows(4, _book("/x/e.epub", ["van Gogh, Vincent"]))
+    assert [r.kind for r in moved] == [KIND_SAFE]
+    assert moved[0].new_authors == "Vincent van Gogh" and moved[0].new_sort == "van Gogh, Vincent"
+    conflict = build_rows(5, _book("/x/f.epub", ["Tolkien, J. R. R."], ["Foo, Bar"]))
+    assert KIND_REVIEW in [r.kind for r in conflict]
+
     flag = build_rows(2, _book("/x/c.epub", ["J. K. Rowling (Robert Galbraith)"]))
     assert [r.kind for r in flag] == [KIND_FLAG]
 

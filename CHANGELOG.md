@@ -4,6 +4,10 @@ All notable changes to The ƎPUB Redactor, by version. Trimmed to new
 functionality and real fixes — cosmetic/UX-only adjustments aren't
 listed here.
 
+## 2026-10-01#11 -- Sort-form authors become the Author Sort
+
+- Changed: when Author(s) holds names written "Last, First" ("Tolkien, J.R.R.", "van Gogh, Vincent", "King, Martin Luther, Jr."), Clean Up Authors and the Redact step now move that text, tidied, into Author Sort and generate the display names from it ("J. R. R. Tolkien", "Vincent van Gogh", "Martin Luther King Jr."), several authors separated by ";" or " & " included. An existing Author Sort that agrees is kept; one that disagrees is kept and offered as an unticked review row. A comma list of full names ("Neil Gaiman, Terry Pratchett") is still review-only.
+
 ## 2026-10-01#10 -- Preferences dialog
 
 - New: Tools > Preferences (Ctrl+,) gathers the everyday settings in one dialog with four pages: Filenames (ASCII-safe filenames, zero-pad numbers and width), Language (the blank-language default and its on/off switch, with your own language list), Display (how long text shows in the table, performance logging) and Tools and Paths (Calibre folder, Sigil program, Open Library database and dump files). OK or Apply changes the open window at once; Cancel writes nothing; Reset to Defaults resets the current page. The settings keep their old places in the settings file, so File > Export / Import Settings is unaffected.

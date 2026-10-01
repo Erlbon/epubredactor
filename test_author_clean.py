@@ -88,6 +88,55 @@ def test_a_single_last_first_is_never_split():
     assert safe(["García Márquez, Gabriel"]).author_sort == ["García Márquez, Gabriel"]
 
 
+# --- sort-form values in the Authors box become the Author Sort ------------------------------
+
+
+@pytest.mark.parametrize("raw,display,sort", [
+    ("Tolkien, J.R.R.", "J. R. R. Tolkien", "Tolkien, J. R. R."),
+    ("van Gogh, Vincent", "Vincent van Gogh", "van Gogh, Vincent"),
+    ("King, Martin Luther, Jr.", "Martin Luther King Jr.", "King, Martin Luther, Jr."),
+    ("King, Martin Luther, Jr", "Martin Luther King Jr.", "King, Martin Luther, Jr."),
+    ("Le Guin, Ursula K.", "Ursula K. Le Guin", "Le Guin, Ursula K."),
+    ("TOLKIEN, J.R.R.", "J. R. R. Tolkien", "Tolkien, J. R. R."),
+])
+def test_sort_form_in_authors_moves_to_the_sort(raw, display, sort):
+    r = safe([raw])
+    assert r.authors == [display] and r.author_sort == [sort]
+    assert "sort_from_author" in rules(r) and not r.review
+    assert not safe(r.authors, r.author_sort).changed  # idempotent
+
+
+def test_sort_form_agreeing_with_existing_sort_is_kept_and_tidied():
+    r = safe(["Tolkien, J. R. R."], ["Tolkien, J.R.R."])
+    assert r.authors == ["J. R. R. Tolkien"] and r.author_sort == ["Tolkien, J. R. R."]
+    assert "sort_from_author" not in rules(r) and not r.review
+    r = safe(["Tolkien, J. R. R."], ["Tolkien, John Ronald Reuel"])  # richer sort wins, no review
+    assert r.author_sort == ["Tolkien, John Ronald Reuel"] and not r.review
+
+
+def test_several_sort_form_authors_each_move_to_the_sort():
+    for raw in ("Tolkien, J.R.R.; King, Stephen", "Tolkien, J.R.R. & King, Stephen"):
+        r = safe([raw])
+        assert r.authors == ["J. R. R. Tolkien", "Stephen King"]
+        assert r.author_sort == ["Tolkien, J. R. R.", "King, Stephen"]
+    r = safe(["Tolkien, J.R.R.", "King, Stephen"])
+    assert r.author_sort == ["Tolkien, J. R. R.", "King, Stephen"]
+
+
+def test_a_different_existing_sort_is_kept_and_reviewed():
+    s, f = safe(["Tolkien, J. R. R."], ["Foo, Bar"]), full(["Tolkien, J. R. R."], ["Foo, Bar"])
+    assert s.authors == ["J. R. R. Tolkien"] and s.author_sort == ["Foo, Bar"]
+    assert "sort_mismatch" in review_rules(s) and s.flags
+    assert f.author_sort == ["Tolkien, J. R. R."]
+
+
+def test_comma_lists_are_not_taken_as_sort_forms():
+    for raw in ("Neil Gaiman, Terry Pratchett", "Neil Gaiman, Terry Pratchett, Stephen King"):
+        r = safe([raw])
+        assert r.authors == [raw] and r.author_sort == [] and "sort_from_author" not in rules(r)
+        assert "list_split" in review_rules(r) or r.flags
+
+
 # --- splitting ---------------------------------------------------------------------------
 
 
