@@ -56,7 +56,7 @@ INSTRUCTIONS = (
     "which you then pick for both. They are several GB; keep them compressed.</li>"
     "<li>Choose them below, tick the languages to keep, and click <b>Build Database...</b>. "
     "Reading the dumps takes a while (tens of minutes); Cancel is safe.</li></ol>"
-    "Only editions with a valid ISBN are kept. Expect roughly 2 GB for the default languages "
+    "Only editions with a valid ISBN are kept. Expect roughly 2-3 GB for the default languages "
     "(more for all languages), plus about as much free disk space while it builds."
 )
 

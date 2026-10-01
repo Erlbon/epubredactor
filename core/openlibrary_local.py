@@ -24,8 +24,11 @@ Field mapping (candidate -> what Apply writes; see as_dict()):
     tags_str (genre)       <- NOT filled: Open Library's subjects are
                               fan-curated tags with no clean mapping to
                               this app's genre list
-    cover_id               <- NOT used yet (0): covers are fetched from
-                              the network, which this source avoids
+    cover_id               <- recorded on the candidate (Open Library's own cover
+                              id, 0 if none) but NOT fetched: as_dict() leaves it
+                              out and nothing here touches the network. The online
+                              cover path (image_url()/download_cover_image) could
+                              use it later.
 
 Matching: an ISBN (13 or 10, hyphens fine) is an exact lookup; when
 several editions share it the most completely filled-in record wins. A
@@ -63,7 +66,7 @@ CANDIDATE_POOL = 60  # rows pulled from the full-text index before ranking
 
 _COLUMNS = (
     "id, isbn13, isbn10, title, subtitle, authors_text, publishers, publish_date_raw, year, language, pages, "
-    "subjects"
+    "subjects, cover_id"
 )
 _NORWEGIAN = {"no", "nb", "nn", "nor", "nob", "nno"}
 
@@ -93,6 +96,7 @@ _ISO_MONTH = re.compile(rf"^{_YEAR}[-/.](\d{{1,2}})$")
 _NAME_DAY_YEAR = re.compile(rf"^({_MONTH_WORDS})\.?\s+(\d{{1,2}})(?:st|nd|rd|th)?,?\s+{_YEAR}$", re.I)
 _DAY_NAME_YEAR = re.compile(rf"^(\d{{1,2}})(?:st|nd|rd|th)?\s+({_MONTH_WORDS})\.?,?\s+{_YEAR}$", re.I)
 _NAME_YEAR = re.compile(rf"^({_MONTH_WORDS})\.?,?\s+{_YEAR}$", re.I)
+_YEAR_NAME_DAY = re.compile(rf"^{_YEAR}\s+({_MONTH_WORDS})\.?(?:,?\s+(\d{{1,2}}))?$", re.I)  # "2002 May 20", "1988 December"
 _ANY_YEAR = re.compile(rf"(?<!\d){_YEAR}(?!\d)(?!s\b)")
 
 
@@ -115,7 +119,7 @@ def parse_publish_date(raw: str) -> tuple[str, str, str]:
     # Cataloguing marks around an otherwise exact date don't make it vague
     # ("[1998-03-04]"), but a "?" or "c"/"ca" does.
     vague = bool(re.search(r"\?|\bca?\.?\s*\d|\bcirca\b|\bc\d|\babout\b|\bapprox", text, re.I))
-    clean = text.strip("[]() ").rstrip(".")
+    clean = text.strip("[]() ").rstrip(".-")  # "2005-06-" is seen in real data
     if not vague:
         match = _ISO_FULL.match(clean)
         if match:
@@ -138,6 +142,13 @@ def parse_publish_date(raw: str) -> tuple[str, str, str]:
         match = _NAME_YEAR.match(clean)
         if match:
             return match.group(2), MONTH_NAMES[match.group(1).lower()], ""
+        match = _YEAR_NAME_DAY.match(clean)
+        if match:
+            year, month, day = int(match.group(1)), MONTH_NAMES[match.group(2).lower()], match.group(3)
+            if not day:
+                return str(year), month, ""
+            if _valid_day(year, int(month), int(day)):
+                return str(year), month, str(int(day))
     match = _ANY_YEAR.search(text)
     return (match.group(1), "", "") if match else ("", "", "")
 
@@ -160,19 +171,19 @@ def app_language_code(stored: str) -> str:
 
 def _completeness(row: tuple) -> int:
     """How many of the useful fields an edition has filled in."""
-    _id, _i13, _i10, title, subtitle, authors, publishers, date_raw, year, language, pages, subjects = row
+    _id, _i13, _i10, title, subtitle, authors, publishers, date_raw, year, language, pages, subjects, _cover = row
     return sum(1 for value in (title, subtitle, authors, publishers, date_raw or year, language, pages, subjects)
                if value)
 
 
 def row_to_candidate(row: tuple) -> OpenLibraryCandidate:
-    _id, isbn13, _i10, title, subtitle, authors, publishers, date_raw, year, language, pages, _subjects = row
+    _id, isbn13, _i10, title, subtitle, authors, publishers, date_raw, year, language, pages, _subjects, cover_id = row
     pub_year, pub_month, pub_day = parse_publish_date(date_raw or "")
     if not pub_year and year:
         pub_year = str(year)
     return OpenLibraryCandidate(
         title=title or "", authors_str=authors or "", publisher=(publishers or "").split("; ")[0],
-        pub_year=pub_year, isbn=isbn13 or "", tags_str="", cover_id=0,
+        pub_year=pub_year, isbn=isbn13 or "", tags_str="", cover_id=int(cover_id or 0),
         language=app_language_code(language or ""), pub_month=pub_month, pub_day=pub_day,
         subtitle=subtitle or "", pages=int(pages or 0),
     )

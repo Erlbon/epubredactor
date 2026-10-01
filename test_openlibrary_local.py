@@ -257,7 +257,7 @@ def test_a_foreign_sqlite_file_or_one_without_the_index_is_explained(tmp_path):
     bare = str(tmp_path / "bare.db")
     con = sqlite3.connect(bare)
     con.execute("create table editions (id integer primary key, isbn13, isbn10, title, subtitle, authors_text, "
-                "publishers, publish_date_raw, year, language, pages, subjects)")
+                "publishers, publish_date_raw, year, language, pages, subjects, cover_id)")
     con.commit()
     con.close()
     try:

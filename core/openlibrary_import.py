@@ -42,11 +42,16 @@ Schema (text columns are "" when unknown; year/pages/cover_id may be NULL):
     editions_fts(title, authors_text)       redactor_import_info(key, value)
 Indexes: editions(isbn13), editions(isbn10), extra_isbns(isbn13), authors(key).
 
-Size (an ESTIMATE from the format, not measured on the real dump, which
-has never been read here): ~190 bytes of text per edition plus ~80 for
-the indexes and FTS, so about 2 GB for ~8 million kept editions; "all
-languages" can roughly double that. The build records the real sizes
-(redactor_import_info 'size.*' rows) and the dialog shows the file size.
+Size (MEASURED on the first 25k editions of the 2026-08-31 editions dump,
+which is the start of the key-sorted file -- mostly 'bwb' records with ISBNs --
+so not representative of the whole): 292-296 bytes per kept edition with
+the FTS index and without resolved author names (a 2,000-line sample:
+~380, fixed overhead). Names add roughly 25 more, so budget ~320 bytes:
+about 2.5 GB for ~8 million kept editions; "all languages" keeps ~15%
+more editions in that sample (more in the full dump, which has far more
+non-English books). The build records the real size (redactor_import_info
+'size.file') and the dialog shows it. Speed: ~25k editions + 104k authors
+in ~1.2 s, i.e. ~55 MB/s of decompressed text.
 
 Memory: flat. One line at a time; builder batches of 5,000 rows; the
 author names live on disk (temp file "<dest>.authors.tmp", deleted at the

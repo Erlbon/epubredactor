@@ -4,6 +4,12 @@ All notable changes to The ƎPUB Redactor, by version. Trimmed to new
 functionality and real fixes — cosmetic/UX-only adjustments aren't
 listed here.
 
+## 2026-10-01#03 -- Open Library database checked against real dump samples
+
+- Fixed: publish dates like "1988 December", "2002 May 20" and "2005-06-" (seen in the real editions dump) now give their month (and day) instead of the year alone.
+- Changed: a lookup result from the local Open Library database now carries Open Library's cover id (never fetched; the online cover path could use it later).
+- Changed: the size note is now measured (about 290-320 bytes per kept edition, roughly 2.5 GB for 8 million editions) and the README lists what the real samples showed and what is still unverified. Tests now build from small real-data fixtures.
+
 ## 2026-10-01#02 -- Look up books in the local Open Library database
 
 - New: Metadata > Look Up > Open Library (Local Database)... searches the database built under Tools > Open Library Database: by the book's own ISBN (13 or 10, hyphens fine; when several editions share it the most complete record wins), else by title and author. Works offline, no rate limits. It brings in title, authors, publisher, publication date (month and day only when the text is unambiguous, otherwise the year), ISBN and language; covers and genres are not taken from it. Without a database set up it offers to open the settings.

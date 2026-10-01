@@ -560,6 +560,31 @@ The app **icon**, being an actual image, uses a genuinely 180°-rotated E.
   (2-letter ISO 639-1) — see core/open_library_lookup.py for the
   reasoning if you're curious.
 
+## Notes on the local Open Library database
+
+Tools > Open Library Database... builds an offline lookup database from
+Open Library's bulk dumps (editions, plus authors for names; you download
+them, the app never does). Metadata > Look Up > Open Library (Local
+Database)... and the Redact "Fill empty fields online" step then use it
+before any online source. Only editions with a valid ISBN are kept, in the
+languages you choose.
+
+Measured on real samples (the first 25,000 editions and 104,000 authors of
+the 2026-08-31 dumps, which are the start of the key-sorted files and not
+representative of the whole): every line had the 5 columns; ~292-296 bytes
+per kept edition; `languages` are MARC-style 3-letter keys (`eng`, `ger`,
+`fre`, `nor`, also `cmn`, `mul`, `und`); `covers` is a list of integer ids
+(sometimes `-1`, ignored); `authors` is `[{"key": ...}]` and an author
+reference may not be in the authors dump, in which case the edition keeps
+the key but no name; publish dates are almost always "March 14, 2001",
+"April 1998", "1997" or ISO.
+
+Still unverified: the full dumps (size, speed and memory at 10^7 scale),
+the distribution of languages and ISBNs outside the start of the file, and
+how many editions lack an author but have one on their work (the works dump
+isn't used yet). Cover ids are recorded on the lookup result but never
+fetched.
+
 ## Notes on Generate Cover
 
 - Entirely offline — no network request, no external lookup. It draws
