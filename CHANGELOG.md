@@ -4,6 +4,10 @@ All notable changes to The ƎPUB Redactor, by version. Trimmed to new
 functionality and real fixes — cosmetic/UX-only adjustments aren't
 listed here.
 
+## 2026-10-01#07 -- Finder for possible duplicate books (core)
+
+- New: the logic behind a coming Repair > Find Duplicates review. It groups loaded books by identical content (same files apart from the metadata), by the same title and first author (a possible other edition; the whole title must match, so series volumes and omnibus titles are not grouped), and by the same valid ISBN with a different title (the ISBN may be wrong), and states why each group matched. Nothing is changed or selected by it. redactor_common pin raised to 2026-10-01-05.
+
 ## 2026-10-01#06 -- Parse Filename preview no longer stalls while you type
 
 - Fixed: Parse Filename → Metadata rebuilt its whole preview on every keystroke, which stalled on a large selection. The preview now refreshes once you pause typing (the first one on open is immediate), Apply always applies the up-to-date preview, and the check of other books' saved metadata in the same folders runs behind a progress dialog on a big selection and is only done once per folder.
