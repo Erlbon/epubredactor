@@ -4,6 +4,10 @@ All notable changes to The ƎPUB Redactor, by version. Trimmed to new
 functionality and real fixes — cosmetic/UX-only adjustments aren't
 listed here.
 
+## 2026-10-01#13 -- Spaced initials in file and folder names
+
+- Changed: file and folder names built from %authors% or %author_sort% (Rename, Export, Move into folders, the Redact rename and move steps, and the pattern previews) now space initials too: "J. R. R. Tolkien - The Hobbit.epub", "Tolkien, J. R. R/...". This is applied when the name is built, so books whose stored author was never cleaned get spaced names as well. Titles and other fields are unchanged; a trailing dot is still dropped from a name and ASCII-safe filenames still work.
+
 ## 2026-10-01#12 -- Initials always spaced
 
 - Changed: every place that writes an author value now spaces initials ("J. R. R. Tolkien", "Tolkien, J. R. R."): Convert Author Sort (both directions and the tag panel's guess buttons), Parse Filename and folder-based authors, and the Calibre, Open Library (online and local database) and Google Books lookup results. Matching and duplicate detection are unchanged (they already ignore the spacing). File names built from %authors% still use the author exactly as stored.

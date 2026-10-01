@@ -203,7 +203,7 @@ def test_bracket_segment_kept_when_series_present():
     m = make_meta(title="The Fellowship of the Ring", authors=["J.R.R. Tolkien"],
                    series="Lord of the Rings", series_index="1")
     result = render_filename(m, "%authors% - [%series% %series_index%] - %title%")
-    assert result == "J.R.R. Tolkien - [Lord of the Rings 1] - The Fellowship of the Ring", result
+    assert result == "J. R. R. Tolkien - [Lord of the Rings 1] - The Fellowship of the Ring", result
     print("PASS: a [...] segment with a present field renders normally, brackets included")
 
 
@@ -395,3 +395,51 @@ if __name__ == "__main__":
     test_rename_book_file_invalid_name_raises_and_does_not_touch_disk()
     test_rename_book_file_collision_raises_and_does_not_overwrite()
     print("\nALL RENAME-PATTERN TESTS PASSED")
+
+
+# --- spaced initials in author-derived tokens (2026-10-01#13) -----------------
+
+
+def test_authors_token_spaces_initials_even_when_stored_unclean():
+    m = make_meta(title="The Hobbit", authors=["J.R.R.Tolkien"])
+    assert render_filename(m, "%authors% - %title%") == "J. R. R. Tolkien - The Hobbit"
+    m = make_meta(title="Good Omens", authors=["J.R.R. Tolkien", "C.S. Lewis"])
+    assert render_filename(m, "%authors%") == "J. R. R. Tolkien & C. S. Lewis"
+
+
+def test_author_sort_token_stays_last_first_with_spaced_initials():
+    m = make_meta(title="The Hobbit", authors=["J.R.R. Tolkien"], author_sort=["Tolkien, J.R.R."])
+    assert render_filename(m, "%author_sort% - %title%") == "Tolkien, J. R. R. - The Hobbit"
+    # A trailing dot is stripped (invalid at the end of a Windows name).
+    assert render_filename(m, "%author_sort%") == "Tolkien, J. R. R"
+
+
+def test_titles_are_never_touched_by_initials_spacing():
+    m = make_meta(title="J.R.R.Tolkien: A Life", authors=["Jane Doe"])
+    assert render_filename(m, "%title%") == "J.R.R.Tolkien A Life"
+
+
+def test_spaced_initials_name_is_valid_on_windows():
+    m = make_meta(title="T", authors=["J.R.R."])
+    name = render_filename(m, "%authors%")
+    assert name == "J. R. R" and not name.endswith((".", " "))
+
+
+def test_ascii_safe_mode_with_spaced_initials():
+    from redactor_common.core import rename_pattern as shared
+    from core.rename_pattern import placeholder_values
+
+    m = make_meta(title="Café", authors=["J.R.R. Tólkien"])
+    got = shared.render_filename(placeholder_values(m), "%authors% - %title%", ascii_only=True)
+    assert got == "J. R. R. Tolkien - Cafe", got
+
+
+def test_move_into_folders_paths_use_spaced_initials():
+    from redactor_common.core.move_plan import render_relative_path
+    from core.rename_pattern import placeholder_values
+
+    m = make_meta(title="The Hobbit", authors=["J.R.R. Tolkien"], author_sort=["Tolkien, J.R.R."])
+    values = placeholder_values(m)
+    assert render_relative_path(values, "%authors%/%title%") == ["J. R. R. Tolkien", "The Hobbit"]
+    assert render_relative_path(values, "%author_sort%/%title%") == ["Tolkien, J. R. R", "The Hobbit"]
+    assert render_relative_path(values, "%authors%/%title%", ascii_only=True) == ["J. R. R. Tolkien", "The Hobbit"]

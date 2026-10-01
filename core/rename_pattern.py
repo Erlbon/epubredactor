@@ -19,6 +19,7 @@ EpubMetadata becomes the plain values dict the shared engine renders.
 
 from __future__ import annotations
 
+from core.author_sort import space_initials
 from core.epub_metadata import EpubBook, EpubMetadata
 from redactor_common.core import rename_pattern as _shared
 from redactor_common.core.rename_pattern import (  # noqa: F401 -- re-exported
@@ -101,8 +102,11 @@ def placeholder_values(metadata: EpubMetadata, zero_pad_series: bool = False) ->
         # rather than string-replacing authors_str, so a stray "; " or
         # "&" that happens to be part of one author's actual name is
         # never touched.
-        "authors": " & ".join(a for a in metadata.authors if a),
-        "author_sort": metadata.author_sort_str,
+        "authors": " & ".join(space_initials(a) for a in metadata.authors if a),
+        # Initials are spaced here, when the name is built, so a book whose
+        # stored value was never cleaned ("J.R.R. Tolkien") still gets
+        # "J. R. R. Tolkien" in its file and folder names.
+        "author_sort": space_initials(metadata.author_sort_str),
         "series": metadata.series,
         "series_index": series_index,
         "collection": metadata.collection,
