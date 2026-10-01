@@ -57,6 +57,7 @@ from redactor_common.core.local_db import (
     year_gap,
 )
 
+from core.author_sort import space_initials
 from core.open_library_lookup import OpenLibraryCandidate
 
 SERVICE_NAME = "Open Library (local database)"
@@ -182,7 +183,7 @@ def row_to_candidate(row: tuple) -> OpenLibraryCandidate:
     if not pub_year and year:
         pub_year = str(year)
     return OpenLibraryCandidate(
-        title=title or "", authors_str=authors or "", publisher=(publishers or "").split("; ")[0],
+        title=title or "", authors_str=space_initials(authors or ""), publisher=(publishers or "").split("; ")[0],
         pub_year=pub_year, isbn=isbn13 or "", tags_str="", cover_id=int(cover_id or 0),
         language=app_language_code(language or ""), pub_month=pub_month, pub_day=pub_day,
         subtitle=subtitle or "", pages=int(pages or 0),

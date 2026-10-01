@@ -4,6 +4,10 @@ All notable changes to The ƎPUB Redactor, by version. Trimmed to new
 functionality and real fixes — cosmetic/UX-only adjustments aren't
 listed here.
 
+## 2026-10-01#12 -- Initials always spaced
+
+- Changed: every place that writes an author value now spaces initials ("J. R. R. Tolkien", "Tolkien, J. R. R."): Convert Author Sort (both directions and the tag panel's guess buttons), Parse Filename and folder-based authors, and the Calibre, Open Library (online and local database) and Google Books lookup results. Matching and duplicate detection are unchanged (they already ignore the spacing). File names built from %authors% still use the author exactly as stored.
+
 ## 2026-10-01#11 -- Sort-form authors become the Author Sort
 
 - Changed: when Author(s) holds names written "Last, First" ("Tolkien, J.R.R.", "van Gogh, Vincent", "King, Martin Luther, Jr."), Clean Up Authors and the Redact step now move that text, tidied, into Author Sort and generate the display names from it ("J. R. R. Tolkien", "Vincent van Gogh", "Martin Luther King Jr."), several authors separated by ";" or " & " included. An existing Author Sort that agrees is kept; one that disagrees is kept and offered as an unticked review row. A comma list of full names ("Neil Gaiman, Terry Pratchett") is still review-only.

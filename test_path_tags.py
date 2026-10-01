@@ -60,7 +60,7 @@ def _lib_book(*parts):
 
 
 def test_author_folder_in_sort_form_becomes_a_display_name():
-    assert folder_authors_to_display("Tolkien, J.R.R.") == "J.R.R. Tolkien"
+    assert folder_authors_to_display("Tolkien, J.R.R.") == "J. R. R. Tolkien"
     assert folder_authors_to_display("Terry Pratchett") == "Terry Pratchett"
     assert folder_authors_to_display("Pratchett, Terry & Gaiman, Neil") == "Terry Pratchett; Neil Gaiman"
 
@@ -78,7 +78,7 @@ def test_path_pattern_reads_folders_relative_to_the_root():
     assert dlg.is_path_mode() and not dlg._root_row.isHidden()
     assert dlg.preview_table.columnCount() == 5
     assert dlg.accepted_changes() == {
-        0: {"authors_str": "J.R.R. Tolkien", "title": "The Hobbit"},
+        0: {"authors_str": "J. R. R. Tolkien", "title": "The Hobbit"},
         1: {"authors_str": "Jane Doe", "title": "Other"},
     }
     result = dlg.parse_results()[0]
@@ -213,7 +213,7 @@ def test_author_sort_form_folder_is_converted_to_a_display_name(tmp_path, env):
     env.library_root = root
     options = {"path_tags": {"pattern": "%authors%/%title%"}}
     run([load(path)], env, only("path_tags", options=options, threshold=0.85))
-    assert load(path).metadata.authors == ["J.R.R. Tolkien"]
+    assert load(path).metadata.authors == ["J. R. R. Tolkien"]
 
 
 def test_bare_folder_captures_score_below_the_threshold_and_need_review(tmp_path, env):

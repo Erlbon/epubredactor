@@ -92,7 +92,7 @@ def test_parse_response_extracts_all_fields():
     assert len(candidates) == 2, "an entry with no ISBN must NOT be skipped anymore"
     c = candidates[0]
     assert c.title == "The Hobbit"
-    assert c.authors_str == "J.R.R. Tolkien"
+    assert c.authors_str == "J. R. R. Tolkien"
     assert c.publisher == "George Allen & Unwin"
     assert c.pub_year == "1937"
     assert c.isbn13 == "9780261102217"

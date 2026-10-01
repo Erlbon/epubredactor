@@ -53,8 +53,8 @@ MINIMAL_OPF = b"""<?xml version='1.0' encoding='utf-8'?>
 def test_parse_realistic_opf():
     result = parse_calibre_opf(REALISTIC_OPF)
     assert result.title == "The Hobbit"
-    assert result.authors_str == "J.R.R. Tolkien"
-    assert result.author_sort_str == "Tolkien, J.R.R."
+    assert result.authors_str == "J. R. R. Tolkien"
+    assert result.author_sort_str == "Tolkien, J. R. R."
     assert result.series == "Middle-earth"
     assert result.series_index == "1"
     assert result.tags_str == "Fantasy; Fiction"

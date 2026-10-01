@@ -11,6 +11,18 @@ correct, not a final answer.
 
 from __future__ import annotations
 
+import re
+
+# A single capital + dot directly followed by a letter: "J.R.R.Tolkien".
+_INITIAL_DOT_RE = re.compile(r"(?<![^\W\d_])([A-Z])\.(?=[^\W\d_])")
+
+
+def space_initials(text: str) -> str:
+    """Initials spaced the way every author value is written: "J.R.R.
+    Tolkien" -> "J. R. R. Tolkien", "Tolkien, J.R.R." -> "Tolkien, J. R. R.".
+    Works on a whole "; "-joined string. Anything else is left as it is."""
+    return _INITIAL_DOT_RE.sub(lambda m: m.group(1) + ". ", text or "")
+
 
 def authors_to_author_sort(authors_str: str) -> str:
     """"Jane Q. Doe" -> "Doe, Jane Q.", per semicolon-separated author.
@@ -23,7 +35,7 @@ def authors_to_author_sort(authors_str: str) -> str:
             result.append(f"{last}, {first}")
         else:
             result.append(name)
-    return "; ".join(result)
+    return space_initials("; ".join(result))
 
 
 def author_sort_to_authors(author_sort_str: str) -> str:
@@ -40,4 +52,4 @@ def author_sort_to_authors(author_sort_str: str) -> str:
             result.append(f"{first} {last}" if first else last)
         else:
             result.append(entry)
-    return "; ".join(result)
+    return space_initials("; ".join(result))

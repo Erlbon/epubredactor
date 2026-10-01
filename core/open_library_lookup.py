@@ -28,6 +28,7 @@ import urllib.error
 from dataclasses import dataclass
 from urllib.parse import quote
 
+from core.author_sort import space_initials
 from core.isbn import normalize_isbn
 from redactor_common.core.lookup_client import fetch_bytes, make_default_fetch
 
@@ -131,7 +132,7 @@ def parse_search_response(raw: bytes) -> list[OpenLibraryCandidate]:
         subjects = (doc.get("subject") or [])[:MAX_SUBJECTS]
         candidates.append(OpenLibraryCandidate(
             title=doc.get("title", "") or "",
-            authors_str="; ".join(authors),
+            authors_str=space_initials("; ".join(authors)),
             publisher=publishers[0] if publishers else "",
             pub_year=str(doc.get("first_publish_year") or ""),
             isbn=isbns[0] if isbns else "",

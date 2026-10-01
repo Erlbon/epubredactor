@@ -79,7 +79,9 @@ def split_author_ampersands(value: str) -> str:
     """"Author A & Author B" -> "Author A; Author B": the read side of
     rename_pattern's %authors%, which joins multiple authors with " & "
     in a filename. See split_ampersand_names() for the rule."""
-    return "; ".join(split_ampersand_names(value))
+    from core.author_sort import space_initials
+
+    return space_initials("; ".join(split_ampersand_names(value)))
 
 
 NORMALIZERS = {

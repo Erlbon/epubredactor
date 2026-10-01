@@ -23,6 +23,7 @@ import urllib.error
 from dataclasses import dataclass
 from urllib.parse import quote
 
+from core.author_sort import space_initials
 from core.isbn import best_isbn13, normalize_isbn
 
 from redactor_common.core.lookup_client import fetch_bytes, make_default_fetch
@@ -142,7 +143,7 @@ def parse_response(raw: bytes) -> list[GoogleBooksCandidate]:
         candidates.append(
             GoogleBooksCandidate(
                 title=info.get("title", "") or "",
-                authors_str="; ".join(info.get("authors", []) or []),
+                authors_str=space_initials("; ".join(info.get("authors", []) or [])),
                 publisher=info.get("publisher", "") or "",
                 pub_year=(info.get("publishedDate", "") or "")[:4],
                 isbn13=isbn13,

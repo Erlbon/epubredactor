@@ -33,6 +33,7 @@ from dataclasses import dataclass
 
 from lxml import etree
 
+from core.author_sort import space_initials
 from core.calibre_tools import no_console_window_kwargs
 from core.epub_metadata import parse_date_parts
 
@@ -161,10 +162,10 @@ def parse_calibre_opf(opf_bytes: bytes) -> CalibreLookupResult:
             elif name == "calibre:series_index":
                 result.series_index = el.get("content", "")
 
-    result.authors_str = "; ".join(authors)
+    result.authors_str = space_initials("; ".join(authors))
     while author_sort and not author_sort[-1]:
         author_sort.pop()
-    result.author_sort_str = "; ".join(author_sort)
+    result.author_sort_str = space_initials("; ".join(author_sort))
     result.tags_str = "; ".join(tags)
     result.isbn = isbn
     return result
