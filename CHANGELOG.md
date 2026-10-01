@@ -4,6 +4,10 @@ All notable changes to The ƎPUB Redactor, by version. Trimmed to new
 functionality and real fixes — cosmetic/UX-only adjustments aren't
 listed here.
 
+## 2026-10-01#06 -- Parse Filename preview no longer stalls while you type
+
+- Fixed: Parse Filename → Metadata rebuilt its whole preview on every keystroke, which stalled on a large selection. The preview now refreshes once you pause typing (the first one on open is immediate), Apply always applies the up-to-date preview, and the check of other books' saved metadata in the same folders runs behind a progress dialog on a big selection and is only done once per folder.
+
 ## 2026-10-01#05 -- Accurate name for the lookup step in Redact
 
 - Changed: Redact's "Fill empty fields online" step is now called "Fill empty fields from lookups (local database first)", which is what it does since it asks the local Open Library database before the online sources. Saved recipes keep working: only the label changed.

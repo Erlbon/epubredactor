@@ -31,7 +31,7 @@ from __future__ import annotations
 import os
 from typing import Callable
 
-from PyQt6.QtCore import Qt
+from PyQt6.QtCore import Qt, QTimer
 from PyQt6.QtWidgets import (
     QAbstractItemView,
     QCheckBox,
@@ -95,9 +95,14 @@ BOOK_COL, EXTRACTED_COL, APPLY_COL = range(3)
 PATH_CONFIDENCE_COL, PATH_SEGMENTS_COL, PATH_APPLY_COL = 2, 3, 4
 # A path row starts ticked from this confidence (the shared dialog's rule).
 PATH_TICK_CONFIDENCE = 0.5
+# More books than this and the folder scan runs behind a progress dialog
+# (the same small-batch cutoff as the main window's LOAD_PROGRESS_THRESHOLD).
+SCAN_PROGRESS_THRESHOLD = 3
 
 
 class FilenameParseDialog(QDialog):
+    REFRESH_DEBOUNCE_MS = 275
+
     def __init__(
         self, books: list[EpubBook], parent=None, library_root: str | None = None,
         on_library_root_changed: Callable[[str], None] | None = None,
@@ -132,8 +137,13 @@ class FilenameParseDialog(QDialog):
         self._folder_metadata_cache: dict[tuple[str, str], dict[str, int]] = {}
         self._folder_all_metadata_cache: dict[tuple[str, str], dict[str, int]] = {}  # path mode, none excluded
 
+        # Single-shot timer behind the pattern field (see _schedule_refresh()).
+        self._refresh_timer = QTimer(self)
+        self._refresh_timer.setSingleShot(True)
+        self._refresh_timer.timeout.connect(self._refresh_preview)
+
         self._build_ui()
-        self._refresh_preview()
+        self._refresh_preview()  # the first refresh on open is immediate
 
     def _build_ui(self) -> None:
         outer = QHBoxLayout(self)
@@ -179,7 +189,7 @@ class FilenameParseDialog(QDialog):
             starting_pattern = (names or paths or [DEFAULT_PATTERN])[0]
             self._auto_detected_pattern = None
         self.pattern_edit = QLineEdit(starting_pattern)
-        self.pattern_edit.textChanged.connect(self._refresh_preview)
+        self.pattern_edit.textChanged.connect(self._schedule_refresh)
         pattern_row.addWidget(self.pattern_edit, 1)
 
         self.recent_btn = QPushButton(RECENT_BUTTON_GLYPH)
@@ -377,6 +387,28 @@ class FilenameParseDialog(QDialog):
             self._folder_all_metadata_cache[key] = cached
         return cached
 
+    def _cheap_confirmation_note(
+        self, field: str, value: str, book_path: str, pattern: str,
+        batch_counts: dict[str, dict[str, int]], folder_counts_cache: dict[tuple[str, str], dict[str, int]],
+    ) -> str | None:
+        """Tiers 1 and 2 of _confirmation_note(): no EPUB is opened."""
+        normalized = normalize_field_value(value)
+
+        batch_count = batch_counts.get(field, {}).get(normalized, 0)
+        if batch_count >= 2:
+            return f"{field}: confirmed, shared with {batch_count - 1} other loaded book(s)"
+
+        directory = os.path.dirname(book_path)
+        cache_key = (directory, field)
+        if cache_key not in folder_counts_cache:
+            folder_counts_cache[cache_key] = field_value_counts(
+                self._sibling_stems_for(book_path), pattern, field
+            )
+        folder_count = folder_counts_cache[cache_key].get(normalized, 0)
+        if folder_count >= 1:
+            return f"{field}: confirmed, also found in {folder_count} other filename(s) in this folder"
+        return None
+
     def _confirmation_note(
         self, field: str, value: str, book_path: str, pattern: str,
         batch_counts: dict[str, dict[str, int]], folder_counts_cache: dict[tuple[str, str], dict[str, int]],
@@ -407,29 +439,70 @@ class FilenameParseDialog(QDialog):
         field's role correctly; a one-off isn't necessarily wrong, just
         unconfirmed by this signal, so it gets no note rather than a
         warning."""
+        note = self._cheap_confirmation_note(field, value, book_path, pattern, batch_counts, folder_counts_cache)
+        if note:
+            return note
         normalized = normalize_field_value(value)
-
-        batch_count = batch_counts.get(field, {}).get(normalized, 0)
-        if batch_count >= 2:
-            return f"{field}: confirmed, shared with {batch_count - 1} other loaded book(s)"
-
-        directory = os.path.dirname(book_path)
-        cache_key = (directory, field)
-        if cache_key not in folder_counts_cache:
-            folder_counts_cache[cache_key] = field_value_counts(
-                self._sibling_stems_for(book_path), pattern, field
-            )
-        folder_count = folder_counts_cache[cache_key].get(normalized, 0)
-        if folder_count >= 1:
-            return f"{field}: confirmed, also found in {folder_count} other filename(s) in this folder"
-
         metadata_count = self._folder_metadata_counts_for(book_path, field).get(normalized, 0)
         if metadata_count >= 1:
             return f"{field}: confirmed via existing metadata in {metadata_count} other book(s) in this folder"
 
         return None
 
+    def _schedule_refresh(self) -> None:
+        """Pattern edits are debounced: every keystroke restarts the timer,
+        so the (per-row, partly disk-bound) preview is rebuilt once typing
+        pauses rather than on each key."""
+        self._refresh_timer.start(self.REFRESH_DEBOUNCE_MS)
+
+    def flush_pending_refresh(self) -> None:
+        """Bring the preview up to date NOW if an edit is still waiting on
+        the debounce timer. Everything that reads or acts on the preview
+        (Apply, the result accessors) calls this first, so none of them
+        can see a stale preview."""
+        if self._refresh_timer.isActive():
+            self._refresh_preview()
+
+    def _prefetch_folder_metadata(
+        self, pattern: str, batch_counts: dict[str, dict[str, int]],
+        folder_counts_cache: dict[tuple[str, str], dict[str, int]],
+    ) -> None:
+        """Fill the per-folder saved-metadata cache for every folder the
+        render loop will need it for, so the slow part (opening sibling
+        EPUBs) runs here, behind a progress dialog on a big selection,
+        instead of silently inside the row loop. Same rows, same order
+        and same tier-1/2 check as the loop, so the cache ends up exactly
+        as the loop would have filled it."""
+        todo: list[tuple[str, str]] = []
+        seen: set[tuple[str, str]] = set()
+        for row, book in enumerate(self.books):
+            parsed = parse_filename(self._filename_stems[row], pattern) or {}
+            for field in _CONFIRMABLE_FIELDS:
+                value = parsed.get(field)
+                key = (os.path.dirname(book.path), field)
+                if not value or key in seen or key in self._folder_metadata_cache:
+                    continue
+                if self._cheap_confirmation_note(field, value, book.path, pattern, batch_counts, folder_counts_cache):
+                    continue
+                seen.add(key)
+                todo.append((book.path, field))
+        if not todo:
+            return
+
+        def scan(item, _index):
+            self._folder_metadata_counts_for(*item)
+
+        if len(self.books) > SCAN_PROGRESS_THRESHOLD:
+            run_with_progress(
+                self, todo, scan, "Checking other books in the same folders…",
+                threshold=1, cancellable=False,
+            )
+        else:
+            for index, item in enumerate(todo):
+                scan(item, index)
+
     def _refresh_preview(self) -> None:
+        self._refresh_timer.stop()  # a direct refresh supersedes any pending debounced one
         pattern = self.pattern_edit.text()
         self._path_mode = is_path_pattern(pattern)
         self._root_row.setVisible(self._path_mode)
@@ -447,6 +520,8 @@ class FilenameParseDialog(QDialog):
             field: field_value_counts(self._filename_stems, pattern, field) for field in _CONFIRMABLE_FIELDS
         } if pattern.strip() else {}
         folder_counts_cache: dict[tuple[str, str], dict[str, int]] = {}
+        if pattern.strip():
+            self._prefetch_folder_metadata(pattern, batch_counts, folder_counts_cache)
 
         self.preview_table.setRowCount(len(self.books))
         matched_count = 0
@@ -586,11 +661,13 @@ class FilenameParseDialog(QDialog):
 
     def is_path_mode(self) -> bool:
         """True while the pattern contains a folder separator."""
+        self.flush_pending_refresh()
         return self._path_mode
 
     def parse_results(self) -> dict[int, object]:
         """Path mode only: book index -> PathParseResult (confidence,
         matched/missing segments) for every matching book; {} otherwise."""
+        self.flush_pending_refresh()
         return {i: r for i, r in self._path_results.items() if r.matched}
 
     @staticmethod
@@ -600,6 +677,9 @@ class FilenameParseDialog(QDialog):
         return item
 
     def _on_accept(self) -> None:
+        # An edit still waiting on the debounce timer must not be applied
+        # as the previous pattern's preview.
+        self.flush_pending_refresh()
         if self._parsed:
             app_settings.save_pattern_used(self.pattern_edit.text())
         self.accept()
@@ -610,6 +690,7 @@ class FilenameParseDialog(QDialog):
     def accepted_changes(self) -> dict[int, dict[str, str]]:
         """book index -> {field_key: value}, for every row whose checkbox
         is checked and which actually matched the pattern."""
+        self.flush_pending_refresh()
         return {
             row: self._parsed[row]
             for row, cb in self._checkboxes.items()

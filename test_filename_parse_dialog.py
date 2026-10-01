@@ -167,6 +167,7 @@ def test_repeated_author_in_batch_is_confirmed():
     with _fake_history([]):
         dlg = FilenameParseDialog(books)
         dlg.pattern_edit.setText("%authors% - %title%")
+        dlg.flush_pending_refresh()  # pattern edits are debounced
     row0 = dlg.preview_table.item(0, 1).text()
     row1 = dlg.preview_table.item(1, 1).text()
     row2 = dlg.preview_table.item(2, 1).text()
@@ -191,6 +192,7 @@ def test_unconfirmed_author_falls_back_to_folder_filenames():
     with _fake_history([]):
         dlg = FilenameParseDialog(books)
         dlg.pattern_edit.setText("%authors% - %title%")
+        dlg.flush_pending_refresh()  # pattern edits are debounced
     row0 = dlg.preview_table.item(0, 1).text()
     assert "confirmed" in row0 and "other filename(s) in this folder" in row0, row0
     print("PASS: with no support in the loaded batch, falls back to checking other filenames in the folder")
@@ -215,6 +217,7 @@ def test_unconfirmed_author_falls_back_to_folder_metadata():
     with _fake_history([]):
         dlg = FilenameParseDialog(books)
         dlg.pattern_edit.setText("%authors% - %title%")
+        dlg.flush_pending_refresh()  # pattern edits are debounced
     row0 = dlg.preview_table.item(0, 1).text()
     assert "confirmed via existing metadata" in row0, row0
     print("PASS: with no filename support anywhere, falls back to an already-tagged sibling's real metadata")
@@ -235,6 +238,7 @@ def test_filename_fallback_preferred_over_metadata_fallback():
     with _fake_history([]):
         dlg = FilenameParseDialog(books)
         dlg.pattern_edit.setText("%authors% - %title%")
+        dlg.flush_pending_refresh()  # pattern edits are debounced
     row0 = dlg.preview_table.item(0, 1).text()
     assert "other filename(s) in this folder" in row0, row0
     assert "existing metadata" not in row0, row0
@@ -274,10 +278,108 @@ def test_title_is_never_marked_confirmed():
     with _fake_history([]):
         dlg = FilenameParseDialog(books)
         dlg.pattern_edit.setText("%authors% - %title%")
+        dlg.flush_pending_refresh()  # pattern edits are debounced
     for row in range(dlg.preview_table.rowCount()):
         text = dlg.preview_table.item(row, 1).text()
         assert "title: confirmed" not in text, text
     print("PASS: a repeated title is never marked confirmed, only authors/series are checked")
+
+
+# ----------------------------------------------------------------------
+# Debounced pattern edits
+# ----------------------------------------------------------------------
+
+def _count_refreshes(dlg):
+    calls = []
+    original = dlg._refresh_preview
+
+    def counting():
+        calls.append(1)
+        original()
+
+    dlg._refresh_preview = counting
+    # The timer was connected to the bound method at construction; reconnect
+    # it to the counting wrapper so timer-driven refreshes are seen too.
+    dlg._refresh_timer.timeout.disconnect()
+    dlg._refresh_timer.timeout.connect(counting)
+    return calls
+
+
+def test_rapid_edits_trigger_a_single_refresh():
+    from PyQt6.QtTest import QTest
+
+    with _fake_history([]):
+        dlg = FilenameParseDialog([_FakeBook("/x/Author - Title.epub")])
+    dlg.REFRESH_DEBOUNCE_MS = 40
+    calls = _count_refreshes(dlg)
+    for text in ("%a", "%authors%", "%authors% -", "%authors% - %title%"):
+        dlg.pattern_edit.setText(text)
+        QTest.qWait(5)  # keystrokes far closer together than the debounce
+    assert calls == []  # nothing rebuilt while typing
+    QTest.qWait(150)
+    assert calls == [1]
+    assert dlg.accepted_changes() == {0: {"authors_str": "Author", "title": "Title"}}
+    assert calls == [1]  # nothing pending any more, so no extra refresh
+
+
+def test_accept_flushes_a_pending_refresh_and_applies_the_new_preview():
+    with _fake_history([]):
+        dlg = FilenameParseDialog([_FakeBook("/x/Author - Title.epub")])
+    dlg.pattern_edit.setText("%title% - %authors%")
+    dlg.flush_pending_refresh()
+    assert dlg.accepted_changes() == {0: {"title": "Author", "authors_str": "Title"}}
+    dlg.pattern_edit.setText("%authors% - %title%")  # edit, then Apply before the timer fires
+    assert dlg._refresh_timer.isActive()
+    dlg._on_accept()
+    assert not dlg._refresh_timer.isActive()
+    assert dlg.result() == dlg.DialogCode.Accepted
+    assert dlg.accepted_changes() == {0: {"authors_str": "Author", "title": "Title"}}
+
+
+def test_folder_metadata_is_scanned_once_per_folder_and_cached():
+    tmp_dir = "/tmp/epub_test_dialog_scan_cache"
+    os.makedirs(tmp_dir, exist_ok=True)
+    for f in os.listdir(tmp_dir):
+        os.remove(os.path.join(tmp_dir, f))
+    _build_tagged_epub(os.path.join(tmp_dir, "zzz.epub"), "Small Gods", "Terry Pratchett")
+    books = [_FakeBook(os.path.join(tmp_dir, f"Terry Pratchett - Book {i}.epub")) for i in range(1)]
+    books.append(_FakeBook(os.path.join(tmp_dir, "Someone Else - Other.epub")))
+    scans = []
+    import gui.filename_parse_dialog as module
+    original = module.folder_metadata_field_counts
+    module.folder_metadata_field_counts = lambda *a, **k: (scans.append(a), original(*a, **k))[1]
+    try:
+        with _fake_history([]):
+            dlg = FilenameParseDialog(books)
+        dlg.pattern_edit.setText("%authors% - %title%")
+        dlg.flush_pending_refresh()
+        first = len(scans)
+        assert first >= 1
+        for text in ("%authors% - %title%x", "%authors% - %title%"):
+            dlg.pattern_edit.setText(text)
+            dlg.flush_pending_refresh()
+        assert len(scans) == first  # re-rendering never re-opens the siblings
+    finally:
+        module.folder_metadata_field_counts = original
+    assert "confirmed via existing metadata" in dlg.preview_table.item(0, 1).text()
+
+
+def test_big_selection_scan_runs_behind_a_progress_dialog():
+    import gui.filename_parse_dialog as module
+
+    shown = []
+    original = module.run_with_progress
+    module.run_with_progress = lambda parent, items, step, label, **kw: (
+        shown.append((len(list(items)), kw)), original(parent, items, step, label, **kw))[1]
+    try:
+        books = [_FakeBook(f"/nowhere/f{i}/Author {i} - Title {i}.epub") for i in range(5)]
+        with _fake_history([]):
+            dlg = FilenameParseDialog(books)
+            dlg.pattern_edit.setText("%authors% - %title%")
+            dlg.flush_pending_refresh()
+    finally:
+        module.run_with_progress = original
+    assert shown and all(kw.get("cancellable") is False for _n, kw in shown), shown
 
 
 if __name__ == "__main__":

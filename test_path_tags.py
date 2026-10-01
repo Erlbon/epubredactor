@@ -48,6 +48,7 @@ def _dialog(books, pattern, history=(), root=ROOT, saved=None):
             books, library_root=root, on_library_root_changed=(saved.append if saved is not None else lambda p: None)
         )
         dlg.pattern_edit.setText(pattern)
+        dlg.flush_pending_refresh()  # pattern edits are debounced
     return dlg
 
 
