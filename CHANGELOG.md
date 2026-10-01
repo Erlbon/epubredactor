@@ -4,6 +4,12 @@ All notable changes to The ƎPUB Redactor, by version. Trimmed to new
 functionality and real fixes — cosmetic/UX-only adjustments aren't
 listed here.
 
+## 2026-10-01#09 -- Clean Up Authors (Repair menu and Redact)
+
+- New: Repair > Clean Up Authors... reviews every loaded book's Author(s) and Author Sort and fixes the usual messes: stray spaces and punctuation, "J.R.R.Tolkien" / "J R R Tolkien" to "J. R. R. Tolkien", "Tolkien, J.R.R." to "J. R. R. Tolkien", role suffixes and junk ("(Editor)", ", translator", "Translated by", "et al.", life dates), "A; B" and "First Last & First Last" split into separate authors, ALL CAPS names, "Jr" to "Jr.", duplicate authors, and a missing or sloppy Author Sort generated or tidied for every author (particles stay with the surname, "King, Martin Luther, Jr.", one-word names sort as themselves). Corporate authors ("Simon & Schuster", "... Press"), "Anonymous" and non-Latin names are left alone. The review lists each book before and after; deterministic fixes are ticked, guesses are listed unticked (splitting "Simon & Schuster" or "Neil Gaiman, Terry Pratchett", removing "Dr.", all-lowercase names, an Author Sort that disagrees with the author, which is also flagged) and a flag row points out what has no proposed fix. Nothing is written until Save All, and one Undo reverts it.
+- New: a "Clean up authors" Redact step (on by default) applies only the deterministic fixes; guesses are named in the report notes and never applied.
+- Fixed: the duplicate finder now treats "JRR Tolkien" and "J.R.R. Tolkien" as the same author (it shares the new name comparison).
+
 ## 2026-10-01#08 -- Repair > Find Duplicates
 
 - New: Repair > Find Duplicates... reviews all loaded books for the same book more than once, in the shared review dialog. Each group says why it matched: identical content (only the metadata differs), same title and author (maybe another edition), or same ISBN with a different title (the ISBN may be wrong). Duplicates are not treated as errors: nothing is selected, nothing changes unless you choose an action, and "Not duplicates" hides a group for good (kept in epubredactor_duplicates_dismissed.json next to the settings; it is not part of Export Settings). Moving files to the Recycle Bin from the review removes them from the list and refuses books with unsaved changes.

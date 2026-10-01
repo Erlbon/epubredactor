@@ -42,7 +42,7 @@ import zipfile
 from dataclasses import dataclass
 from typing import Callable, Optional, Sequence
 
-from core.author_sort import author_sort_to_authors
+from core.author_clean import author_key
 from core.epub_fingerprint import entries_fingerprint
 from redactor_common.core.duplicates import (
     TIER_IDENTICAL,
@@ -75,16 +75,12 @@ def normalize_title(title: str) -> str:
 
 
 def normalize_author(authors: Sequence[str], author_sort: Sequence[str] = ()) -> str:
-    """The first author as an order-independent key: "Tolkien, J.R.R." and
-    "J.R.R. Tolkien" both give "j r r tolkien" (an entry with a comma is
-    read as "Last, First", the app's own convention; the words are then
-    sorted so even a misread name -- "Smith, John, Jr." -- still agrees
-    with its plain spelling). Falls back to the Author Sort field when
-    there is no author."""
+    """The first author as an order-independent key (core.author_clean.
+    author_key): "Tolkien, J.R.R.", "J.R.R. Tolkien", "J. R. R. Tolkien" and
+    "JRR Tolkien" all give "j r r tolkien". Falls back to the Author Sort
+    field when there is no author; "" when there is no author at all."""
     first = next((a for a in authors if a and a.strip()), "") or next((a for a in author_sort if a and a.strip()), "")
-    if "," in first:
-        first = author_sort_to_authors(first)
-    return " ".join(sorted(normalize_words(first).split()))
+    return author_key(first)
 
 
 def read_identity(path: str, opf_path: str) -> tuple[str, str]:

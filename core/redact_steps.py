@@ -68,6 +68,7 @@ from redactor_common.core.pipeline import (
 )
 from redactor_common.core.trash import move_to_trash
 
+from core.author_clean import clean_authors
 from core.better_cover import IsbnCoverError, IsbnCoverLimitError, fetch_cover_by_id, fetch_cover_by_isbn
 from core.content_scan import ContentScanResult, scan_book
 from core.description_html import has_html_markup, strip_html
@@ -601,6 +602,32 @@ class StripDescriptionHtmlStep(Step):
             return StepResult.nothing()
         ctx.work.apply_metadata({"description": strip_html(text)})
         return StepResult.applied("description: removed HTML markup")
+
+
+class CleanAuthorsStep(Step):
+    key = "clean_authors"
+    label = "Clean up authors"
+    description = (
+        "Tidies Author(s) and Author Sort with the deterministic fixes of Repair > Clean Up Authors: spacing and "
+        "initials, role suffixes and 'et al.', 'Last, First' to 'First Last', duplicates, a generated or tidied "
+        "sort value. Guesses (splitting 'Simon & Schuster', removing 'Dr.', a sort value that disagrees with the "
+        "author) are never applied here; they are named in the report notes."
+    )
+
+    def run(self, ctx: EpubCtx) -> StepResult:
+        md = ctx.work.metadata
+        result = clean_authors(md.authors, md.author_sort, allow_review=False)
+        held = [f"needs review: {c}" for c in result.review] + [f"flag: {f}" for f in result.flags]
+        note = "authors: " + "; ".join(held) if held else ""
+        if not result.changed:
+            return StepResult.nothing(note=note)
+        ctx.work.apply_metadata({
+            "authors_str": "; ".join(result.authors),
+            "author_sort_str": "; ".join(result.author_sort),
+        })
+        done = StepResult.applied(*(f"authors {c}" for c in result.changes))
+        done.note = note
+        return done
 
 
 class LanguageStep(Step):
@@ -1273,6 +1300,7 @@ def build_catalogue(
         ScanYearStep(),
         ScanSeriesStep(),
         MetadataLookupStep(),
+        CleanAuthorsStep(),
         CoverStep(),
         RenameStep(rename_pattern, history=history, sample=sample),
         MoveIntoFoldersStep(path_pattern, history=history, sample=sample),

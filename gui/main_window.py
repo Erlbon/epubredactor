@@ -130,6 +130,7 @@ from redactor_common.gui import standard_shortcuts as shortcuts
 from gui import app_settings
 from redactor_common.gui.about_dialog import AboutDialog, ChangelogDialog, CreditsDialog
 from redactor_common.core.version import REDACTOR_COMMON_REPO_URL, REDACTOR_COMMON_VERSION
+from gui.author_clean_dialog import AuthorCleanDialog
 from gui.author_sort_dialog import AuthorSortDialog
 from gui.blank_language_default_dialog import BlankLanguageDefaultDialog
 from gui.calibre_lookup_dialog import CalibreLookupDialog
@@ -685,6 +686,11 @@ class MainWindow(QMainWindow):
             MenuAction(
                 "strip_description_html", "&Strip HTML from Description…",
                 self.open_strip_description_html_dialog,
+            ),
+            MenuAction(
+                "clean_authors", "Clean Up &Authors…", self.open_author_clean_dialog,
+                tooltip="Tidies Author(s) and Author Sort: spacing, roles, duplicates, 'Last, First', "
+                        "missing or disagreeing sort values. Guesses are listed unticked.",
             ),
             Separator(),
             MenuAction("polish_book", "&Polish Book…", self.open_polish_book_dialog),
@@ -3422,6 +3428,34 @@ class MainWindow(QMainWindow):
         self._refresh_rows_full(affected_books)
         self._refresh_status()
         self._on_selection_changed()  # bulk-edit panel may be showing the field this just changed
+
+    # ------------------------------------------------------------------
+    # Clean Up Authors
+    # ------------------------------------------------------------------
+
+    def open_author_clean_dialog(self) -> None:
+        target_books = self._selection_or_all_books()
+        if not target_books:
+            QMessageBox.information(
+                self, "No books", "Load some books first (or select the ones to clean up)."
+            )
+            return
+
+        dialog = AuthorCleanDialog(target_books, self)
+        if dialog.exec() != AuthorCleanDialog.DialogCode.Accepted:
+            return
+
+        changes = dialog.accepted_changes()  # book index -> {"authors_str", "author_sort_str"}
+        if not changes:
+            return
+
+        affected_books = [target_books[i] for i in changes]
+        self._push_undo("Clean up authors", affected_books)
+        for i, values in changes.items():
+            target_books[i].apply_metadata(values)
+        self._refresh_rows_full(affected_books)
+        self._refresh_status()
+        self._on_selection_changed()  # the panel may be showing these fields
 
     # ------------------------------------------------------------------
     # Rebuild Manifest

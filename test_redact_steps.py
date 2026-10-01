@@ -590,3 +590,38 @@ def test_the_guard_is_first_and_cannot_be_switched_off():
     assert steps[0] == "guard"
     assert steps[-2:] == ["rename", "move_into_folders"]  # pinned after everything else
     assert "guard" not in [s.key for s in build_catalogue()]  # not offered in the editor
+
+
+# --- clean_authors step ---------------------------------------------------------
+
+
+def test_clean_authors_step_applies_safe_fixes_and_only_names_review_items(tmp_path, env, trash):
+    path = make_epub(str(tmp_path / "a.epub"), authors=("Tolkien, J.R.R. (Editor)", "Dr. Seuss", "Simon &amp; Schuster"))
+    book = load(path)
+    assert book.metadata.authors == ["Tolkien, J.R.R. (Editor)", "Dr. Seuss", "Simon & Schuster"]
+    report = run([book], env, only("clean_authors"))
+    entry = only_entry(report)
+    assert entry.status is FileStatus.CHANGED, report.to_text()
+    saved = load(path)
+    # the safe fixes are in the file...
+    assert saved.metadata.authors[0] == "J. R. R. Tolkien"
+    assert saved.metadata.author_sort[0] == "Tolkien, J. R. R."
+    # ...the guesses are not: the title stays, the corporate name stays whole
+    assert saved.metadata.authors[1:] == ["Dr. Seuss", "Simon & Schuster"]
+    assert "needs review" in report.to_text()
+
+
+def test_clean_authors_step_leaves_a_clean_book_alone(tmp_path, env, trash):
+    path = make_epub(str(tmp_path / "ok.epub"), authors=("Jane Doe",))
+    book = load(path)
+    book.apply_metadata({"author_sort_str": "Doe, Jane"})
+    book.save()
+    before = open(path, "rb").read()
+    report = run([load(path)], env, only("clean_authors"))
+    assert only_entry(report).status is FileStatus.UNCHANGED
+    assert open(path, "rb").read() == before
+
+
+def test_clean_authors_step_is_in_the_catalogue_and_on_by_default():
+    plain = Recipe.default_for(build_catalogue())
+    assert plain.enabled["clean_authors"] is True
