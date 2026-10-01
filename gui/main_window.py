@@ -175,7 +175,10 @@ from gui.validation_dialog import ValidationDialog
 
 import importlib.util
 
+from redactor_common.core.duplicates import JsonDismissStore
 from redactor_common.core.trash import TrashError, move_to_trash
+from redactor_common.gui.duplicates_dialog import run_find_duplicates
+from core.epub_duplicates import COLUMNS as EPUB_DUPLICATE_COLUMNS, find_duplicate_groups
 
 PATH_COL = 0
 FILENAME_COL = 1
@@ -230,6 +233,13 @@ def _rename_log() -> RenameLog:
     """The persistent log behind File > Undo Last Rename (redactor_common's
     core/rename_log.py), next to this app's settings."""
     return RenameLog(os.path.join(str(base_dir()), "epubredactor_rename_log.json"))
+
+def _duplicates_dismissed_path() -> str:
+    """Find Duplicates' "Not duplicates" decisions (redactor_common's
+    JsonDismissStore), next to the settings. Deliberately not part of
+    Export/Import Settings: it is review history, keyed by file content."""
+    return os.path.join(str(base_dir()), "epubredactor_duplicates_dismissed.json")
+
 
 def _field_label(key: str) -> str:
     return _FIELD_LABELS.get(key, key.replace("_", " ").title())
@@ -662,6 +672,11 @@ class MainWindow(QMainWindow):
                 "dedupe_manifest_ids", "&Deduplicate Manifest IDs…", self.open_manifest_dedupe_dialog,
             ),
             MenuAction("repair_navigation", "Repair &Navigation…", self.open_nav_repair_dialog),
+            MenuAction(
+                "find_duplicates", labels.FIND_DUPLICATES_ALT, self.find_duplicates,
+                tooltip="Reviews all loaded books for the same book more than once. "
+                        "Nothing is changed unless you choose an action.",
+            ),
             Separator(),
             MenuAction(
                 "generate_toc", "Generate &Table of Contents…", self.open_toc_generate_dialog,
@@ -2541,10 +2556,7 @@ class MainWindow(QMainWindow):
             label_for=lambda book: f"Deleting: {os.path.basename(book.path)}",
         )
 
-        deleted_ids = {id(b) for b in deleted}
-        self.books = [b for b in self.books if id(b) not in deleted_ids]
-        self._rebuild_table()
-        self._refresh_status()
+        self._drop_trashed_books(deleted)
 
         if errors:
             details = "\n".join(f"- {os.path.basename(p)}: {err}" for p, err in errors)
@@ -2554,6 +2566,47 @@ class MainWindow(QMainWindow):
             )
         else:
             QMessageBox.information(self, "Deleted", f"Sent {len(deleted)} file(s) to the Recycle Bin.")
+
+    def _drop_trashed_books(self, trashed: list[EpubBook]) -> None:
+        """Removes books whose files were just sent to the Recycle Bin from
+        the list (shared by Delete Files and Find Duplicates)."""
+        trashed_ids = {id(b) for b in trashed}
+        self.books = [b for b in self.books if id(b) not in trashed_ids]
+        self._rebuild_table()
+        self._refresh_status()
+
+    def find_duplicates(self) -> None:
+        """Repair > Find Duplicates: reviews ALL loaded books (not just the
+        selection, since a copy can be anywhere in the list) for the same
+        book more than once -- see core/epub_duplicates.py. A review aid:
+        nothing is selected or changed unless the user picks an action."""
+        books = [b for b in self.books if not b.load_error]
+        if len(books) < 2:
+            QMessageBox.information(self, "Find Duplicates", "Load at least two books first.")
+            return
+        by_path = {os.path.normcase(os.path.abspath(b.path)): b for b in books}
+
+        def trash(path: str) -> None:
+            # A book with unsaved edits is never trashed from here: removing
+            # it would silently throw the edits away.
+            book = by_path.get(os.path.normcase(os.path.abspath(path)))
+            if book is not None and book.dirty:
+                raise TrashError("has unsaved changes -- save or discard them first (File > Save All)")
+            move_to_trash(path)
+
+        dirty = sum(1 for b in books if b.dirty)
+        intro = (
+            f"{dirty} book(s) have unsaved changes; those can't be moved to the Recycle Bin from here "
+            "(titles and authors shown include the unsaved edits)." if dirty else ""
+        )
+        run_find_duplicates(
+            self, books, find_duplicate_groups, EPUB_DUPLICATE_COLUMNS,
+            dismiss_store=JsonDismissStore(_duplicates_dismissed_path()),
+            on_select_in_list=self._select_books, on_trashed=self._drop_trashed_books,
+            trash=trash, intro_text=intro,
+            none_found_message="No possible duplicates found among the loaded books.",
+            cancellable=True,
+        )
 
     def refresh_list(self) -> None:
         """Re-scans the folders your currently-loaded books live in

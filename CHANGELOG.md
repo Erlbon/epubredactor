@@ -4,6 +4,10 @@ All notable changes to The ƎPUB Redactor, by version. Trimmed to new
 functionality and real fixes — cosmetic/UX-only adjustments aren't
 listed here.
 
+## 2026-10-01#08 -- Repair > Find Duplicates
+
+- New: Repair > Find Duplicates... reviews all loaded books for the same book more than once, in the shared review dialog. Each group says why it matched: identical content (only the metadata differs), same title and author (maybe another edition), or same ISBN with a different title (the ISBN may be wrong). Duplicates are not treated as errors: nothing is selected, nothing changes unless you choose an action, and "Not duplicates" hides a group for good (kept in epubredactor_duplicates_dismissed.json next to the settings; it is not part of Export Settings). Moving files to the Recycle Bin from the review removes them from the list and refuses books with unsaved changes.
+
 ## 2026-10-01#07 -- Finder for possible duplicate books (core)
 
 - New: the logic behind a coming Repair > Find Duplicates review. It groups loaded books by identical content (same files apart from the metadata), by the same title and first author (a possible other edition; the whole title must match, so series volumes and omnibus titles are not grouped), and by the same valid ISBN with a different title (the ISBN may be wrong), and states why each group matched. Nothing is changed or selected by it. redactor_common pin raised to 2026-10-01-05.
