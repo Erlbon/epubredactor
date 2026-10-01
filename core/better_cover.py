@@ -24,6 +24,7 @@ from core.isbn import normalize_isbn
 from core.version import APP_VERSION
 
 COVER_BY_ISBN_URL = "https://covers.openlibrary.org/b/isbn/{isbn}-L.jpg?default=false"
+COVER_BY_ID_URL = "https://covers.openlibrary.org/b/id/{cover_id}-L.jpg"  # same as OpenLibraryCandidate.image_url()
 USER_AGENT = f"EpubRedactor/{APP_VERSION} (https://github.com/Erlbon/epubredactor)"
 TIMEOUT = 20
 MAX_COVER_BYTES = 10 * 1024 * 1024  # a cover is never anywhere near this; don't buffer a runaway response
@@ -46,14 +47,11 @@ def _default_get(url: str) -> bytes:
     return data
 
 
-def fetch_cover_by_isbn(isbn: str, get: Optional[Callable[[str], bytes]] = None) -> Optional[bytes]:
-    """The cover image Open Library has for this ISBN, or None when it
-    has none (or the ISBN is empty)."""
-    digits = normalize_isbn(isbn or "")
-    if not digits:
-        return None
+def _get_cover(url: str, get: Optional[Callable[[str], bytes]]) -> Optional[bytes]:
+    """One GET of a cover URL with the policy shared by both lookups: 404 is
+    "none" (None), 403/429 the per-IP limit, anything else IsbnCoverError."""
     try:
-        data = (get or _default_get)(COVER_BY_ISBN_URL.format(isbn=digits))
+        data = (get or _default_get)(url)
     except urllib.error.HTTPError as exc:
         if exc.code == 404:
             return None
@@ -66,3 +64,49 @@ def fetch_cover_by_isbn(isbn: str, get: Optional[Callable[[str], bytes]] = None)
     except (urllib.error.URLError, OSError) as exc:
         raise IsbnCoverError(f"Open Library couldn't be reached: {exc}") from exc
     return data or None
+
+
+def fetch_cover_by_isbn(isbn: str, get: Optional[Callable[[str], bytes]] = None) -> Optional[bytes]:
+    """The cover image Open Library has for this ISBN, or None when it
+    has none (or the ISBN is empty)."""
+    digits = normalize_isbn(isbn or "")
+    if not digits:
+        return None
+    return _get_cover(COVER_BY_ISBN_URL.format(isbn=digits), get)
+
+
+def fetch_cover_by_id(cover_id: int, get: Optional[Callable[[str], bytes]] = None) -> Optional[bytes]:
+    """The cover image for an Open Library cover id (what the local database
+    records for an edition), through the same GET, size cap and error policy
+    as the ISBN lookup; None when the id is not positive or has no image."""
+    if not isinstance(cover_id, int) or isinstance(cover_id, bool) or cover_id <= 0:
+        return None
+    return _get_cover(COVER_BY_ID_URL.format(cover_id=cover_id), get)
+
+
+def fetch_cover_for_isbn(
+    isbn: str, local_path: str = "", get: Optional[Callable[[str], bytes]] = None, local_search=None
+) -> Optional[bytes]:
+    """The cover for `isbn`: when the local Open Library database (`local_path`)
+    has the edition with a cover id, that id is fetched directly; otherwise,
+    or when that finds nothing, the by-ISBN lookup. Only the per-IP limit
+    error is raised out of the id attempt (the ISBN lookup would hit it too)."""
+    if local_path:
+        from core.openlibrary_local import OpenLibraryLocalError, local_search_by_isbn
+
+        try:
+            found = (local_search or local_search_by_isbn)(local_path, isbn)
+        except OpenLibraryLocalError:
+            found = []
+        for candidate in found:
+            if candidate.cover_id > 0:
+                try:
+                    data = fetch_cover_by_id(candidate.cover_id, get)
+                except IsbnCoverLimitError:
+                    raise
+                except IsbnCoverError:
+                    break
+                if data:
+                    return data
+                break
+    return fetch_cover_by_isbn(isbn, get)

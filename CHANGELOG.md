@@ -4,6 +4,11 @@ All notable changes to The ƎPUB Redactor, by version. Trimmed to new
 functionality and real fixes — cosmetic/UX-only adjustments aren't
 listed here.
 
+## 2026-10-01#04 -- Authors from works, and covers from the local Open Library database
+
+- New: an optional third source when building the Open Library database, the works dump (or the all-types dump): editions that list no author of their own get their work's authors. Left empty it changes nothing; it adds a big extra pass (roughly 10-15 minutes and ~1 GB of temporary disk, an estimate).
+- New: covers use the local database's cover id. Find Better Covers and Redact's cover step fetch the cover for a local match directly by id (no ISBN search, no per-IP ISBN limit), with the usual size cap and image checks; the "Open Library (Local Database)" lookup now shows the cover beside the current one and Apply sets it like the online lookup. Nothing is fetched except by those actions.
+
 ## 2026-10-01#03 -- Open Library database checked against real dump samples
 
 - Fixed: publish dates like "1988 December", "2002 May 20" and "2005-06-" (seen in the real editions dump) now give their month (and day) instead of the year alone.

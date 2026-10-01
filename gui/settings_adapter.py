@@ -144,6 +144,7 @@ class EpubSettingsAdapter(sb.SettingsAdapter):
                 "open_library_database": app_settings.load_open_library_database(),
                 "open_library_editions_dump": app_settings.load_open_library_sources()[0],
                 "open_library_authors_dump": app_settings.load_open_library_sources()[1],
+                "open_library_works_dump": app_settings.load_open_library_works_dump(),
             }
         if key == "ereader":
             return {"servers": app_settings.load_ereader_servers()}
@@ -208,6 +209,9 @@ class EpubSettingsAdapter(sb.SettingsAdapter):
         if isinstance(new_authors, str) and new_authors and os.path.isfile(new_authors):
             authors = new_authors
         app_settings.save_open_library_sources(editions, authors)
+        works = values.get("open_library_works_dump")
+        if isinstance(works, str) and works and os.path.isfile(works):
+            app_settings.save_open_library_works_dump(works)
 
     @staticmethod
     def _write_field_defaults(s, values: dict[str, Any]) -> None:

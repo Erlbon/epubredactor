@@ -18,9 +18,11 @@ found cover side by side, and per-row title/author correction with
 from __future__ import annotations
 
 import os
+from typing import Optional
 
 from core.epub_metadata import EpubBook
 from core.isbn import best_isbn13
+from gui.cover_quality import image_size
 from core.open_library_lookup import (
     OpenLibraryLookupError,
     download_cover_image,
@@ -39,8 +41,10 @@ QUERY_FIELDS = [("title", "Title"), ("authors", "Author(s)")]
 class OpenLibraryDialog(LookupDialogBase):
     """`local_path`: the offline Open Library database (Tools > Open Library
     Database). With it the same dialog searches that file instead of the
-    network: a book's own ISBN first, else title/author. No covers come
-    from it (cover ids are only fetchable online)."""
+    network: a book's own ISBN first, else title/author. The cover, when
+    the edition has a cover id, is the only thing fetched online."""
+
+    cover_fetch = None  # tests inject a fake fetch(url) -> bytes; None = the real network fetch
 
     def __init__(self, books: list[EpubBook], parent=None, local_path: str = ""):
         self.books = books
@@ -50,7 +54,7 @@ class OpenLibraryDialog(LookupDialogBase):
             info_text = (
                 f"Searching the local Open Library database for {len(books)} book(s): by ISBN where the "
                 "book has one, else by title/author. Each match brings in title, authors, publisher, "
-                "date, ISBN and language together (no cover) -- untick anything you don't trust, then Apply."
+                "date, ISBN, language and (when Open Library has one) the cover together -- untick anything you don't trust, then Apply."
             )
             search_label = "Searching the local Open Library database…"
         else:
@@ -111,7 +115,21 @@ class OpenLibraryDialog(LookupDialogBase):
             return LookupResult(error=str(exc), used_query=used)
         if not candidates:
             return LookupResult(used_query=used)
-        return LookupResult(fields=candidates[0].as_dict(), used_query=used)
+        best = candidates[0]
+        return LookupResult(fields=best.as_dict(), cover_bytes=self._local_cover(best), used_query=used)
+
+    def _local_cover(self, candidate) -> Optional[bytes]:
+        """The cover for a local match's Open Library cover id, fetched like the online
+        path's (download_cover_image: same URL, size cap and errors). This runs on the
+        lookup's worker thread; any failure -- or bytes that aren't an image -- is silent
+        (the metadata is still usable without the cover). Nothing for cover id <= 0."""
+        if candidate.cover_id <= 0:
+            return None
+        try:
+            data = download_cover_image(candidate, fetch=self.cover_fetch)
+        except OpenLibraryLookupError:
+            return None
+        return data if image_size(data) else None
 
     # accepted_metadata() comes from LookupDialogBase.
 

@@ -68,7 +68,7 @@ from redactor_common.core.pipeline import (
 )
 from redactor_common.core.trash import move_to_trash
 
-from core.better_cover import IsbnCoverError, IsbnCoverLimitError, fetch_cover_by_isbn
+from core.better_cover import IsbnCoverError, IsbnCoverLimitError, fetch_cover_by_id, fetch_cover_by_isbn
 from core.content_scan import ContentScanResult, scan_book
 from core.description_html import has_html_markup, strip_html
 from core.epub_metadata import EpubBook, EpubError
@@ -155,6 +155,7 @@ class Lookups:
     local_by_isbn: Callable = local_search_by_isbn
     local_by_title: Callable = local_search_by_title
     cover_by_isbn: Callable = fetch_cover_by_isbn
+    cover_by_id: Callable = fetch_cover_by_id  # an Open Library cover id (from the local database match)
     download_google_cover: Callable = download_google_cover
 
 
@@ -881,7 +882,8 @@ class CoverStep(Step):
     label = "Cover"
     description = (
         "For a book with no cover, or one flagged as a junk cover: fetches the cover for the book's own ISBN "
-        "(Open Library, then Google Books; a match on the ISBN is applied). A book with no cover at all that "
+        "(the local Open Library database's cover id first when one is set up, then Open Library by ISBN, then "
+        "Google Books; a match on the ISBN is applied). A book with no cover at all that "
         "has no online match gets a generated placeholder cover from its metadata. A flagged junk cover with "
         "no match is left as it is."
     )
@@ -921,11 +923,44 @@ class CoverStep(Step):
             return "", None
         return mime, size
 
+    def _local_cover(self, ctx: EpubCtx, isbn: str) -> CoverCandidate | None:
+        """With a local Open Library database: its exact-ISBN match's cover id,
+        fetched straight from covers.openlibrary.org/b/id/<id> (the same size
+        cap, validity and minimum-width checks as any other cover) instead of
+        searching again. Any problem just falls through to the ordinary sources."""
+        env, lookups = ctx.env, ctx.env.lookups
+        if not env.openlibrary_local:
+            return None
+        try:
+            matches = env.cached(
+                (LOCAL_OPEN_LIBRARY, env.openlibrary_local, (isbn,)),
+                lambda: env.lookup(LOCAL_OPEN_LIBRARY, lookups.local_by_isbn, env.openlibrary_local, isbn),
+            )
+        except (StoppedError, OpenLibraryLocalError):
+            return None  # the metadata step notes a broken database; covers just carry on
+        for match in matches or []:
+            if match.cover_id > 0:
+                try:
+                    data = env.cached(
+                        ("ol cover id", match.cover_id),
+                        lambda: env.lookup("Open Library covers", lookups.cover_by_id, match.cover_id),
+                    )
+                except (StoppedError, IsbnCoverError):
+                    return None
+                mime, size = self._usable(env, data)
+                if mime:
+                    return CoverCandidate(data, mime, f"{LOCAL_OPEN_LIBRARY} match (cover id {match.cover_id})", size)
+                return None
+        return None
+
     def _fetch(self, ctx: EpubCtx, isbn: str) -> tuple[CoverCandidate | None, str]:
         """(candidate, "") when found; (None, "") when the sources
         definitively have none; (None, why) when a source could not be asked."""
         env, lookups = ctx.env, ctx.env.lookups
         why = ""
+        local = self._local_cover(ctx, isbn)
+        if local is not None:
+            return local, ""
         try:
             data = env.cached(("ol cover", isbn), lambda: env.lookup("Open Library covers", lookups.cover_by_isbn, isbn))
             mime, size = self._usable(env, data)

@@ -668,6 +668,7 @@ def save_library_root(path: str) -> None:
 _OPEN_LIBRARY_DB_KEY = "openlibrary/database"
 _OPEN_LIBRARY_EDITIONS_KEY = "openlibrary/editions_dump"
 _OPEN_LIBRARY_AUTHORS_KEY = "openlibrary/authors_dump"
+_OPEN_LIBRARY_WORKS_KEY = "openlibrary/works_dump"
 _OPEN_LIBRARY_LANGUAGES_KEY = "openlibrary/languages"
 _OPEN_LIBRARY_ALL_LANGUAGES_KEY = "openlibrary/all_languages"
 _OPEN_LIBRARY_UNKNOWN_LANGUAGE_KEY = "openlibrary/include_unknown_language"
@@ -698,6 +699,15 @@ def save_open_library_sources(editions: str, authors: str) -> None:
     s = _settings()
     s.setValue(_OPEN_LIBRARY_EDITIONS_KEY, editions or "")
     s.setValue(_OPEN_LIBRARY_AUTHORS_KEY, authors or "")
+
+
+def load_open_library_works_dump() -> str:
+    """The optional works dump (authors for editions that have none), "" = not used."""
+    return str(_settings().value(_OPEN_LIBRARY_WORKS_KEY, "", type=str) or "")
+
+
+def save_open_library_works_dump(path: str) -> None:
+    _settings().setValue(_OPEN_LIBRARY_WORKS_KEY, path or "")
 
 
 def load_open_library_build_options():

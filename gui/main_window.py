@@ -2362,7 +2362,7 @@ class MainWindow(QMainWindow):
         ones LARGER than the current cover (or where there is none) side
         by side -- see core/better_cover.py, gui/better_cover_dialog.py.
         Applied as one Undo step, written on Save."""
-        from core.better_cover import IsbnCoverError, IsbnCoverLimitError, fetch_cover_by_isbn
+        from core.better_cover import IsbnCoverError, IsbnCoverLimitError, fetch_cover_for_isbn
         from gui.better_cover_dialog import BetterCoverDialog
         from redactor_common.gui.background_call import call_in_background
 
@@ -2379,12 +2379,16 @@ class MainWindow(QMainWindow):
         found: list = []
         problems: list[str] = []
         stopped = [""]
+        # With a local Open Library database, an edition's own cover id is fetched directly
+        # (no per-IP ISBN limit); without a hit it is the by-ISBN lookup as before.
+        local_db = app_settings.load_open_library_database()
+        local_db = local_db if local_db and os.path.isfile(local_db) else ""
 
         def _look_up(book: EpubBook, _index: int) -> None:
             if stopped[0]:
                 return
             try:
-                data = call_in_background(fetch_cover_by_isbn, book.metadata.isbn)
+                data = call_in_background(fetch_cover_for_isbn, book.metadata.isbn, local_db)
             except IsbnCoverLimitError as exc:
                 stopped[0] = str(exc)
                 return

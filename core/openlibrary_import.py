@@ -7,7 +7,8 @@ bulk dumps (the user downloads them from openlibrary.org/developers/dumps
 and, for author names, the AUTHORS dump (ol_dump_authors_*.txt.gz). The
 all-types ol_dump_*.txt.gz works too -- point both pickers at it; each
 pass just ignores the record types it doesn't need. The works dump is
-not used yet (an edition with no author of its own would need it).
+optional: with it, an edition that has no author of its own gets the authors of its
+work (see below).
 
 Streaming, reading and writing are redactor_common's core/dump_import.py;
 what's here is the recipe:
@@ -31,6 +32,15 @@ what's here is the recipe:
   authors_text (names, "; "-joined, for display and search) and
   author_keys; the authors table holds just the authors that kept
   editions actually use.
+- WORKS (optional third source): many editions list no author, the work does.
+  With the works dump (or the all-types dump) a pass BEFORE the editions
+  pass stores work -> first author keys (a work's authors are
+  `[{"author": {"key": ...}, "type": {...}}]`) in a second temporary on-disk
+  table, and an edition with no authors of its own looks its work up there
+  at flush time; editions that have authors keep them. ESTIMATE, not
+  measured (no works dump was read): the works file is large (a few GB
+  compressed), so expect roughly 10-15 more minutes and ~1 GB more
+  temporary disk (<dest>.works.tmp, deleted at the end).
 - A prebuilt FTS5 index over title + authors_text makes title/author
   search instant (redactor_common core/local_db.fts_query).
 
@@ -94,6 +104,8 @@ SOURCE_NAME = "Open Library"
 RECIPE = "openlibrary-editions/1"
 TYPE_EDITION = "/type/edition"
 TYPE_AUTHOR = "/type/author"
+TYPE_WORK = "/type/work"
+MAX_WORK_AUTHORS = 6  # a work credits a handful of people at most; keep the first few
 COLUMNS = ["type", "key", "revision", "last_modified", "json"]
 
 # The languages offered in the build options: (id, label, ISO 639-1 codes it covers).
@@ -169,6 +181,8 @@ class ImportSummary:
     skipped_no_isbn: int = 0
     skipped_language: int = 0
     authors_read: int = 0
+    works_read: int = 0  # works that had authors (only with a works dump)
+    authors_from_works: int = 0  # editions that borrowed their work's authors
     authors: int = 0
     bad_lines: int = 0
     rows: dict = field(default_factory=dict)
@@ -181,6 +195,8 @@ class ImportSummary:
             f"({self.skipped_no_isbn:,} without a valid ISBN, {self.skipped_language:,} in other languages); "
             f"{self.authors:,} author names."
         )
+        if self.authors_from_works:
+            text += f" {self.authors_from_works:,} editions got their authors from their work."
         if size:
             text += f" Database size {size / (1 << 20):,.0f} MB."
         if self.bad_lines:
@@ -394,6 +410,57 @@ def _resolve_names(con: Optional[sqlite3.Connection], keys: set[str]) -> dict[st
     return found
 
 
+def _load_work_authors(path: str, temp_path: str, progress, cancelled) -> tuple[sqlite3.Connection, int, int]:
+    """Pass 2 (optional): work key -> its first author keys, into an on-disk
+    temp table. A work record's authors are `[{"author": {"key": "/authors/OL1A"},
+    "type": {...}}]` (checked against the live API); works with no usable
+    author aren't stored. Returns the open connection, how many works were
+    stored and how many lines were bad."""
+    for leftover in (temp_path, temp_path + "-journal"):
+        if os.path.exists(leftover):
+            os.remove(leftover)
+    con = sqlite3.connect(temp_path)
+    try:
+        for pragma in ("journal_mode = OFF", "synchronous = OFF", "cache_size = -65536"):
+            con.execute(f"pragma {pragma}")
+        con.execute("create table work_authors (work_key text primary key, author_keys text) without rowid")
+        reader = _Pass(path, TYPE_WORK, "work", progress, cancelled)
+        batch: list[tuple[str, str]] = []
+        count = 0
+        for key, data in reader.records():
+            short = _strip_prefix(key)
+            keys = _key_list(data.get("authors"))[:MAX_WORK_AUTHORS]
+            if not short or not keys:
+                continue
+            batch.append((short, " ".join(keys)))
+            if len(batch) >= 20000:
+                con.executemany("insert or replace into work_authors values (?, ?)", batch)
+                count += len(batch)
+                batch.clear()
+        if batch:
+            con.executemany("insert or replace into work_authors values (?, ?)", batch)
+            count += len(batch)
+        con.commit()
+        return con, count, reader.bad
+    except BaseException:
+        con.close()
+        raise
+
+
+def _resolve_work_authors(con: Optional[sqlite3.Connection], work_keys: set[str]) -> dict[str, list[str]]:
+    """work key -> author keys, for the works in `work_keys` that have any."""
+    if con is None or not work_keys:
+        return {}
+    found: dict[str, list[str]] = {}
+    pool = sorted(work_keys)
+    for start in range(0, len(pool), _SQL_CHUNK):
+        chunk = pool[start:start + _SQL_CHUNK]
+        marks = ",".join("?" * len(chunk))
+        for work, keys in con.execute(f"select work_key, author_keys from work_authors where work_key in ({marks})", chunk):
+            found[work] = keys.split()
+    return found
+
+
 def build_openlibrary_database(
     editions_path: str,
     dest: str,
@@ -401,16 +468,24 @@ def build_openlibrary_database(
     options: Optional[BuildOptions] = None,
     progress: Optional[Callable[[float], None]] = None,
     cancelled: Optional[Callable[[], bool]] = None,
+    works_path: str = "",
 ) -> ImportSummary:
     """Reads the editions dump (and the authors dump, if given; either may
     be the all-types dump) and writes the lookup database to `dest`,
-    replacing a previous build only once this one has succeeded."""
+    replacing a previous build only once this one has succeeded.
+
+    `works_path` (optional; the works dump or the all-types dump): an
+    edition with no authors of its own then gets the authors of its work.
+    Pass order is authors -> works -> editions; the works pass only stores
+    work -> author keys in a temporary on-disk table (see _load_work_authors)."""
     options = options or BuildOptions()
     summary = ImportSummary()
     if not editions_path or not os.path.isfile(editions_path):
         raise DumpImportError(f"Editions dump not found: {editions_path or '(not set)'}")
     if authors_path and not os.path.isfile(authors_path):
         raise DumpImportError(f"Authors dump not found: {authors_path}")
+    if works_path and not os.path.isfile(works_path):
+        raise DumpImportError(f"Works dump not found: {works_path}")
     if not options.all_languages and not options.languages and not options.include_unknown_language:
         raise DumpImportError("No languages chosen -- tick at least one, or 'All languages'.")
     wanted = options.wanted_codes()
@@ -418,27 +493,44 @@ def build_openlibrary_database(
     # Progress budget: both passes weighted by file size, then the author
     # table and the full-text index.
     size_authors = os.path.getsize(authors_path) if authors_path else 0
+    size_works = os.path.getsize(works_path) if works_path else 0
     size_editions = os.path.getsize(editions_path)
-    total = max(size_authors + size_editions, 1)
+    total = max(size_authors + size_works + size_editions, 1)
     span_authors = 0.83 * size_authors / total
+    span_works = 0.83 * size_works / total
     span_editions = 0.83 * size_editions / total
-    fts_start = span_authors + span_editions + 0.03
+    fts_start = span_authors + span_works + span_editions + 0.03
     temp_path = dest + ".authors.tmp"
+    works_temp = dest + ".works.tmp"
     names: Optional[sqlite3.Connection] = None
+    works: Optional[sqlite3.Connection] = None
     try:
         if authors_path:
             names, summary.authors_read, bad = _load_author_names(
                 authors_path, temp_path, _scaled(progress, 0.0, span_authors), cancelled
             )
             summary.bad_lines += bad
+        if works_path:
+            works, summary.works_read, bad = _load_work_authors(
+                works_path, works_temp, _scaled(progress, span_authors, span_works), cancelled
+            )
+            summary.bad_lines += bad
 
         with SqliteBuilder(dest, TABLES, INDEXES) as out:
-            reader = _Pass(editions_path, TYPE_EDITION, "edition", _scaled(progress, span_authors, span_editions),
-                           cancelled)
+            reader = _Pass(editions_path, TYPE_EDITION, "edition",
+                           _scaled(progress, span_authors + span_works, span_editions), cancelled)
             pending: list[tuple] = []  # (row without authors_text/author_keys, author keys)
             edition_id = 0
 
             def flush() -> None:
+                # Editions without authors of their own borrow their work's.
+                from_works = _resolve_work_authors(
+                    works, {row[-1] for row, keys in pending if not keys and row[-1]}
+                )
+                for index, (row, keys) in enumerate(pending):
+                    if not keys and from_works.get(row[-1]):
+                        pending[index] = (row, from_works[row[-1]])
+                        summary.authors_from_works += 1
                 found = _resolve_names(names, {k for _row, keys in pending for k in keys})
                 for row, keys in pending:
                     people = [found[k] for k in keys if k in found]
@@ -466,7 +558,7 @@ def build_openlibrary_database(
                 cover_list = data.get("covers")
                 covers = [c for c in cover_list if isinstance(c, int) and not isinstance(c, bool) and c > 0] \
                     if isinstance(cover_list, list) else []
-                works = _key_list(data.get("works"))
+                work_keys = _key_list(data.get("works"))
                 row = (
                     edition_id, _strip_prefix(key), isbn13, isbn10, _text(data.get("title")),
                     _text(data.get("subtitle")),
@@ -476,7 +568,7 @@ def build_openlibrary_database(
                     pages if isinstance(pages, int) and not isinstance(pages, bool) and 0 < pages < 20000 else None,
                     covers[0] if covers else None,
                     "; ".join(_string_list(data.get("subjects"), MAX_SUBJECTS, MAX_SUBJECT_CHARS)),
-                    works[0] if works else "",
+                    work_keys[0] if work_keys else "",
                 )
                 pending.append((row, _key_list(data.get("authors"))))
                 for other in extra:
@@ -514,17 +606,22 @@ def build_openlibrary_database(
                 "languages": options.describe(), "editions_seen": summary.editions_seen,
                 "skipped_no_isbn": summary.skipped_no_isbn, "skipped_language": summary.skipped_language,
                 "bad_lines": summary.bad_lines,
+                "works_file": os.path.basename(works_path) if works_path else "",
+                "works_file_date": _file_date(works_path) if works_path else "",
+                "authors_from_works": summary.authors_from_works,
             })
             summary.sizes = dict(out.sizes)
         _record_sizes(dest, summary.sizes)
     finally:
-        if names is not None:
-            names.close()
-        for leftover in (temp_path, temp_path + "-journal"):
-            try:
-                os.remove(leftover)
-            except OSError:
-                pass
+        for connection in (names, works):
+            if connection is not None:
+                connection.close()
+        for base in (temp_path, works_temp):
+            for leftover in (base, base + "-journal"):
+                try:
+                    os.remove(leftover)
+                except OSError:
+                    pass
     if progress:
         progress(1.0)
     return summary
@@ -571,6 +668,8 @@ def describe_database(path: str) -> str:
             f"{editions:,} editions")
     if info.get("rows.authors", "0") != "0":
         text += f", {int(info['rows.authors']):,} authors"
+    if info.get("authors_from_works", "0") not in ("0", ""):
+        text += f" ({int(info['authors_from_works']):,} with authors taken from their work)"
     if info.get("languages"):
         text += f"; {info['languages']}"
     size = info.get("size.file")

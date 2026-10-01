@@ -579,6 +579,21 @@ reference may not be in the authors dump, in which case the edition keeps
 the key but no name; publish dates are almost always "March 14, 2001",
 "April 1998", "1997" or ISO.
 
+Optional works dump: many editions list no author while their work does.
+Give the works dump (or the all-types dump) as a third source and editions
+without authors of their own take their work's (the work's `authors` are
+`[{"author": {"key": ...}, "type": {...}}]`, checked against one live work
+record). It is an extra pass before the editions pass, storing work -> author
+keys in a temporary on-disk table; ESTIMATE (no works dump has been read):
+roughly 10-15 more minutes and ~1 GB more temporary disk.
+
+Covers: a local match records Open Library's cover id. Find Better Covers
+and the Redact cover step fetch `covers.openlibrary.org/b/id/<id>-L.jpg`
+directly for it (same size cap and image checks as the ISBN path; no per-IP
+ISBN limit), the local lookup dialog shows that cover beside the current one,
+and Apply sets it exactly as for the online lookup. Nothing is fetched unless
+you run one of those; ids <= 0 are skipped.
+
 Still unverified: the full dumps (size, speed and memory at 10^7 scale),
 the distribution of languages and ISBNs outside the start of the file, and
 how many editions lack an author but have one on their work (the works dump

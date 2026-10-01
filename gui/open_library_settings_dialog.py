@@ -57,7 +57,10 @@ INSTRUCTIONS = (
     "<li>Choose them below, tick the languages to keep, and click <b>Build Database...</b>. "
     "Reading the dumps takes a while (tens of minutes); Cancel is safe.</li></ol>"
     "Only editions with a valid ISBN are kept. Expect roughly 2-3 GB for the default languages "
-    "(more for all languages), plus about as much free disk space while it builds."
+    "(more for all languages), plus about as much free disk space while it builds. "
+    "The optional <b>works</b> dump (<code>ol_dump_works_*.txt.gz</code>) adds authors to editions that list "
+    "none themselves (their work usually does); it is big, so it adds roughly 10-15 minutes and about 1 GB "
+    "of temporary disk (estimates)."
 )
 
 
@@ -84,6 +87,11 @@ class OpenLibrarySettingsDialog(LocalDatabaseSettingsDialog):
         layout = QVBoxLayout(box)
         self.editions_edit = self._picker(layout, "Editions dump:", editions)
         self.authors_edit = self._picker(layout, "Authors dump:", authors, optional=True)
+        self.works_edit = self._picker(
+            layout, "Works dump:", app_settings.load_open_library_works_dump(), optional=True,
+            hint="Optional -- adds authors to editions that list none (their work often does); a big file, "
+                 "adds roughly 10-15 minutes and ~1 GB of temporary disk",
+        )
 
         layout.addWidget(QLabel("Keep editions in these languages:"))
         grid = QGridLayout()
@@ -113,13 +121,15 @@ class OpenLibrarySettingsDialog(LocalDatabaseSettingsDialog):
 
     # -- widgets -------------------------------------------------------------------------
 
-    def _picker(self, layout, label: str, value: str, optional: bool = False) -> QLineEdit:
+    def _picker(self, layout, label: str, value: str, optional: bool = False, hint: str = "") -> QLineEdit:
         row = QHBoxLayout()
         row.addWidget(QLabel(label))
         edit = QLineEdit(value)
         edit.setPlaceholderText(
-            "Optional -- without it books have no author names" if optional else "Path to the dump file"
+            hint or ("Optional -- without it books have no author names" if optional else "Path to the dump file")
         )
+        if hint:
+            edit.setToolTip(hint)
         browse = QPushButton("Browse…")
         browse.clicked.connect(lambda: self._browse_dump(edit, label))
         row.addWidget(edit, 1)
@@ -172,6 +182,7 @@ class OpenLibrarySettingsDialog(LocalDatabaseSettingsDialog):
     def _save_all(self, path: str) -> None:
         app_settings.save_open_library_database(path)
         app_settings.save_open_library_sources(self.editions_edit.text().strip(), self.authors_edit.text().strip())
+        app_settings.save_open_library_works_dump(self.works_edit.text().strip())
         app_settings.save_open_library_build_options(self.build_options())
 
     def _build_database(self) -> Optional[str]:
@@ -179,6 +190,7 @@ class OpenLibrarySettingsDialog(LocalDatabaseSettingsDialog):
         if abandoned, cancelled or failed)."""
         editions = self.editions_edit.text().strip()
         authors = self.authors_edit.text().strip()
+        works = self.works_edit.text().strip()
         if not editions:
             QMessageBox.information(self, "Build Database", "Choose the editions dump first.")
             return None
@@ -203,7 +215,7 @@ class OpenLibrarySettingsDialog(LocalDatabaseSettingsDialog):
             summary = run_dump_import(
                 self, "Build Open Library Database", "Reading the Open Library dumps…",
                 lambda progress, cancelled: build_openlibrary_database(
-                    editions, dest, authors, options, progress, cancelled
+                    editions, dest, authors, options, progress, cancelled, works
                 ),
             )
         except DumpImportError as exc:
