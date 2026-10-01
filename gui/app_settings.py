@@ -733,3 +733,23 @@ def save_open_library_build_options(options) -> None:
     s.setValue(_OPEN_LIBRARY_LANGUAGES_KEY, ",".join(options.languages))
     s.setValue(_OPEN_LIBRARY_ALL_LANGUAGES_KEY, bool(options.all_languages))
     s.setValue(_OPEN_LIBRARY_UNKNOWN_LANGUAGE_KEY, bool(options.include_unknown_language))
+
+
+# ------------------------------------------------------------------
+# Raw access for the Preferences dialog (gui/preferences.py): it maps
+# its setting names onto the ini keys above, so the loaders and
+# Export/Import keep working on the very same entries.
+# ------------------------------------------------------------------
+
+def raw_setting(key: str):
+    """The stored value for an ini key, as QSettings returns it (a string
+    from an ini), or None when nothing is stored."""
+    return _settings().value(key)
+
+
+def write_settings(values: dict) -> None:
+    """Stores several ini keys in one go (QSettings writes the file once)."""
+    settings = _settings()
+    for key, value in values.items():
+        settings.setValue(key, value)
+    settings.sync()

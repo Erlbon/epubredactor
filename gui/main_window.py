@@ -128,11 +128,11 @@ from redactor_common.gui.column_menu import show_column_header_context_menu
 from redactor_common.gui.collapsible_splitter import SplitterPaneCollapser
 from redactor_common.gui import standard_shortcuts as shortcuts
 from gui import app_settings
+from gui import preferences
 from redactor_common.gui.about_dialog import AboutDialog, ChangelogDialog, CreditsDialog
 from redactor_common.core.version import REDACTOR_COMMON_REPO_URL, REDACTOR_COMMON_VERSION
 from gui.author_clean_dialog import AuthorCleanDialog
 from gui.author_sort_dialog import AuthorSortDialog
-from gui.blank_language_default_dialog import BlankLanguageDefaultDialog
 from gui.calibre_lookup_dialog import CalibreLookupDialog
 from redactor_common.gui.case_conversion_dialog import CaseConversionDialog
 from redactor_common.gui.column_settings_dialog import ColumnSettingsDialog
@@ -713,11 +713,8 @@ class MainWindow(QMainWindow):
         ]
 
         tools_items = standard_tools_items(
+            preferences=self.open_preferences,
             app_settings=[
-                MenuAction(
-                    "blank_language_default", "&Blank Language Default…",
-                    self.open_blank_language_default_settings,
-                ),
                 MenuAction(
                     "open_library_settings", "Open Library &Database…",
                     self.open_open_library_settings_dialog,
@@ -729,7 +726,7 @@ class MainWindow(QMainWindow):
         ) + [
             Separator(),
             MenuAction(
-                "perf_logging", "Enable &Performance Logging",
+                "perf_logging", "Enable Performance &Logging",
                 self.toggle_perf_logging, checkable=True,
                 tooltip="Logs a timing breakdown of slow operations (table rebuilds, saves) "
                         "to a file next to the crash log, for diagnosing a slowdown that "
@@ -3732,24 +3729,31 @@ class MainWindow(QMainWindow):
 
         OpenLibrarySettingsDialog(self).exec()
 
-    def open_blank_language_default_settings(self) -> None:
-        dialog = BlankLanguageDefaultDialog(
-            app_settings.load_blank_language_default_enabled(),
-            app_settings.load_blank_language_default_code(),
-            app_settings.load_languages(),
-            self,
-        )
-        if dialog.exec() != BlankLanguageDefaultDialog.DialogCode.Accepted:
-            return
-        app_settings.save_blank_language_default_enabled(dialog.result_enabled())
-        app_settings.save_blank_language_default_code(dialog.result_code())
-        self._update_blank_language_default_action_state()
+    def open_preferences(self) -> None:
+        """Tools > Preferences (Ctrl+,): redactor_common's dialog with this
+        app's pages (gui/preferences.py). Each OK / Apply brings the live
+        window in line with the keys just written."""
+        dialog = preferences.make_dialog(self)
+        dialog.applied.connect(self._on_preferences_applied)
+        dialog.exec()
+
+    def _on_preferences_applied(self, values: dict) -> None:
+        if preferences.KEY_TEXT_OVERFLOW_MODE in values:
+            mode = app_settings.load_text_overflow_mode()
+            self._apply_text_overflow_mode(mode)
+            get_action_registry(self)[f"text_wrap_mode_{mode}"].setChecked(True)
+        if preferences.KEY_PERF_LOGGING in values:
+            enabled = app_settings.load_perf_logging_enabled()
+            perf_log.set_enabled(enabled)
+            self.perf_logging_act.setChecked(enabled)
+        if preferences.KEY_BLANK_LANGUAGE_ENABLED in values:
+            self._update_blank_language_default_action_state()
 
     def _update_blank_language_default_action_state(self) -> None:
         enabled = app_settings.load_blank_language_default_enabled()
         self.set_default_language_act.setEnabled(enabled)
         self.set_default_language_act.setToolTip(
-            "" if enabled else "Disabled in Settings → Blank Language Default"
+            "" if enabled else "Disabled in Preferences → Language"
         )
 
     def set_blank_languages_to_default(self) -> None:

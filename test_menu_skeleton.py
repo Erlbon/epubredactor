@@ -67,7 +67,7 @@ def test_menu_contents_and_order():
     ]
     assert _plain_items(m["Send"]) == ["Send to Kobo (USB)", "Send to eReader (Wireless)", "Open in Sigil"]
     assert _plain_items(m["Tools"]) == [
-        "Blank Language Default", "Open Library Database", "-", "Columns", "Genres", "Languages", "-",
+        "Preferences", "-", "Open Library Database", "-", "Columns", "Genres", "Languages", "-",
         "Enable Performance Logging", "Open Performance Log",
     ]
     assert _plain_items(m["Help"])[:3] == ["Changelog", "Credits", "-"]
@@ -102,7 +102,7 @@ OLD_TO_NEW_KEYS = {
     "regenerate_junk_covers": "regenerate_junk_covers", "search_replace": "search_replace",
     "polish_book": "polish_book", "compress_images_lossy": "compress_images_lossy",
     "undo": "undo", "redo": "redo", "column_settings": "columns", "language_settings": "languages",
-    "genre_settings": "genres", "blank_language_default": "blank_language_default",
+    "genre_settings": "genres", "blank_language_default": "preferences",  # folded into Tools > Preferences > Language
     "text_wrap_mode_wrap": "text_wrap_mode_wrap", "text_wrap_mode_ellipsis": "text_wrap_mode_ellipsis",
     "text_wrap_mode_clip": "text_wrap_mode_clip", "perf_logging": "perf_logging",
     "open_perf_log": "open_perf_log", "about": "about", "changelog": "changelog", "credits": "credits",
@@ -157,6 +157,7 @@ def test_shortcut_fixes_and_their_aliases():
     assert _keys(registry["command_palette"]) == ["Ctrl+K"]
     assert _keys(registry["filter_list"]) == ["Ctrl+F"]
     assert _keys(registry["reset_zoom"]) == ["Ctrl+0"]
+    assert _keys(registry["preferences"]) == ["Ctrl+,"]
 
 
 def test_zoom_keys_are_owned_by_the_menu_not_ambiguous_with_the_toolbar():

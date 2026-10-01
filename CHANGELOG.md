@@ -4,6 +4,11 @@ All notable changes to The ƎPUB Redactor, by version. Trimmed to new
 functionality and real fixes — cosmetic/UX-only adjustments aren't
 listed here.
 
+## 2026-10-01#10 -- Preferences dialog
+
+- New: Tools > Preferences (Ctrl+,) gathers the everyday settings in one dialog with four pages: Filenames (ASCII-safe filenames, zero-pad numbers and width), Language (the blank-language default and its on/off switch, with your own language list), Display (how long text shows in the table, performance logging) and Tools and Paths (Calibre folder, Sigil program, Open Library database and dump files). OK or Apply changes the open window at once; Cancel writes nothing; Reset to Defaults resets the current page. The settings keep their old places in the settings file, so File > Export / Import Settings is unaffected.
+- Changed: Tools > Blank Language Default is now Preferences > Language. View > Text Wrapping and Tools > Enable Performance Logging stay as shortcuts and stay in step with Preferences. redactor_common pin raised to 2026-10-01-06.
+
 ## 2026-10-01#09 -- Clean Up Authors (Repair menu and Redact)
 
 - New: Repair > Clean Up Authors... reviews every loaded book's Author(s) and Author Sort and fixes the usual messes: stray spaces and punctuation, "J.R.R.Tolkien" / "J R R Tolkien" to "J. R. R. Tolkien", "Tolkien, J.R.R." to "J. R. R. Tolkien", role suffixes and junk ("(Editor)", ", translator", "Translated by", "et al.", life dates), "A; B" and "First Last & First Last" split into separate authors, ALL CAPS names, "Jr" to "Jr.", duplicate authors, and a missing or sloppy Author Sort generated or tidied for every author (particles stay with the surname, "King, Martin Luther, Jr.", one-word names sort as themselves). Corporate authors ("Simon & Schuster", "... Press"), "Anonymous" and non-Latin names are left alone. The review lists each book before and after; deterministic fixes are ticked, guesses are listed unticked (splitting "Simon & Schuster" or "Neil Gaiman, Terry Pratchett", removing "Dr.", all-lowercase names, an Author Sort that disagrees with the author, which is also flagged) and a flag row points out what has no proposed fix. Nothing is written until Save All, and one Undo reverts it.
