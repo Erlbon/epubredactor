@@ -724,7 +724,8 @@ def _surnames(authors: Iterable[str]) -> set[str]:
 
 class MetadataLookupStep(Step):
     key = "metadata_lookup"
-    label = "Fill empty fields online"
+    # The key stays "metadata_lookup" (saved recipes refer to it); only the label changed.
+    label = "Fill empty fields from lookups (local database first)"
     description = (
         "Fills EMPTY fields (author, publisher, year, ISBN, genre, language, description) from your local "
         "Open Library database first (when one is set up under Tools > Open Library Database; works offline), "

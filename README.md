@@ -565,7 +565,7 @@ The app **icon**, being an actual image, uses a genuinely 180°-rotated E.
 Tools > Open Library Database... builds an offline lookup database from
 Open Library's bulk dumps (editions, plus authors for names; you download
 them, the app never does). Metadata > Look Up > Open Library (Local
-Database)... and the Redact "Fill empty fields online" step then use it
+Database)... and the Redact "Fill empty fields from lookups (local database first)" step then use it
 before any online source. Only editions with a valid ISBN are kept, in the
 languages you choose.
 

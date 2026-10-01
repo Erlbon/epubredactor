@@ -544,6 +544,12 @@ def test_rename_and_move_do_not_run_for_a_book_that_could_not_be_saved(tmp_path,
 # --- recipe ---------------------------------------------------------------------------------
 
 
+def test_metadata_lookup_label_says_local_database_first_and_key_is_unchanged():
+    step = next(s for s in build_catalogue() if s.key == "metadata_lookup")  # saved recipes use the key
+    assert step.label == "Fill empty fields from lookups (local database first)"
+    assert "online" not in step.label.lower() and "local" in step.description.lower()
+
+
 def test_defaults_rename_on_only_with_a_pattern_and_move_off():
     plain = Recipe.default_for(build_catalogue())
     assert plain.enabled["rename"] is False and plain.enabled["move_into_folders"] is False

@@ -4,6 +4,10 @@ All notable changes to The ƎPUB Redactor, by version. Trimmed to new
 functionality and real fixes — cosmetic/UX-only adjustments aren't
 listed here.
 
+## 2026-10-01#05 -- Accurate name for the lookup step in Redact
+
+- Changed: Redact's "Fill empty fields online" step is now called "Fill empty fields from lookups (local database first)", which is what it does since it asks the local Open Library database before the online sources. Saved recipes keep working: only the label changed.
+
 ## 2026-10-01#04 -- Authors from works, and covers from the local Open Library database
 
 - New: an optional third source when building the Open Library database, the works dump (or the all-types dump): editions that list no author of their own get their work's authors. Left empty it changes nothing; it adds a big extra pass (roughly 10-15 minutes and ~1 GB of temporary disk, an estimate).
