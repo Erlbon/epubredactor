@@ -4,6 +4,11 @@ All notable changes to The ƎPUB Redactor, by version. Trimmed to new
 functionality and real fixes — cosmetic/UX-only adjustments aren't
 listed here.
 
+## 2026-10-01#02 -- Look up books in the local Open Library database
+
+- New: Metadata > Look Up > Open Library (Local Database)... searches the database built under Tools > Open Library Database: by the book's own ISBN (13 or 10, hyphens fine; when several editions share it the most complete record wins), else by title and author. Works offline, no rate limits. It brings in title, authors, publisher, publication date (month and day only when the text is unambiguous, otherwise the year), ISBN and language; covers and genres are not taken from it. Without a database set up it offers to open the settings.
+- Changed: Redact's "Fill empty fields online" step now asks the local Open Library database first when one is set up (exact ISBN 95%, title and author 60%, title only 45%, same Needs review rules), and the online sources only for what is still empty. It never changes a field that already has a value, and keeps working with no network.
+
 ## 2026-10-01#01 -- Build an offline Open Library database
 
 - New: Tools > Open Library Database... builds a local lookup database from Open Library's bulk dumps (the editions dump, plus the authors dump for author names, or the single all-types dump). You download the dumps yourself; the app never does. Only editions with a valid ISBN are kept, in the languages you tick (English, Norwegian, Italian, German and French by default, or all languages), with a prebuilt full-text index on title and author. Building is cancellable and never leaves a half-built file. Looking books up in it comes in the next version.

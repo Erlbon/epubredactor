@@ -91,6 +91,12 @@ from core.open_library_lookup import (
     search_open_library,
     search_open_library_by_isbn,
 )
+from core.openlibrary_local import (
+    SERVICE_NAME as LOCAL_OPEN_LIBRARY,
+    OpenLibraryLocalError,
+    local_search_by_isbn,
+    local_search_by_title,
+)
 from core.rename_pattern import placeholder_values
 from core.toc_generate import generate_toc_entries, needs_toc, stage_generated_toc_for
 from core.validation_issue import SEVERITY_ERROR
@@ -120,6 +126,8 @@ _FIELD_NAMES = {
     "authors_str": "Author(s)",
     "publisher": "Publisher",
     "pub_year": "Year",
+    "pub_month": "Month",
+    "pub_day": "Day",
     "isbn": "ISBN",
     "tags_str": "Genre",
     "language": "Language",
@@ -142,6 +150,10 @@ class Lookups:
     google_by_title: Callable = search_google_books
     openlibrary_by_isbn: Callable = search_open_library_by_isbn
     openlibrary_by_title: Callable = search_open_library
+    # The offline Open Library database (RedactEnv.openlibrary_local is its path):
+    # (path, isbn) and (path, title, authors, year); both read a local file.
+    local_by_isbn: Callable = local_search_by_isbn
+    local_by_title: Callable = local_search_by_title
     cover_by_isbn: Callable = fetch_cover_by_isbn
     download_google_cover: Callable = download_google_cover
 
@@ -164,6 +176,7 @@ class RedactEnv:
     image_size: Callable[[bytes], tuple[int, int] | None] | None = None
     net: Callable[..., Any] = _call_directly
     lookups: Lookups = field(default_factory=Lookups)
+    openlibrary_local: str = ""  # path of the offline Open Library database ("" = none set up)
     # filled during a run
     touched: dict = field(default_factory=dict)  # live book -> its final path
     renames: list = field(default_factory=list)  # (old, new) for the rename step
@@ -712,9 +725,11 @@ class MetadataLookupStep(Step):
     key = "metadata_lookup"
     label = "Fill empty fields online"
     description = (
-        "Fills EMPTY fields (author, publisher, year, ISBN, genre, language, description) from Google Books, "
-        "then Open Library. A match on the book's own ISBN is trusted (95%); a match on title and author is a "
-        "guess and goes to Needs review. Fields that already have a value are never changed."
+        "Fills EMPTY fields (author, publisher, year, ISBN, genre, language, description) from your local "
+        "Open Library database first (when one is set up under Tools > Open Library Database; works offline), "
+        "then Google Books and Open Library online for whatever is still empty. A match on the book's own "
+        "ISBN is trusted (95%); a match on title and author is a guess and goes to Needs review. Fields that "
+        "already have a value are never changed."
     )
 
     def run(self, ctx: EpubCtx) -> StepResult:
@@ -726,16 +741,37 @@ class MetadataLookupStep(Step):
         if not isbn and not meta.title.strip():
             return StepResult.nothing()
         problems: list[str] = []
-        found = self._by_isbn(ctx, isbn, problems) if isbn else self._by_title(ctx, problems)
-        if found is None:
-            return StepResult.nothing(note="; ".join(problems) if problems else "")
-        candidate, confidence, reason = found
-        fill = {k: v for k, v in candidate.as_dict().items() if k in blanks and v}
-        if "description" in fill:
-            fill["description"] = strip_html(fill["description"])
+        fill: dict[str, str] = {}
+        confidence = 1.0
+        reasons: list[str] = []
+        # The local database first; the online sources only for what it left empty.
+        for source in (self._local_source, self._online_source):
+            remaining = blanks - fill.keys()
+            if not remaining:
+                break
+            found = source(ctx, isbn, problems)
+            if found is None:
+                continue
+            candidate, match_confidence, reason = found
+            added = {k: v for k, v in candidate.as_dict().items() if k in remaining and v}
+            if "description" in added:
+                added["description"] = strip_html(added["description"])
+            if added:
+                fill.update(added)
+                confidence = min(confidence, match_confidence)
+                reasons.append(reason)
         if not fill:
-            return StepResult.nothing()
-        return StepResult.suggestion(FieldFill(fill), confidence, reason)
+            return StepResult.nothing(note="; ".join(problems) if problems else "")
+        return StepResult.suggestion(FieldFill(fill), confidence, "; ".join(reasons))
+
+    def _local_source(self, ctx: EpubCtx, isbn: str, problems: list[str]):
+        """The offline Open Library database, when one is set up (None otherwise)."""
+        if not ctx.env.openlibrary_local:
+            return None
+        return self._by_isbn_local(ctx, isbn, problems) if isbn else self._by_title(ctx, problems, local=True)
+
+    def _online_source(self, ctx: EpubCtx, isbn: str, problems: list[str]):
+        return self._by_isbn(ctx, isbn, problems) if isbn else self._by_title(ctx, problems)
 
     @staticmethod
     def _blank_fields(ctx: EpubCtx) -> set[str]:
@@ -747,6 +783,8 @@ class MetadataLookupStep(Step):
             blanks.add("publisher")
         if not m.pub_year:
             blanks.add("pub_year")
+            # A month/day only comes along with its year (a lone month is meaningless).
+            blanks.update(k for k, v in (("pub_month", m.pub_month), ("pub_day", m.pub_day)) if not v)
         if not m.isbn:
             blanks.add("isbn")
         if not m.tags:
@@ -764,9 +802,15 @@ class MetadataLookupStep(Step):
             return env.cached((service, arg, args), lambda: env.lookup(service, fn, *((arg,) + args)))
         except StoppedError:
             return None  # said once in the report header notes (env.notes_text)
-        except (GoogleBooksLookupError, OpenLibraryLookupError) as exc:
+        except (GoogleBooksLookupError, OpenLibraryLookupError, OpenLibraryLocalError) as exc:
             problems.append(f"{service} lookup failed: {exc}")
             return None
+
+    def _by_isbn_local(self, ctx: EpubCtx, isbn: str, problems: list[str]):
+        env = ctx.env
+        for c in self._ask(ctx, LOCAL_OPEN_LIBRARY, env.lookups.local_by_isbn, env.openlibrary_local, (isbn,), problems) or []:
+            return c, ISBN_MATCH_CONFIDENCE, f"{LOCAL_OPEN_LIBRARY} lists this exact ISBN ({isbn})"
+        return None
 
     def _by_isbn(self, ctx: EpubCtx, isbn: str, problems: list[str]):
         lookups = ctx.env.lookups
@@ -777,13 +821,22 @@ class MetadataLookupStep(Step):
             return c, ISBN_MATCH_CONFIDENCE, f"Open Library lists this exact ISBN ({isbn})"
         return None
 
-    def _by_title(self, ctx: EpubCtx, problems: list[str]):
-        meta, lookups = ctx.work.metadata, ctx.env.lookups
+    def _by_title(self, ctx: EpubCtx, problems: list[str], local: bool = False):
+        meta, env = ctx.work.metadata, ctx.env
+        lookups = env.lookups
         title, authors = meta.title.strip(), meta.authors_str
         wanted = _surnames(meta.authors)
-        for service, fn in (("Google Books", lookups.google_by_title), ("Open Library", lookups.openlibrary_by_title)):
-            for c in self._ask(ctx, service, fn, title, (authors,), problems) or []:
-                if _norm_text(c.title) != _norm_text(title):
+        title_key = _norm_text(title)
+        if local:  # the local functions take the database path first, and the year to rank by
+            asks = [(LOCAL_OPEN_LIBRARY, lookups.local_by_title, env.openlibrary_local, (title, authors, meta.pub_year))]
+        else:
+            asks = [("Google Books", lookups.google_by_title, title, (authors,)),
+                    ("Open Library", lookups.openlibrary_by_title, title, (authors,))]
+        for service, fn, first, rest in asks:
+            for c in self._ask(ctx, service, fn, first, rest, problems) or []:
+                # The edition's title alone, or with its subtitle, must be the book's title.
+                subtitle = getattr(c, "subtitle", "")
+                if title_key not in (_norm_text(c.title), _norm_text(f"{c.title} {subtitle}") if subtitle else None):
                     continue
                 got = _surnames(a for a in c.authors_str.split(";") if a.strip())
                 if wanted and got & wanted:

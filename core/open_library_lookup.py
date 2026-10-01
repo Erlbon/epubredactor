@@ -61,6 +61,14 @@ class OpenLibraryCandidate:
     isbn: str = ""
     tags_str: str = ""
     cover_id: int = 0
+    # Only the local database (core/openlibrary_local.py) fills these in;
+    # the online search leaves them empty, so as_dict() is unchanged for it.
+    language: str = ""
+    pub_month: str = ""
+    pub_day: str = ""
+    subtitle: str = ""  # shown/compared, but there is no Subtitle field to apply it to
+    pages: int = 0  # likewise
+    score: float = 0.0  # how well a title/author search matched (0..1); ISBN matches don't set it
 
     def image_url(self) -> str:
         return COVER_URL_TEMPLATE.format(cover_id=self.cover_id)
@@ -85,6 +93,9 @@ class OpenLibraryCandidate:
             "pub_year": self.pub_year,
             "isbn": self.isbn,
             "tags_str": self.tags_str,
+            "language": self.language,
+            "pub_month": self.pub_month,
+            "pub_day": self.pub_day,
         }
         return {k: v for k, v in raw.items() if v}
 

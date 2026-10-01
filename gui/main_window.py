@@ -788,6 +788,10 @@ class MainWindow(QMainWindow):
         return [
             MenuAction(f"{key_prefix}google_books", "&Google Books…", self.open_google_books_dialog),
             MenuAction(f"{key_prefix}open_library", "&Open Library…", self.open_open_library_dialog),
+            MenuAction(
+                f"{key_prefix}open_library_local", "Open Library (&Local Database)…",
+                self.open_open_library_local_dialog,
+            ),
             MenuAction(f"{key_prefix}calibre", "&Calibre…", self.open_calibre_lookup_dialog),
         ]
 
@@ -2961,6 +2965,7 @@ class MainWindow(QMainWindow):
             make_cover=generate_cover_image,
             image_size=cover_quality.image_size,
             net=call_in_background,
+            openlibrary_local=app_settings.load_open_library_database(),
         )
 
     def _redact_targets(self) -> list[EpubBook]:
@@ -3830,6 +3835,37 @@ class MainWindow(QMainWindow):
     # ------------------------------------------------------------------
 
     def open_open_library_dialog(self) -> None:
+        self._open_library_flow()
+
+    def open_open_library_local_dialog(self) -> None:
+        """Metadata > Look Up > Open Library (Local Database)...: the same
+        flow against the offline database. Without one set up, explain and
+        offer Tools > Open Library Database... rather than just failing."""
+        from core.openlibrary_local import OpenLibraryLocalError, open_database
+
+        name = "Open Library (Local Database)"
+        path = app_settings.load_open_library_database()
+        if not path or not os.path.isfile(path):
+            reply = QMessageBox.question(
+                self, name,
+                "No local Open Library database is set up yet. It's built from Open Library's free bulk "
+                "dumps, which you download yourself.\n\nOpen Tools > Open Library Database... to set it up?",
+                QMessageBox.StandardButton.Yes | QMessageBox.StandardButton.No,
+                QMessageBox.StandardButton.Yes,
+            )
+            if reply == QMessageBox.StandardButton.Yes:
+                self.open_open_library_settings_dialog()
+            path = app_settings.load_open_library_database()
+            if not path or not os.path.isfile(path):
+                return
+        try:
+            open_database(path)  # fail here, with the file's own message, not once per book
+        except OpenLibraryLocalError as exc:
+            QMessageBox.warning(self, name, f"{exc}\n\nCheck Tools > Open Library Database...")
+            return
+        self._open_library_flow(local_path=path)
+
+    def _open_library_flow(self, local_path: str = "") -> None:
         target_books = self._selection_or_all_books()
         if not target_books:
             QMessageBox.information(
@@ -3837,7 +3873,10 @@ class MainWindow(QMainWindow):
             )
             return
 
-        dialog = OpenLibraryDialog(target_books, self)
+        dialog = (
+            OpenLibraryDialog(target_books, self, local_path=local_path) if local_path
+            else OpenLibraryDialog(target_books, self)
+        )
         if dialog.exec() != OpenLibraryDialog.DialogCode.Accepted:
             return
 

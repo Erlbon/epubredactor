@@ -20,10 +20,16 @@ from __future__ import annotations
 import os
 
 from core.epub_metadata import EpubBook
+from core.isbn import best_isbn13
 from core.open_library_lookup import (
     OpenLibraryLookupError,
     download_cover_image,
     search_open_library,
+)
+from core.openlibrary_local import (
+    OpenLibraryLocalError,
+    local_search_by_isbn,
+    local_search_by_title,
 )
 from redactor_common.gui.lookup_dialog import LookupDialogBase, LookupResult
 
@@ -31,17 +37,35 @@ QUERY_FIELDS = [("title", "Title"), ("authors", "Author(s)")]
 
 
 class OpenLibraryDialog(LookupDialogBase):
-    def __init__(self, books: list[EpubBook], parent=None):
+    """`local_path`: the offline Open Library database (Tools > Open Library
+    Database). With it the same dialog searches that file instead of the
+    network: a book's own ISBN first, else title/author. No covers come
+    from it (cover ids are only fetchable online)."""
+
+    def __init__(self, books: list[EpubBook], parent=None, local_path: str = ""):
         self.books = books
-        super().__init__(
-            books, parent,
-            window_title="Import Metadata from Open Library",
-            info_text=(
+        self.local_path = local_path
+        if local_path:
+            window_title = "Import Metadata from Open Library (Local Database)"
+            info_text = (
+                f"Searching the local Open Library database for {len(books)} book(s): by ISBN where the "
+                "book has one, else by title/author. Each match brings in title, authors, publisher, "
+                "date, ISBN and language together (no cover) -- untick anything you don't trust, then Apply."
+            )
+            search_label = "Searching the local Open Library database…"
+        else:
+            window_title = "Import Metadata from Open Library"
+            info_text = (
                 f"Searching Open Library for {len(books)} book(s) by title/author. Each "
                 "match brings in title, authors, publisher, year, ISBN, genre and cover "
                 "together -- untick anything you don't trust, then Apply."
-            ),
-            search_label="Searching Open Library…",
+            )
+            search_label = "Searching Open Library…"
+        super().__init__(
+            books, parent,
+            window_title=window_title,
+            info_text=info_text,
+            search_label=search_label,
             item_label=lambda book: os.path.basename(book.path),
             search_one=self._search_one,
             query_fields=QUERY_FIELDS,
@@ -53,6 +77,8 @@ class OpenLibraryDialog(LookupDialogBase):
         title = query_override.get("title") or book.metadata.title.strip()
         authors = query_override.get("authors") or book.metadata.authors_str
         used = {"title": title, "authors": authors}
+        if self.local_path:
+            return self._search_local(book, query_override, title, authors, used)
         if not title:
             return LookupResult(error="no title set -- can't search", used_query=used)
         try:
@@ -70,6 +96,22 @@ class OpenLibraryDialog(LookupDialogBase):
             except OpenLibraryLookupError:
                 cover_bytes = None  # metadata still usable without the cover
         return LookupResult(fields=best.as_dict(), cover_bytes=cover_bytes, used_query=used)
+
+    def _search_local(self, book: EpubBook, query_override: dict, title: str, authors: str, used: dict) -> LookupResult:
+        try:
+            candidates = []
+            isbn = best_isbn13(book.metadata.isbn)
+            if isbn and not query_override:  # a typed-in correction means "search by this text instead"
+                candidates = local_search_by_isbn(self.local_path, isbn)
+            if not candidates:
+                if not title:
+                    return LookupResult(error="no title set -- can't search", used_query=used)
+                candidates = local_search_by_title(self.local_path, title, authors, book.metadata.pub_year)
+        except OpenLibraryLocalError as exc:
+            return LookupResult(error=str(exc), used_query=used)
+        if not candidates:
+            return LookupResult(used_query=used)
+        return LookupResult(fields=candidates[0].as_dict(), used_query=used)
 
     # accepted_metadata() comes from LookupDialogBase.
 

@@ -76,7 +76,7 @@ def test_menu_contents_and_order():
 
 def test_submenus():
     m = _menus(mw.MainWindow())
-    assert _plain_items(_submenu(m["Metadata"], "Look Up")) == ["Google Books", "Open Library", "Calibre"]
+    assert _plain_items(_submenu(m["Metadata"], "Look Up")) == ["Google Books", "Open Library", "Open Library (Local Database)", "Calibre"]
     assert _plain_items(_submenu(m["Metadata"], "Cover")) == [
         "Find Better Covers", "Generate Cover from Metadata", "Regenerate Junk Covers", "-",
         "Flag Cover as Junk", "Unflag Cover as Junk",

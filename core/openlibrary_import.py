@@ -126,7 +126,7 @@ INDEXES = [
     "create index authors_key on authors(key)",
 ]
 
-_YEAR_RE = re.compile(r"(?<!\d)(1[0-9]{3}|20[0-9]{2})(?!\d)")
+_YEAR_RE = re.compile(r"(?<!\d)(1[0-9]{3}|20[0-9]{2})(?!\d)(?!s\b)")  # "1990s" is a decade, not a year
 _PREFIXES = ("/books/", "/authors/", "/works/")
 _NO_LANGUAGE = {"und", "zxx", "mul"}  # codes that say "no real language"
 _BATCH = 2000  # editions resolved against the author table at a time

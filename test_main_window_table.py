@@ -232,4 +232,6 @@ def test_every_lookup_is_in_the_right_click_menu(monkeypatch):
     window._show_table_context_menu(None)
     sub = next(i for i in seen["items"] if isinstance(i, mw.Submenu))
     assert labels.strip_mnemonic(sub.text) == "Look Up"
-    assert [labels.strip_mnemonic(i.text) for i in sub.items] == ["Google Books…", "Open Library…", "Calibre…"]
+    assert [labels.strip_mnemonic(i.text) for i in sub.items] == [
+        "Google Books…", "Open Library…", "Open Library (Local Database)…", "Calibre…",
+    ]
