@@ -4,6 +4,12 @@ All notable changes to The ƎPUB Redactor, by version. Trimmed to new
 functionality and real fixes — cosmetic/UX-only adjustments aren't
 listed here.
 
+## 2026-10-01#01 -- Build an offline Open Library database
+
+- New: Tools > Open Library Database... builds a local lookup database from Open Library's bulk dumps (the editions dump, plus the authors dump for author names, or the single all-types dump). You download the dumps yourself; the app never does. Only editions with a valid ISBN are kept, in the languages you tick (English, Norwegian, Italian, German and French by default, or all languages), with a prebuilt full-text index on title and author. Building is cancellable and never leaves a half-built file. Looking books up in it comes in the next version.
+- Changed: the database path and dump paths are machine-specific settings (unticked by default in Export Settings).
+- Changed: adopt redactor_common 2026-10-01-01.
+
 ## 2026-09-30#18 -- Kobo USB tests no longer assume Windows
 
 - Fixed: the Kobo drive-detection tests now pin sys.platform to win32, so they pass on Linux CI (no product change).

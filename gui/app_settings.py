@@ -656,3 +656,70 @@ def load_library_root() -> str:
 
 def save_library_root(path: str) -> None:
     _settings().setValue(_LIBRARY_ROOT_KEY, path)
+
+
+# ------------------------------------------------------------------
+# Open Library local database (Tools > Open Library Database...): the
+# built SQLite file (core/openlibrary_import.py), the two dump files it
+# was/will be built from, and the build options. All of it is
+# machine-specific (paths) except the language choice.
+# ------------------------------------------------------------------
+
+_OPEN_LIBRARY_DB_KEY = "openlibrary/database"
+_OPEN_LIBRARY_EDITIONS_KEY = "openlibrary/editions_dump"
+_OPEN_LIBRARY_AUTHORS_KEY = "openlibrary/authors_dump"
+_OPEN_LIBRARY_LANGUAGES_KEY = "openlibrary/languages"
+_OPEN_LIBRARY_ALL_LANGUAGES_KEY = "openlibrary/all_languages"
+_OPEN_LIBRARY_UNKNOWN_LANGUAGE_KEY = "openlibrary/include_unknown_language"
+
+
+def load_open_library_database() -> str:
+    """Path to the built Open Library lookup database, or ""."""
+    return str(_settings().value(_OPEN_LIBRARY_DB_KEY, "", type=str) or "")
+
+
+def save_open_library_database(path: str) -> None:
+    _settings().setValue(_OPEN_LIBRARY_DB_KEY, path or "")
+
+
+def default_open_library_database_path() -> str:
+    """Where a new build is suggested to go: next to the settings."""
+    return os.path.join(base_dir(), "openlibrary.db")
+
+
+def load_open_library_sources() -> tuple[str, str]:
+    """(editions dump, authors dump) paths last used for a build, "" if none."""
+    s = _settings()
+    return (str(s.value(_OPEN_LIBRARY_EDITIONS_KEY, "", type=str) or ""),
+            str(s.value(_OPEN_LIBRARY_AUTHORS_KEY, "", type=str) or ""))
+
+
+def save_open_library_sources(editions: str, authors: str) -> None:
+    s = _settings()
+    s.setValue(_OPEN_LIBRARY_EDITIONS_KEY, editions or "")
+    s.setValue(_OPEN_LIBRARY_AUTHORS_KEY, authors or "")
+
+
+def load_open_library_build_options():
+    """The saved BuildOptions (the user's library languages by default)."""
+    from core.openlibrary_import import DEFAULT_LANGUAGE_IDS, LANGUAGE_CHOICES, BuildOptions
+
+    s = _settings()
+    known = {lang_id for lang_id, _label, _codes in LANGUAGE_CHOICES}
+    raw = s.value(_OPEN_LIBRARY_LANGUAGES_KEY, None)
+    if raw is None:
+        chosen = DEFAULT_LANGUAGE_IDS
+    else:
+        chosen = tuple(p for p in str(raw).split(",") if p in known)
+    return BuildOptions(
+        languages=chosen,
+        all_languages=bool(s.value(_OPEN_LIBRARY_ALL_LANGUAGES_KEY, False, type=bool)),
+        include_unknown_language=bool(s.value(_OPEN_LIBRARY_UNKNOWN_LANGUAGE_KEY, True, type=bool)),
+    )
+
+
+def save_open_library_build_options(options) -> None:
+    s = _settings()
+    s.setValue(_OPEN_LIBRARY_LANGUAGES_KEY, ",".join(options.languages))
+    s.setValue(_OPEN_LIBRARY_ALL_LANGUAGES_KEY, bool(options.all_languages))
+    s.setValue(_OPEN_LIBRARY_UNKNOWN_LANGUAGE_KEY, bool(options.include_unknown_language))

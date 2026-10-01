@@ -19,6 +19,7 @@ a credential-named key anyway.
 from __future__ import annotations
 
 import json
+import os
 from typing import Any, Callable
 
 from core.version import APP_VERSION
@@ -37,7 +38,10 @@ _PORTABLE_SECTIONS = [
 ]
 _MACHINE_SECTIONS = [
     sb.SectionSpec("tools", "External tool paths (Calibre, Sigil) - this computer only", portable=False),
-    sb.SectionSpec("folders", "Last-used and library folders - this computer only", portable=False),
+    sb.SectionSpec(
+        "folders", "Last-used and library folders, Open Library database and dumps - this computer only",
+        portable=False,
+    ),
     sb.SectionSpec("ereader", "Send to eReader services - this computer only", portable=False),
 ]
 
@@ -134,7 +138,13 @@ class EpubSettingsAdapter(sb.SettingsAdapter):
         if key == "tools":
             return {"calibre_install_dir": _text(s, "calibre/install_dir"), "sigil_path": _text(s, "sigil/exe_path")}
         if key == "folders":
-            return {"last_directory": _text(s, "files/last_directory"), "library_root": _text(s, "move/library_root")}
+            return {
+                "last_directory": _text(s, "files/last_directory"), "library_root": _text(s, "move/library_root"),
+                # The offline Open Library database and the dumps it is built from: paths on this computer.
+                "open_library_database": app_settings.load_open_library_database(),
+                "open_library_editions_dump": app_settings.load_open_library_sources()[0],
+                "open_library_authors_dump": app_settings.load_open_library_sources()[1],
+            }
         if key == "ereader":
             return {"servers": app_settings.load_ereader_servers()}
         raise KeyError(key)
@@ -177,12 +187,27 @@ class EpubSettingsAdapter(sb.SettingsAdapter):
                 app_settings.save_last_directory(folder)  # ignores a missing folder
             if isinstance(values.get("library_root"), str):
                 app_settings.save_library_root(values["library_root"])
+            self._write_open_library(values)
         elif key == "ereader":
             servers = _str_list(values.get("servers"))
             if servers:
                 s.setValue("ereader/servers", json.dumps([u.strip().rstrip("/") for u in servers]))
         else:
             raise KeyError(key)
+
+    @staticmethod
+    def _write_open_library(values: dict[str, Any]) -> None:
+        """The database and the dump paths are only taken over when they exist on this computer."""
+        database = values.get("open_library_database")
+        if isinstance(database, str) and database and os.path.isfile(database):
+            app_settings.save_open_library_database(database)
+        editions, authors = app_settings.load_open_library_sources()
+        new_editions, new_authors = values.get("open_library_editions_dump"), values.get("open_library_authors_dump")
+        if isinstance(new_editions, str) and new_editions and os.path.isfile(new_editions):
+            editions = new_editions
+        if isinstance(new_authors, str) and new_authors and os.path.isfile(new_authors):
+            authors = new_authors
+        app_settings.save_open_library_sources(editions, authors)
 
     @staticmethod
     def _write_field_defaults(s, values: dict[str, Any]) -> None:

@@ -697,6 +697,10 @@ class MainWindow(QMainWindow):
                     "blank_language_default", "&Blank Language Default…",
                     self.open_blank_language_default_settings,
                 ),
+                MenuAction(
+                    "open_library_settings", "Open Library &Database…",
+                    self.open_open_library_settings_dialog,
+                ),
             ],
             columns=self.open_column_settings_dialog,
             genres=self.open_genre_settings_dialog,
@@ -3624,6 +3628,13 @@ class MainWindow(QMainWindow):
     # ------------------------------------------------------------------
     # Blank/Unknown Language Default
     # ------------------------------------------------------------------
+
+    def open_open_library_settings_dialog(self) -> None:
+        """Tools > Open Library Database...: where the offline lookup database
+        is and how to build it from Open Library's dumps."""
+        from gui.open_library_settings_dialog import OpenLibrarySettingsDialog
+
+        OpenLibrarySettingsDialog(self).exec()
 
     def open_blank_language_default_settings(self) -> None:
         dialog = BlankLanguageDefaultDialog(

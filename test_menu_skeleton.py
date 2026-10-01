@@ -67,7 +67,7 @@ def test_menu_contents_and_order():
     ]
     assert _plain_items(m["Send"]) == ["Send to Kobo (USB)", "Send to eReader (Wireless)", "Open in Sigil"]
     assert _plain_items(m["Tools"]) == [
-        "Blank Language Default", "-", "Columns", "Genres", "Languages", "-",
+        "Blank Language Default", "Open Library Database", "-", "Columns", "Genres", "Languages", "-",
         "Enable Performance Logging", "Open Performance Log",
     ]
     assert _plain_items(m["Help"])[:3] == ["Changelog", "Credits", "-"]
