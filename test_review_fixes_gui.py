@@ -134,6 +134,20 @@ def test_refresh_list_survives_a_constructor_exception(tmp_path, monkeypatch):
     assert len(window.books) == 2
 
 
+def test_refresh_list_drops_files_deleted_from_disk(tmp_path, monkeypatch):
+    import os
+    import gui.main_window as mw
+    monkeypatch.setattr(mw.QMessageBox, "information", lambda *a, **k: None)
+    keep = build(tmp_path / "keep.epub")
+    gone = build(tmp_path / "gone.epub")
+    window = _window()
+    window._load_paths([keep, gone])
+    os.remove(gone)
+    window.refresh_list()
+    assert [os.path.basename(b.path) for b in window.books] == ["keep.epub"]
+    assert window.table.rowCount() == 1
+
+
 def test_dropped_file_message_is_truthful(tmp_path, monkeypatch):
     import gui.main_window as mw
     shown = []

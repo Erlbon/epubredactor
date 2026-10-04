@@ -2642,10 +2642,8 @@ class MainWindow(QMainWindow):
         Doesn't discover a brand-new subfolder you haven't loaded
         anything from yet (only folders already represented in your
         current list get scanned, non-recursively) -- use Load Folder
-        for that. A file that's disappeared from disk isn't silently
-        dropped from the list either; it shows up as a load error on its
-        row, same as any other unreadable file, rather than vanishing
-        without a trace.
+        for that. A file that's disappeared from disk is dropped
+        from the list (only files still present are shown).
 
         Discards unsaved in-memory edits (with confirmation first) and
         clears the undo stack, since its entries would reference book
@@ -2663,6 +2661,8 @@ class MainWindow(QMainWindow):
                 existing_paths, lambda folder: self._find_epubs_in_folder(folder, recursive=False),
             )
         ]
+        present_paths = [p for p in existing_paths if os.path.exists(p)]
+        removed_count = len(existing_paths) - len(present_paths)
 
         # Re-reading every book is real per-book work (unzip + parse the
         # OPF) -- it used to run with no progress at all, so refreshing a
@@ -2682,7 +2682,7 @@ class MainWindow(QMainWindow):
                     reloaded.append(old)
 
         run_with_progress(
-            self, existing_paths + new_paths, _reload,
+            self, present_paths + new_paths, _reload,
             "Refreshing...", threshold=3, cancellable=False,
             label_for=lambda path: f"Loading: {os.path.basename(path)}",
         )
@@ -2693,12 +2693,15 @@ class MainWindow(QMainWindow):
         self._refresh_status()
         self._on_selection_changed()  # old selection referenced now-replaced book objects
 
+        gone = f" {removed_count} file(s) no longer on disk were removed from the list." if removed_count else ""
         if new_paths:
             QMessageBox.information(
-                self, "Refreshed", f"Found {len(new_paths)} new file(s) and reloaded everything else."
+                self, "Refreshed", f"Found {len(new_paths)} new file(s) and reloaded everything else.{gone}"
             )
         else:
-            QMessageBox.information(self, "Refreshed", "No new files found. Reloaded everything from disk.")
+            QMessageBox.information(
+                self, "Refreshed", f"No new files found. Reloaded everything from disk.{gone}"
+            )
 
     # ------------------------------------------------------------------
     # Saving

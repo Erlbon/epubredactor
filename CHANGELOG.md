@@ -4,6 +4,10 @@ All notable changes to The ƎPUB Redactor, by version. Trimmed to new
 functionality and real fixes — cosmetic/UX-only adjustments aren't
 listed here.
 
+## 2026-10-04#04 -- Refresh drops files that are gone
+
+- Refresh List (F5) now shows only the files that are still on disk: a file that was deleted or moved since it was loaded is removed from the list instead of staying as an error row. New files in the loaded folders are still picked up.
+
 ## 2026-10-04#03 -- Read Book window
 
 - New **File > Read Book…** (also in the right-click menu, for a single selected book): the whole book as text in a window, with the chapter list (the book's text documents in reading order) on the left and Previous / Next buttons. Only the chapter you open is read from the file. Book styling is stripped and images are not shown, so it is for checking the title page, copyright page and front matter, not for reading in comfort.
