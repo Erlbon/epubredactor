@@ -4,6 +4,10 @@ All notable changes to The ƎPUB Redactor, by version. Trimmed to new
 functionality and real fixes — cosmetic/UX-only adjustments aren't
 listed here.
 
+## 2026-10-04#02 -- Read the book's text from the cover preview
+
+- Replaces the image browsing of 2026-10-04#01. With one book selected, the **<** / **>** buttons under the cover preview now step from the cover (Page 1) through the book's text documents in reading order, shown as rendered text, so the title page, copyright page and other front matter are easy to spot. Only the page you turn to is read from the file; pages over 2 MB or unreadable say so. Book styling is stripped so the text uses the app's own font; images inside pages are not shown.
+
 ## 2026-10-04#01 -- Browse the book's images from the cover preview
 
 - With one book selected, the cover preview now has **<** / **>** buttons and an "Image 3 / 12" counter to step through every image in the EPUB (the cover first, then the other images in manifest order). Only the image you turn to is read from the file. An image that is missing, unreadable or over 64 MB shows "Could not read image N". With several books (or none) selected, or a book with a single image, the controls are hidden. SVG images are skipped.

@@ -19,6 +19,7 @@ from __future__ import annotations
 from PyQt6.QtCore import pyqtSignal, Qt
 from PyQt6.QtGui import QPixmap
 from PyQt6.QtWidgets import (
+    QTextBrowser,
     QCheckBox,
     QFrame,
     QGridLayout,
@@ -150,19 +151,27 @@ class TagPanel(QWidget):
         cover_box = ImagePreviewBox("Cover Image", placeholder="No cover", minimum_size=COVER_PREVIEW_MIN_SIZE)
         self.cover_preview = cover_box.image_label
 
-        # Page browser: previous / "Image 3 / 12" / next, through the book's
-        # images. Only active with exactly one book selected.
+        # Page browser: previous / "Page 3 / 12" / next. Page 1 is the cover
+        # image; the rest are the book's text documents (spine order) shown
+        # as rendered text, so title and copyright pages are easy to spot.
+        # Only active with exactly one book selected.
+        self.text_view = QTextBrowser()
+        self.text_view.setOpenLinks(False)
+        self.text_view.setOpenExternalLinks(False)
+        self.text_view.setMinimumSize(*COVER_PREVIEW_MIN_SIZE)
+        self.text_view.setVisible(False)
+        cover_box.add_widget(self.text_view)
         self._page_paths: list[str] = []
         self._page_index = 0
         page_row = QHBoxLayout()
         self.prev_page_btn = QPushButton("<")
-        self.prev_page_btn.setToolTip("Previous image in this book")
+        self.prev_page_btn.setToolTip("Previous page (cover, then the book's text)")
         self.prev_page_btn.setFixedWidth(32)
         self.prev_page_btn.clicked.connect(lambda: self.turn_page(-1))
         self.page_label = QLabel("")
         self.page_label.setAlignment(Qt.AlignmentFlag.AlignCenter)
         self.next_page_btn = QPushButton(">")
-        self.next_page_btn.setToolTip("Next image in this book")
+        self.next_page_btn.setToolTip("Next page (cover, then the book's text)")
         self.next_page_btn.setFixedWidth(32)
         self.next_page_btn.clicked.connect(lambda: self.turn_page(1))
         page_row.addWidget(self.prev_page_btn)
@@ -546,11 +555,14 @@ class TagPanel(QWidget):
         self._page_paths = []
         self._page_index = 0
         if len(books) == 1:
-            self._page_paths = books[0].list_image_pages()
+            # Page 0 is the cover image (a placeholder entry), then the spine.
+            self._page_paths = ["", *books[0].list_text_pages()]
         self._show_cover(books)
         self._update_page_controls()
 
     def _show_cover(self, books: list[EpubBook]) -> None:
+        self.text_view.setVisible(False)
+        self.cover_preview.setVisible(True)
         if not books:
             self.cover_preview.setText("No selection")
             self.cover_preview.set_original_pixmap(None)
@@ -582,13 +594,13 @@ class TagPanel(QWidget):
             w.setVisible(show)
         self.prev_page_btn.setEnabled(show and self._page_index > 0)
         self.next_page_btn.setEnabled(show and self._page_index < total - 1)
-        self.page_label.setText(f"Image {self._page_index + 1} / {total}" if show else "")
+        self.page_label.setText(f"Page {self._page_index + 1} / {total}" if show else "")
 
     def turn_page(self, step: int) -> None:
-        """Steps the preview through the selected book's images (page 0 is
-        the cover). Reads only the one image entry from the EPUB."""
+        """Steps the preview from the cover (page 1) through the selected
+        book's text documents. Reads only the one entry from the EPUB."""
         books = self._current_books
-        if len(books) != 1 or not self._page_paths:
+        if len(books) != 1 or len(self._page_paths) < 2:
             return
         index = max(0, min(len(self._page_paths) - 1, self._page_index + step))
         if index == self._page_index:
@@ -597,14 +609,15 @@ class TagPanel(QWidget):
         if index == 0:
             self._show_cover(books)
         else:
-            data = books[0].read_image_page(self._page_paths[index])
-            pixmap = QPixmap()
-            if data and pixmap.loadFromData(data):
-                self.cover_preview.setText("")
-                self.cover_preview.set_original_pixmap(pixmap)
+            html = books[0].read_text_page(self._page_paths[index])
+            self.cover_preview.setVisible(False)
+            self.text_view.setVisible(True)
+            if html is None:
+                self.text_view.setPlainText(f"Could not read page {index + 1}")
             else:
-                self.cover_preview.set_original_pixmap(None)
-                self.cover_preview.setText(f"Could not read image {index + 1}")
+                self.text_view.setHtml(html)
+                if not self.text_view.toPlainText().strip():
+                    self.text_view.setPlainText("(no text on this page)")
         self._update_page_controls()
 
     def set_cover_junk_flagged(self, is_junk: bool) -> None:

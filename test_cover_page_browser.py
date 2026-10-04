@@ -12,11 +12,12 @@ OPF = """<?xml version="1.0"?>
 <package xmlns="http://www.idpf.org/2007/opf" version="3.0" unique-identifier="id">
 <metadata xmlns:dc="http://purl.org/dc/elements/1.1/"><dc:title>T</dc:title><dc:identifier id="id">x</dc:identifier></metadata>
 <manifest>
-<item id="a" href="img/a.png" media-type="image/png"/>
 <item id="c" href="img/c.png" media-type="image/png" properties="cover-image"/>
-<item id="s" href="s.svg" media-type="image/svg+xml"/>
-<item id="x" href="t.xhtml" media-type="application/xhtml+xml"/>
-</manifest><spine><itemref idref="x"/></spine></package>"""
+<item id="t1" href="title.xhtml" media-type="application/xhtml+xml"/>
+<item id="t2" href="ch1.xhtml" media-type="application/xhtml+xml"/>
+</manifest><spine><itemref idref="t1"/><itemref idref="t2"/></spine></package>"""
+
+TITLE = '<?xml version="1.0"?><html xmlns="http://www.w3.org/1999/xhtml"><head><style>p{display:none}</style></head><body><h1>The Hobbit</h1><p>by J. R. R. Tolkien</p></body></html>'
 
 
 def _png(color):
@@ -35,18 +36,19 @@ def _make(tmp_path):
         z.writestr("mimetype", "application/epub+zip")
         z.writestr("META-INF/container.xml", '<container xmlns="urn:oasis:names:tc:opendocument:xmlns:container" version="1.0"><rootfiles><rootfile full-path="content.opf" media-type="application/oebps-package+xml"/></rootfiles></container>')
         z.writestr("content.opf", OPF)
-        z.writestr("img/a.png", _png(0xFF0000))
         z.writestr("img/c.png", _png(0x00FF00))
+        z.writestr("title.xhtml", TITLE)
+        z.writestr("ch1.xhtml", "<html><body><p>Chapter one</p></body></html>")
     return p
 
 
-def test_pages_cover_first_and_read(tmp_path, qapp=None):
+def test_text_pages_in_spine_order_and_read(tmp_path):
     book = EpubBook(str(_make(tmp_path)))
-    pages = book.list_image_pages()
-    assert pages == ["img/c.png", "img/a.png"]
-    assert book.read_image_page("img/a.png")
-    assert book.read_image_page("img/missing.png") is None
-    assert book.read_image_page("img/a.png", max_bytes=1) is None
+    assert book.list_text_pages() == ["title.xhtml", "ch1.xhtml"]
+    html = book.read_text_page("title.xhtml")
+    assert "The Hobbit" in html and "<style" not in html and "<?xml" not in html
+    assert book.read_text_page("missing.xhtml") is None
+    assert book.read_text_page("title.xhtml", max_bytes=1) is None
 
 
 def test_panel_turns_pages(tmp_path):
@@ -60,12 +62,17 @@ def test_panel_turns_pages(tmp_path):
     panel = tp.TagPanel()
     panel.set_selection([book])
     assert not panel.page_label.isHidden()
-    assert panel.page_label.text() == "Image 1 / 2"
-    assert not panel.prev_page_btn.isEnabled() and panel.next_page_btn.isEnabled()
+    assert panel.page_label.text() == "Page 1 / 3"
+    assert panel.text_view.isHidden()
     panel.turn_page(1)
-    assert panel.page_label.text() == "Image 2 / 2"
-    assert panel.next_page_btn.isEnabled() is False
-    panel.turn_page(1)  # clamped
-    assert panel.page_label.text() == "Image 2 / 2"
+    assert panel.page_label.text() == "Page 2 / 3"
+    assert not panel.text_view.isHidden() and panel.cover_preview.isHidden()
+    text = panel.text_view.toPlainText()
+    assert "The Hobbit" in text and "Tolkien" in text
+    panel.turn_page(1)
+    assert "Chapter one" in panel.text_view.toPlainText()
+    assert not panel.next_page_btn.isEnabled()
+    panel.turn_page(-2)
+    assert panel.text_view.isHidden() and not panel.cover_preview.isHidden()
     panel.set_selection([book, book])
     assert panel.page_label.isHidden()

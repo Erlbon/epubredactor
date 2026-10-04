@@ -578,37 +578,46 @@ class EpubBook:
         media_type = item.get("media-type") or mimetypes.guess_type(href)[0] or ""
         self.cover_mime = media_type
 
-    def list_image_pages(self) -> list[str]:
-        """Archive paths of the book's images for the cover preview's page
-        browser: the cover first, then the other manifest images in
-        manifest order. Only reads the (already parsed) OPF, not the zip."""
+    def list_text_pages(self) -> list[str]:
+        """Archive paths of the book's text documents (the spine, in reading
+        order) for the preview's page browser. Reads only the parsed OPF."""
         manifest = self._manifest_el()
-        if manifest is None:
+        spine = self._opf_tree.getroot().find("opf:spine", namespaces=NS) if manifest is not None else None
+        if manifest is None or spine is None:
             return []
-        cover_item = self._find_cover_item()
+        by_id = {item.get("id"): item for item in manifest.findall("opf:item", namespaces=NS)}
         paths: list[str] = []
-        for item in ([cover_item] if cover_item is not None else []) + list(
-            manifest.findall("opf:item", namespaces=NS)
-        ):
-            href = item.get("href")
-            media = item.get("media-type") or mimetypes.guess_type(href or "")[0] or ""
-            if not href or not media.startswith("image/") or "svg" in media:
+        for itemref in spine.findall("opf:itemref", namespaces=NS):
+            item = by_id.get(itemref.get("idref"))
+            href = item.get("href") if item is not None else None
+            if not href:
+                continue
+            media = item.get("media-type") or ""
+            if "html" not in media and "xml" not in media:
                 continue
             archive_path = self._cover_archive_path(href)
             if archive_path not in paths:
                 paths.append(archive_path)
         return paths
 
-    def read_image_page(self, archive_path: str, max_bytes: int = 64 * 1024 * 1024) -> Optional[bytes]:
-        """Bytes of one image entry, or None if missing, unreadable or
-        larger than max_bytes (that one entry only is read)."""
+    def read_text_page(self, archive_path: str, max_bytes: int = 2 * 1024 * 1024) -> Optional[str]:
+        """One spine document as HTML for display (styles, scripts and the
+        XML prolog removed so it renders in the app's own font), or None
+        if it is missing, unreadable or larger than max_bytes. Reads that
+        one entry only."""
         try:
             with zipfile.ZipFile(self.path, "r") as zf:
                 if zf.getinfo(archive_path).file_size > max_bytes:
                     return None
-                return zf.read(archive_path)
+                raw = zf.read(archive_path)
         except (KeyError, OSError, zipfile.BadZipFile, RuntimeError):
             return None
+        text = raw.decode("utf-8", errors="replace")
+        text = re.sub(r"^\s*<\?xml[^>]*\?>", "", text)
+        text = re.sub(r"<!DOCTYPE[^>]*>", "", text, flags=re.I)
+        text = re.sub(r"<(style|script)\b.*?</\1\s*>", "", text, flags=re.I | re.S)
+        text = re.sub(r"<link\b[^>]*>", "", text, flags=re.I)
+        return text
 
     def set_cover(self, image_bytes: bytes, mime: str) -> bool:
         """Stage a new cover image (add, or replace the existing one).
