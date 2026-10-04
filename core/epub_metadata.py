@@ -578,6 +578,38 @@ class EpubBook:
         media_type = item.get("media-type") or mimetypes.guess_type(href)[0] or ""
         self.cover_mime = media_type
 
+    def list_image_pages(self) -> list[str]:
+        """Archive paths of the book's images for the cover preview's page
+        browser: the cover first, then the other manifest images in
+        manifest order. Only reads the (already parsed) OPF, not the zip."""
+        manifest = self._manifest_el()
+        if manifest is None:
+            return []
+        cover_item = self._find_cover_item()
+        paths: list[str] = []
+        for item in ([cover_item] if cover_item is not None else []) + list(
+            manifest.findall("opf:item", namespaces=NS)
+        ):
+            href = item.get("href")
+            media = item.get("media-type") or mimetypes.guess_type(href or "")[0] or ""
+            if not href or not media.startswith("image/") or "svg" in media:
+                continue
+            archive_path = self._cover_archive_path(href)
+            if archive_path not in paths:
+                paths.append(archive_path)
+        return paths
+
+    def read_image_page(self, archive_path: str, max_bytes: int = 64 * 1024 * 1024) -> Optional[bytes]:
+        """Bytes of one image entry, or None if missing, unreadable or
+        larger than max_bytes (that one entry only is read)."""
+        try:
+            with zipfile.ZipFile(self.path, "r") as zf:
+                if zf.getinfo(archive_path).file_size > max_bytes:
+                    return None
+                return zf.read(archive_path)
+        except (KeyError, OSError, zipfile.BadZipFile, RuntimeError):
+            return None
+
     def set_cover(self, image_bytes: bytes, mime: str) -> bool:
         """Stage a new cover image (add, or replace the existing one).
         Not written to disk until save(). Returns False, staging nothing,

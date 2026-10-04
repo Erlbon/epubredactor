@@ -4,6 +4,10 @@ All notable changes to The ƎPUB Redactor, by version. Trimmed to new
 functionality and real fixes — cosmetic/UX-only adjustments aren't
 listed here.
 
+## 2026-10-04#01 -- Browse the book's images from the cover preview
+
+- With one book selected, the cover preview now has **<** / **>** buttons and an "Image 3 / 12" counter to step through every image in the EPUB (the cover first, then the other images in manifest order). Only the image you turn to is read from the file. An image that is missing, unreadable or over 64 MB shows "Could not read image N". With several books (or none) selected, or a book with a single image, the controls are hidden. SVG images are skipped.
+
 ## 2026-10-01#13 -- Spaced initials in file and folder names
 
 - Changed: file and folder names built from %authors% or %author_sort% (Rename, Export, Move into folders, the Redact rename and move steps, and the pattern previews) now space initials too: "J. R. R. Tolkien - The Hobbit.epub", "Tolkien, J. R. R/...". This is applied when the name is built, so books whose stored author was never cleaned get spaced names as well. Titles and other fields are unchanged; a trailing dot is still dropped from a name and ASCII-safe filenames still work.

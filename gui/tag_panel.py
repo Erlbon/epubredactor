@@ -150,6 +150,28 @@ class TagPanel(QWidget):
         cover_box = ImagePreviewBox("Cover Image", placeholder="No cover", minimum_size=COVER_PREVIEW_MIN_SIZE)
         self.cover_preview = cover_box.image_label
 
+        # Page browser: previous / "Image 3 / 12" / next, through the book's
+        # images. Only active with exactly one book selected.
+        self._page_paths: list[str] = []
+        self._page_index = 0
+        page_row = QHBoxLayout()
+        self.prev_page_btn = QPushButton("<")
+        self.prev_page_btn.setToolTip("Previous image in this book")
+        self.prev_page_btn.setFixedWidth(32)
+        self.prev_page_btn.clicked.connect(lambda: self.turn_page(-1))
+        self.page_label = QLabel("")
+        self.page_label.setAlignment(Qt.AlignmentFlag.AlignCenter)
+        self.next_page_btn = QPushButton(">")
+        self.next_page_btn.setToolTip("Next image in this book")
+        self.next_page_btn.setFixedWidth(32)
+        self.next_page_btn.clicked.connect(lambda: self.turn_page(1))
+        page_row.addWidget(self.prev_page_btn)
+        page_row.addWidget(self.page_label, 1)
+        page_row.addWidget(self.next_page_btn)
+        cover_box.add_layout(page_row)
+        for w in (self.prev_page_btn, self.page_label, self.next_page_btn):
+            w.setVisible(False)
+
         self.cover_hint = QLabel("")
         self.cover_hint.setStyleSheet("color: gray; font-size: 11px;")
         self.cover_hint.setAlignment(Qt.AlignmentFlag.AlignCenter)
@@ -521,6 +543,14 @@ class TagPanel(QWidget):
         self._populating = False
 
     def _update_cover_preview(self, books: list[EpubBook]) -> None:
+        self._page_paths = []
+        self._page_index = 0
+        if len(books) == 1:
+            self._page_paths = books[0].list_image_pages()
+        self._show_cover(books)
+        self._update_page_controls()
+
+    def _show_cover(self, books: list[EpubBook]) -> None:
         if not books:
             self.cover_preview.setText("No selection")
             self.cover_preview.set_original_pixmap(None)
@@ -544,6 +574,38 @@ class TagPanel(QWidget):
             self.cover_preview.set_original_pixmap(None)
             self.cover_preview.setText("(cover image unreadable)")
         self.cover_hint.setText(extra.strip(" ()") or "")
+
+    def _update_page_controls(self) -> None:
+        total = len(self._page_paths)
+        show = total > 1
+        for w in (self.prev_page_btn, self.page_label, self.next_page_btn):
+            w.setVisible(show)
+        self.prev_page_btn.setEnabled(show and self._page_index > 0)
+        self.next_page_btn.setEnabled(show and self._page_index < total - 1)
+        self.page_label.setText(f"Image {self._page_index + 1} / {total}" if show else "")
+
+    def turn_page(self, step: int) -> None:
+        """Steps the preview through the selected book's images (page 0 is
+        the cover). Reads only the one image entry from the EPUB."""
+        books = self._current_books
+        if len(books) != 1 or not self._page_paths:
+            return
+        index = max(0, min(len(self._page_paths) - 1, self._page_index + step))
+        if index == self._page_index:
+            return
+        self._page_index = index
+        if index == 0:
+            self._show_cover(books)
+        else:
+            data = books[0].read_image_page(self._page_paths[index])
+            pixmap = QPixmap()
+            if data and pixmap.loadFromData(data):
+                self.cover_preview.setText("")
+                self.cover_preview.set_original_pixmap(pixmap)
+            else:
+                self.cover_preview.set_original_pixmap(None)
+                self.cover_preview.setText(f"Could not read image {index + 1}")
+        self._update_page_controls()
 
     def set_cover_junk_flagged(self, is_junk: bool) -> None:
         """Flips the Junk button's label/tooltip between Flag and Unflag
