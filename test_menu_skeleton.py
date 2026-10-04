@@ -44,6 +44,7 @@ def test_menu_contents_and_order():
         "Open Files", "Open Folder", "Import and Convert", "-",
         "Save As", "Save All", "-",
         "Rename File", "Undo Last Rename", "Rename / Export / Move", "-",
+        "Read Book", "-",
         "Export Settings", "Import Settings", "-",
         "Remove from List", "Clear List", "Delete Files", "-",
         "Exit",
@@ -243,7 +244,7 @@ def test_context_menu():
     items = window._context_menu_items([book])
 
     assert _names(items) == [
-        "-", "Rename File", "-", "Look Up>", "Organize>", "Cover>", "-",
+        "-", "Rename File", "-", "Look Up>", "Read Book", "Organize>", "Cover>", "-",
         "Redact", "Validate and Fix", "Open in Sigil", "Send to>", "-",
         "Remove from List", "Delete Files",
     ]

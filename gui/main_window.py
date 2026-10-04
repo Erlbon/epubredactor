@@ -165,6 +165,7 @@ from gui.nav_repair_dialog import NavRepairDialog
 from gui.toc_generate_dialog import TocGenerateDialog
 from gui.open_library_dialog import OpenLibraryDialog
 from gui.polish_book_dialog import PolishBookDialog
+from gui.read_book_dialog import ReadBookDialog
 from redactor_common.gui.search_replace_dialog import FILENAME_FIELD_KEY, SearchReplaceDialog
 from gui.series_number_dialog import SeriesNumberDialog
 from gui.send_to_ereader_dialog import SendToEreaderDialog
@@ -588,6 +589,14 @@ class MainWindow(QMainWindow):
             ),
             {"save"},
         ))
+        _at = next(
+            (i for i, it in enumerate(file_items) if isinstance(it, MenuAction) and it.key == "rename_export_move"),
+            None,
+        )
+        if _at is not None:
+            file_items[_at + 1:_at + 1] = [
+                Separator(), MenuAction("read_book", "Read Book…", self.open_read_book_dialog),
+            ]
 
         edit_items = standard_edit_items(
             undo=self.on_undo,
@@ -958,6 +967,8 @@ class MainWindow(QMainWindow):
             # fix for one typo at a time.
             items.extend([self.rename_file_act, Separator()])
         items.append(look_up_submenu(self._look_up_entries()))
+        if len(books) == 1 and not books[0].load_error:
+            items.append(MenuAction("read_book", "Read Book…", self.open_read_book_dialog))
         items.append(Submenu("Organize", [
             self.rename_files_act,
             MenuAction("number_series", "Number Series…", self.quick_number_series),
@@ -1001,6 +1012,14 @@ class MainWindow(QMainWindow):
     # ------------------------------------------------------------------
     # Open with Sigil
     # ------------------------------------------------------------------
+
+    def open_read_book_dialog(self) -> None:
+        """File > Read Book…: the selected book's text in a reader window."""
+        books = self._currently_selected_books()
+        if len(books) != 1 or books[0].load_error:
+            QMessageBox.information(self, "Read Book", "Select a single book to read.")
+            return
+        ReadBookDialog(books[0], self).exec()
 
     def open_in_sigil(self) -> None:
         books = self._currently_selected_books()

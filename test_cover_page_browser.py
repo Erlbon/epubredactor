@@ -76,3 +76,20 @@ def test_panel_turns_pages(tmp_path):
     assert panel.text_view.isHidden() and not panel.cover_preview.isHidden()
     panel.set_selection([book, book])
     assert panel.page_label.isHidden()
+
+
+def test_read_book_dialog_lists_and_shows_chapters(tmp_path):
+    import os, sys
+    os.environ.setdefault("QT_QPA_PLATFORM", "offscreen")
+    from PyQt6.QtWidgets import QApplication
+    from gui.read_book_dialog import ReadBookDialog
+
+    _app = QApplication.instance() or QApplication(sys.argv)
+    book = EpubBook(str(_make(tmp_path)))
+    dlg = ReadBookDialog(book)
+    assert dlg.chapter_list.count() == 2
+    assert "The Hobbit" in dlg.text_view.toPlainText()
+    assert not dlg.prev_btn.isEnabled() and dlg.next_btn.isEnabled()
+    dlg.next_btn.click()
+    assert "Chapter one" in dlg.text_view.toPlainText()
+    assert not dlg.next_btn.isEnabled()

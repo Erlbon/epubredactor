@@ -4,6 +4,10 @@ All notable changes to The ƎPUB Redactor, by version. Trimmed to new
 functionality and real fixes — cosmetic/UX-only adjustments aren't
 listed here.
 
+## 2026-10-04#03 -- Read Book window
+
+- New **File > Read Book…** (also in the right-click menu, for a single selected book): the whole book as text in a window, with the chapter list (the book's text documents in reading order) on the left and Previous / Next buttons. Only the chapter you open is read from the file. Book styling is stripped and images are not shown, so it is for checking the title page, copyright page and front matter, not for reading in comfort.
+
 ## 2026-10-04#02 -- Read the book's text from the cover preview
 
 - Replaces the image browsing of 2026-10-04#01. With one book selected, the **<** / **>** buttons under the cover preview now step from the cover (Page 1) through the book's text documents in reading order, shown as rendered text, so the title page, copyright page and other front matter are easy to spot. Only the page you turn to is read from the file; pages over 2 MB or unreadable say so. Book styling is stripped so the text uses the app's own font; images inside pages are not shown.
