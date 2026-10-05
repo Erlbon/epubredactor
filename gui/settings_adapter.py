@@ -145,6 +145,9 @@ class EpubSettingsAdapter(sb.SettingsAdapter):
                 "open_library_editions_dump": app_settings.load_open_library_sources()[0],
                 "open_library_authors_dump": app_settings.load_open_library_sources()[1],
                 "open_library_works_dump": app_settings.load_open_library_works_dump(),
+                # The offline ISFDB database and the backup it is built from.
+                "isfdb_database": app_settings.load_isfdb_database(),
+                "isfdb_backup": app_settings.load_isfdb_backup(),
             }
         if key == "ereader":
             return {"servers": app_settings.load_ereader_servers()}
@@ -212,6 +215,12 @@ class EpubSettingsAdapter(sb.SettingsAdapter):
         works = values.get("open_library_works_dump")
         if isinstance(works, str) and works and os.path.isfile(works):
             app_settings.save_open_library_works_dump(works)
+        isfdb = values.get("isfdb_database")
+        if isinstance(isfdb, str) and isfdb and os.path.isfile(isfdb):
+            app_settings.save_isfdb_database(isfdb)
+        backup = values.get("isfdb_backup")
+        if isinstance(backup, str) and backup and os.path.isfile(backup):
+            app_settings.save_isfdb_backup(backup)
 
     @staticmethod
     def _write_field_defaults(s, values: dict[str, Any]) -> None:

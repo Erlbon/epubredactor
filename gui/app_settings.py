@@ -736,6 +736,39 @@ def save_open_library_build_options(options) -> None:
 
 
 # ------------------------------------------------------------------
+# Offline ISFDB database (Tools > ISFDB Database): where the built
+# lookup file is and the backup it was built from. Both are paths on
+# this computer.
+# ------------------------------------------------------------------
+
+_ISFDB_DB_KEY = "isfdb/database"
+_ISFDB_BACKUP_KEY = "isfdb/backup"
+
+
+def load_isfdb_database() -> str:
+    """Path to the built ISFDB lookup database, or ""."""
+    return str(_settings().value(_ISFDB_DB_KEY, "", type=str) or "")
+
+
+def save_isfdb_database(path: str) -> None:
+    _settings().setValue(_ISFDB_DB_KEY, path or "")
+
+
+def default_isfdb_database_path() -> str:
+    """Where a new build is suggested to go: next to the settings."""
+    return os.path.join(base_dir(), "isfdb.db")
+
+
+def load_isfdb_backup() -> str:
+    """The ISFDB backup (.sql/.zip) last used for a build, "" if none."""
+    return str(_settings().value(_ISFDB_BACKUP_KEY, "", type=str) or "")
+
+
+def save_isfdb_backup(path: str) -> None:
+    _settings().setValue(_ISFDB_BACKUP_KEY, path or "")
+
+
+# ------------------------------------------------------------------
 # Raw access for the Preferences dialog (gui/preferences.py): it maps
 # its setting names onto the ini keys above, so the loaders and
 # Export/Import keep working on the very same entries.

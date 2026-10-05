@@ -32,3 +32,12 @@ system:
   metadata lookup by title/author/ISBN.
 - **[Open Library](https://openlibrary.org/developers/api)** —
   metadata and cover-image lookup.
+
+## Data
+
+- **[ISFDB](https://www.isfdb.org)** (the Internet Speculative Fiction
+  Database) — series, series numbers and book metadata for science
+  fiction, fantasy and horror, from the offline database you build under
+  Tools > ISFDB Database. The ISFDB's data is licensed under
+  [Creative Commons Attribution](https://isfdb.org/wiki/index.php/Creative_Commons_License).
+  The backup is downloaded by you, never by this app.

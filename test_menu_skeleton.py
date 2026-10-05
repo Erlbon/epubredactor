@@ -68,7 +68,7 @@ def test_menu_contents_and_order():
     ]
     assert _plain_items(m["Send"]) == ["Send to Kobo (USB)", "Send to eReader (Wireless)", "Open in Sigil"]
     assert _plain_items(m["Tools"]) == [
-        "Preferences", "-", "Open Library Database", "-", "Columns", "Genres", "Languages", "-",
+        "Preferences", "-", "Open Library Database", "ISFDB Database", "-", "Columns", "Genres", "Languages", "-",
         "Enable Performance Logging", "Open Performance Log",
     ]
     assert _plain_items(m["Help"])[:3] == ["Changelog", "Credits", "-"]
@@ -77,7 +77,7 @@ def test_menu_contents_and_order():
 
 def test_submenus():
     m = _menus(mw.MainWindow())
-    assert _plain_items(_submenu(m["Metadata"], "Look Up")) == ["Google Books", "Open Library", "Open Library (Local Database)", "Calibre"]
+    assert _plain_items(_submenu(m["Metadata"], "Look Up")) == ["Google Books", "Open Library", "Open Library (Local Database)", "ISFDB (Local Database)", "Calibre"]
     assert _plain_items(_submenu(m["Metadata"], "Cover")) == [
         "Find Better Covers", "Generate Cover from Metadata", "Regenerate Junk Covers", "-",
         "Flag Cover as Junk", "Unflag Cover as Junk",

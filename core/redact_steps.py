@@ -92,6 +92,12 @@ from core.open_library_lookup import (
     search_open_library,
     search_open_library_by_isbn,
 )
+from core.isfdb_local import (
+    SERVICE_NAME as LOCAL_ISFDB,
+    IsfdbLocalError,
+    local_search_by_isbn as isfdb_search_by_isbn,
+    local_search_by_title as isfdb_search_by_title,
+)
 from core.openlibrary_local import (
     SERVICE_NAME as LOCAL_OPEN_LIBRARY,
     OpenLibraryLocalError,
@@ -133,7 +139,11 @@ _FIELD_NAMES = {
     "tags_str": "Genre",
     "language": "Language",
     "description": "Description",
+    "series": "Series",
+    "series_index": "Series number",
 }
+# What only the ISFDB source can supply: asking the other sources for these would be wasted calls.
+_SERIES_KEYS = {"series", "series_index"}
 
 
 # --- run environment -------------------------------------------------------
@@ -155,6 +165,9 @@ class Lookups:
     # (path, isbn) and (path, title, authors, year); both read a local file.
     local_by_isbn: Callable = local_search_by_isbn
     local_by_title: Callable = local_search_by_title
+    # The offline ISFDB database (RedactEnv.isfdb_local is its path); same call shapes as above.
+    isfdb_by_isbn: Callable = isfdb_search_by_isbn
+    isfdb_by_title: Callable = isfdb_search_by_title
     cover_by_isbn: Callable = fetch_cover_by_isbn
     cover_by_id: Callable = fetch_cover_by_id  # an Open Library cover id (from the local database match)
     download_google_cover: Callable = download_google_cover
@@ -179,6 +192,7 @@ class RedactEnv:
     net: Callable[..., Any] = _call_directly
     lookups: Lookups = field(default_factory=Lookups)
     openlibrary_local: str = ""  # path of the offline Open Library database ("" = none set up)
+    isfdb_local: str = ""  # path of the offline ISFDB database ("" = none set up)
     # filled during a run
     touched: dict = field(default_factory=dict)  # live book -> its final path
     renames: list = field(default_factory=list)  # (old, new) for the rename step
@@ -754,8 +768,9 @@ class MetadataLookupStep(Step):
     # The key stays "metadata_lookup" (saved recipes refer to it); only the label changed.
     label = "Fill empty fields from lookups (local database first)"
     description = (
-        "Fills EMPTY fields (author, publisher, year, ISBN, genre, language, description) from your local "
-        "Open Library database first (when one is set up under Tools > Open Library Database; works offline), "
+        "Fills EMPTY fields (author, publisher, year, ISBN, genre, language, description, and the series with "
+        "its number) from your local databases first -- ISFDB, the only source that knows the series (when set up "
+        "under Tools > ISFDB Database), then Open Library (Tools > Open Library Database); both work offline -- "
         "then Google Books and Open Library online for whatever is still empty. A match on the book's own "
         "ISBN is trusted (95%); a match on title and author is a guess and goes to Needs review. Fields that "
         "already have a value are never changed."
@@ -773,16 +788,25 @@ class MetadataLookupStep(Step):
         fill: dict[str, str] = {}
         confidence = 1.0
         reasons: list[str] = []
-        # The local database first; the online sources only for what it left empty.
-        for source in (self._local_source, self._online_source):
+        # The local databases first (ISFDB, which alone knows the series, then Open Library); the online
+        # sources only for what they left empty.
+        for source in (self._isfdb_source, self._local_source, self._online_source):
             remaining = blanks - fill.keys()
+            if source != self._isfdb_source:
+                remaining -= _SERIES_KEYS
             if not remaining:
+                if source == self._isfdb_source:
+                    continue
                 break
             found = source(ctx, isbn, problems)
             if found is None:
                 continue
             candidate, match_confidence, reason = found
             added = {k: v for k, v in candidate.as_dict().items() if k in remaining and v}
+            # A series number belongs to ITS series: with a series already set, take the number only
+            # when the match is that same series.
+            if "series_index" in added and "series" not in added and _norm_text(meta.series) != _norm_text(candidate.series):
+                del added["series_index"]
             if "description" in added:
                 added["description"] = strip_html(added["description"])
             if added:
@@ -792,6 +816,12 @@ class MetadataLookupStep(Step):
         if not fill:
             return StepResult.nothing(note="; ".join(problems) if problems else "")
         return StepResult.suggestion(FieldFill(fill), confidence, "; ".join(reasons))
+
+    def _isfdb_source(self, ctx: EpubCtx, isbn: str, problems: list[str]):
+        """The offline ISFDB database, when one is set up (None otherwise)."""
+        if not ctx.env.isfdb_local:
+            return None
+        return self._by_isbn_local(ctx, isbn, problems, isfdb=True) if isbn else self._by_title(ctx, problems, isfdb=True)
 
     def _local_source(self, ctx: EpubCtx, isbn: str, problems: list[str]):
         """The offline Open Library database, when one is set up (None otherwise)."""
@@ -822,6 +852,12 @@ class MetadataLookupStep(Step):
             blanks.add("language")
         if not m.description.strip():
             blanks.add("description")
+        # Only the ISFDB database can fill these (see _SERIES_KEYS); the series number only along with a
+        # series, or for a book that already has the very series the match belongs to.
+        if not m.series:
+            blanks.add("series")
+        if not m.series_index:
+            blanks.add("series_index")
         return blanks
 
     def _ask(self, ctx: EpubCtx, service: str, fn: Callable, arg: Any, args: tuple, problems: list[str]):
@@ -831,14 +867,18 @@ class MetadataLookupStep(Step):
             return env.cached((service, arg, args), lambda: env.lookup(service, fn, *((arg,) + args)))
         except StoppedError:
             return None  # said once in the report header notes (env.notes_text)
-        except (GoogleBooksLookupError, OpenLibraryLookupError, OpenLibraryLocalError) as exc:
+        except (GoogleBooksLookupError, OpenLibraryLookupError, OpenLibraryLocalError, IsfdbLocalError) as exc:
             problems.append(f"{service} lookup failed: {exc}")
             return None
 
-    def _by_isbn_local(self, ctx: EpubCtx, isbn: str, problems: list[str]):
+    def _by_isbn_local(self, ctx: EpubCtx, isbn: str, problems: list[str], isfdb: bool = False):
         env = ctx.env
-        for c in self._ask(ctx, LOCAL_OPEN_LIBRARY, env.lookups.local_by_isbn, env.openlibrary_local, (isbn,), problems) or []:
-            return c, ISBN_MATCH_CONFIDENCE, f"{LOCAL_OPEN_LIBRARY} lists this exact ISBN ({isbn})"
+        service, fn, path = (
+            (LOCAL_ISFDB, env.lookups.isfdb_by_isbn, env.isfdb_local) if isfdb
+            else (LOCAL_OPEN_LIBRARY, env.lookups.local_by_isbn, env.openlibrary_local)
+        )
+        for c in self._ask(ctx, service, fn, path, (isbn,), problems) or []:
+            return c, ISBN_MATCH_CONFIDENCE, f"{service} lists this exact ISBN ({isbn})"
         return None
 
     def _by_isbn(self, ctx: EpubCtx, isbn: str, problems: list[str]):
@@ -850,13 +890,15 @@ class MetadataLookupStep(Step):
             return c, ISBN_MATCH_CONFIDENCE, f"Open Library lists this exact ISBN ({isbn})"
         return None
 
-    def _by_title(self, ctx: EpubCtx, problems: list[str], local: bool = False):
+    def _by_title(self, ctx: EpubCtx, problems: list[str], local: bool = False, isfdb: bool = False):
         meta, env = ctx.work.metadata, ctx.env
         lookups = env.lookups
         title, authors = meta.title.strip(), meta.authors_str
         wanted = _surnames(meta.authors)
         title_key = _norm_text(title)
-        if local:  # the local functions take the database path first, and the year to rank by
+        if isfdb:  # same shape as the Open Library database's functions
+            asks = [(LOCAL_ISFDB, lookups.isfdb_by_title, env.isfdb_local, (title, authors, meta.pub_year))]
+        elif local:  # the local functions take the database path first, and the year to rank by
             asks = [(LOCAL_OPEN_LIBRARY, lookups.local_by_title, env.openlibrary_local, (title, authors, meta.pub_year))]
         else:
             asks = [("Google Books", lookups.google_by_title, title, (authors,)),

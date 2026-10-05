@@ -163,6 +163,7 @@ from gui.manifest_rebuild_dialog import ManifestRebuildDialog
 from gui.missing_space_dialog import MissingSpaceDialog
 from gui.nav_repair_dialog import NavRepairDialog
 from gui.toc_generate_dialog import TocGenerateDialog
+from gui.isfdb_dialog import IsfdbDialog
 from gui.open_library_dialog import OpenLibraryDialog
 from gui.polish_book_dialog import PolishBookDialog
 from gui.read_book_dialog import ReadBookDialog
@@ -728,6 +729,7 @@ class MainWindow(QMainWindow):
                     "open_library_settings", "Open Library &Database…",
                     self.open_open_library_settings_dialog,
                 ),
+                MenuAction("isfdb_settings", "&ISFDB Database…", self.open_isfdb_settings_dialog),
             ],
             columns=self.open_column_settings_dialog,
             genres=self.open_genre_settings_dialog,
@@ -819,6 +821,7 @@ class MainWindow(QMainWindow):
                 f"{key_prefix}open_library_local", "Open Library (&Local Database)…",
                 self.open_open_library_local_dialog,
             ),
+            MenuAction(f"{key_prefix}isfdb_local", "&ISFDB (Local Database)…", self.open_isfdb_dialog),
             MenuAction(f"{key_prefix}calibre", "&Calibre…", self.open_calibre_lookup_dialog),
         ]
 
@@ -3048,6 +3051,7 @@ class MainWindow(QMainWindow):
             image_size=cover_quality.image_size,
             net=call_in_background,
             openlibrary_local=app_settings.load_open_library_database(),
+            isfdb_local=app_settings.load_isfdb_database(),
         )
 
     def _redact_targets(self) -> list[EpubBook]:
@@ -3751,6 +3755,13 @@ class MainWindow(QMainWindow):
 
         OpenLibrarySettingsDialog(self).exec()
 
+    def open_isfdb_settings_dialog(self) -> None:
+        """Tools > ISFDB Database...: where the offline ISFDB lookup database
+        is and how to build it from ISFDB's MySQL backup."""
+        from gui.isfdb_settings_dialog import IsfdbSettingsDialog
+
+        IsfdbSettingsDialog(self).exec()
+
     def open_preferences(self) -> None:
         """Tools > Preferences (Ctrl+,): redactor_common's dialog with this
         app's pages (gui/preferences.py). Each OK / Apply brings the live
@@ -3994,11 +4005,51 @@ class MainWindow(QMainWindow):
             OpenLibraryDialog(target_books, self, local_path=local_path) if local_path
             else OpenLibraryDialog(target_books, self)
         )
-        if dialog.exec() != OpenLibraryDialog.DialogCode.Accepted:
+        self._apply_lookup_dialog(dialog, target_books, "Open Library")
+
+    def open_isfdb_dialog(self) -> None:
+        """Metadata > Look Up > ISFDB (Local Database)...: the lookup against the offline ISFDB
+        database. Without one set up, explain and offer Tools > ISFDB Database... rather than
+        just failing."""
+        from core.isfdb_local import IsfdbLocalError, open_database
+
+        name = "ISFDB (Local Database)"
+        path = app_settings.load_isfdb_database()
+        if not path or not os.path.isfile(path):
+            reply = QMessageBox.question(
+                self, name,
+                "No local ISFDB database is set up yet. It's built from ISFDB's free MySQL backup, which you "
+                "download yourself.\n\nOpen Tools > ISFDB Database... to set it up?",
+                QMessageBox.StandardButton.Yes | QMessageBox.StandardButton.No,
+                QMessageBox.StandardButton.Yes,
+            )
+            if reply == QMessageBox.StandardButton.Yes:
+                self.open_isfdb_settings_dialog()
+            path = app_settings.load_isfdb_database()
+            if not path or not os.path.isfile(path):
+                return
+        try:
+            open_database(path)  # fail here, with the file's own message, not once per book
+        except IsfdbLocalError as exc:
+            QMessageBox.warning(self, name, f"{exc}\n\nCheck Tools > ISFDB Database...")
+            return
+        target_books = self._selection_or_all_books()
+        if not target_books:
+            QMessageBox.information(
+                self, "No books", "Load some books first (or select the ones to look up)."
+            )
+            return
+        self._apply_lookup_dialog(IsfdbDialog(target_books, self, local_path=path), target_books, "ISFDB")
+
+    def _apply_lookup_dialog(self, dialog, target_books: list[EpubBook], source: str) -> None:
+        """Runs a lookup dialog and applies what the user ticked: the per-field overwrite review,
+        one undo step, the covers (if the dialog has any), then a confirmation."""
+        if dialog.exec() != dialog.DialogCode.Accepted:
             return
 
         metadata_changes = dialog.accepted_metadata()  # row index -> {field_key: value}
-        cover_changes = dialog.accepted_covers()  # row index -> (image_bytes, mime)
+        accepted_covers = getattr(dialog, "accepted_covers", None)
+        cover_changes = accepted_covers() if accepted_covers else {}  # row index -> (image_bytes, mime)
         if not metadata_changes and not cover_changes:
             return
 
@@ -4018,7 +4069,7 @@ class MainWindow(QMainWindow):
 
         affected_rows = set(metadata_changes) | set(cover_changes)
         affected_books = [target_books[row] for row in affected_rows]
-        self._push_undo("Import metadata from Open Library", affected_books)
+        self._push_undo(f"Import metadata from {source}", affected_books)
         for row, fields in metadata_changes.items():
             target_books[row].apply_metadata(fields)
         for row, (image_bytes, mime) in cover_changes.items():
@@ -4029,7 +4080,7 @@ class MainWindow(QMainWindow):
         self._on_selection_changed()  # bulk-edit panel may be showing a field this just changed
         QMessageBox.information(
             self, "Applied",
-            f"Applied Open Library data to {len(affected_books)} book(s). Remember to save.",
+            f"Applied {source} data to {len(affected_books)} book(s). Remember to save.",
         )
 
     # ------------------------------------------------------------------

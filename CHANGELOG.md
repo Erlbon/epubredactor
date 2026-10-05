@@ -4,6 +4,14 @@ All notable changes to The ƎPUB Redactor, by version. Trimmed to new
 functionality and real fixes — cosmetic/UX-only adjustments aren't
 listed here.
 
+## 2026-10-05#01 -- ISFDB: series and series number from a local database
+
+- New **Tools > ISFDB Database…**: builds an offline lookup database from the ISFDB (Internet Speculative Fiction Database) MySQL backup, which you download from isfdb.org yourself (the app never downloads it). The build takes about two minutes and gives a ~150 MB file (425,000 books, 211,000 of them in a series, 638,000 editions with an ISBN). ISFDB's data is licensed Creative Commons Attribution; it is credited under Help > Credits.
+- New **Metadata > Look Up > ISFDB (Local Database)…** (also in the right-click Look Up menu): by the book's own ISBN where it has one, else by title and author. It brings in the **series and its number** (the one thing Open Library lacks), authors, publisher, date and language. Series numbers like 2.5 are kept; the "(Author)" the ISFDB adds to tell series apart is dropped ("Voyagers (Ben Bova)" becomes "Voyagers"). Translated titles inherit the original's series.
+- The Redact step **Fill empty fields from lookups** now also fills an empty **series and series number**, asking ISFDB before Open Library (and before any online source). A series number is only taken together with its series, or for a book that already has that very series. A book whose only gap is the series costs no online request. An ISBN match is trusted (95%); a title and author match goes to Needs review.
+- A title match fills the ISBN only when that is safe: an ISFDB ebook edition of the book (closest in year), else a print edition from the very year the book already says, and never when editions of different publishers are equally close.
+- Needs redactor_common 2026-10-05-01 (new MySQL dump reader).
+
 ## 2026-10-04#04 -- Refresh drops files that are gone
 
 - Refresh List (F5) now shows only the files that are still on disk: a file that was deleted or moved since it was loaded is removed from the list instead of staying as an error row. New files in the loaded folders are still picked up.

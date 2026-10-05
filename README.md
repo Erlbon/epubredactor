@@ -47,6 +47,14 @@ them in one go.
   into your working list. PDF is deliberately not offered by default —
   PDF-to-EPUB conversion quality is inconsistent, since PDFs have no
   real text-flow structure to extract.
+- **Import Metadata from ISFDB (Local Database)** — Metadata > Look Up >
+  ISFDB (Local Database)…, on an offline copy of the
+  [ISFDB](https://www.isfdb.org) (Internet Speculative Fiction Database)
+  you build under Tools > ISFDB Database…. The one source that knows a
+  book's **series and its number**, which the Redact step fills too
+  ("Fill empty fields from lookups"). By the book's own ISBN where it has
+  one, else by title/author; science fiction, fantasy and horror only. See
+  "Notes on the local ISFDB database" below.
 - **Import Metadata from Google Books** — searches
   [Google Books](https://books.google.com) for each selected book by
   title/author and brings back title, authors, publisher, year, ISBN,
@@ -600,6 +608,43 @@ how many editions lack an author but have one on their work (the works dump
 isn't used yet). Cover ids are recorded on the lookup result but never
 fetched.
 
+## Notes on the local ISFDB database
+
+Tools > ISFDB Database... builds an offline lookup database from the ISFDB's
+MySQL backup (`backup-MySQL-55-YYYY-MM-DD.zip`, from
+isfdb.org/wiki/index.php/ISFDB_Downloads; you download it, the app never
+does). Metadata > Look Up > ISFDB (Local Database)... and the Redact "Fill
+empty fields from lookups" step use it before Open Library. Its reason to
+exist is the **series and series number**; the ISFDB's own web API has no
+title, author or series lookup (only by ISBN, external ID or publication
+number, and no series), so a local copy is the only route to them.
+
+Measured on the real backup of 2025-12-27 (1.5 GB of SQL, 68 tables, UTF-8
+text although the tables declare latin1): the nine tables the build reads
+(8.4 million rows) stream in about 70 s; the whole build took 104 s here
+and gives a 154 MB database with 425,406 books (211,123 of them in a series,
+97,755 variant/translated titles that inherit their parent's series) and
+638,577 editions with a valid ISBN (116,684 of them ebooks), out of 921,821
+publications. Lookups take milliseconds (15 lookups: 0.13 s). A title is the abstract book and a
+publication one printing: `works` carries title, authors, first-publication
+year, series, number and language; `editions` carries ISBN, publisher, date,
+binding and pages. The account tables of the dump (`mw_user`, `emails`,
+`web_api_users`) are never read.
+
+Matching: an exact ISBN is trusted (95%) like any ISBN match; a title and
+author match is a guess (60%) and goes to Needs review. A title match fills
+the ISBN only when it is safe: an ISFDB ebook edition of the book (closest in
+year), else a print edition from the very year the book already says, and
+never when editions of different publishers are equally close. The series
+name drops the "(Author)" ISFDB adds to tell series apart ("Voyagers (Ben
+Bova)" becomes "Voyagers"); a series number is only taken together with its
+series, or for a book that already has that very series. Numbers like 2.5
+come from the ISFDB's own sub-numbering. Series names ISFDB writes with
+alternatives ("Neuromancer / Sprawl Trilogy") are taken as they are.
+
+The ISFDB's data is licensed Creative Commons Attribution; it is credited in
+CREDITS.md (Help > Credits).
+
 ## Notes on Generate Cover
 
 - Entirely offline — no network request, no external lookup. It draws
@@ -883,6 +928,8 @@ core/missing_space.py                   - punctuation-adjacent-to-letter detecti
 core/case_conversion.py                - UPPERCASE/lowercase/Title Case/Sentence case transforms
 core/series_numbering.py                - sequential Series # generator (Number Series)
 core/open_library_lookup.py             - Open Library metadata + cover lookup, network call injectable for testing
+core/isfdb_import.py                    - builds the offline ISFDB lookup database from its MySQL backup (Tools > ISFDB Database)
+core/isfdb_local.py                     - queries over that database: by ISBN, by title/author, with series and number
 core/cover_generator.py                 - placeholder-cover color/text decision logic (Generate Cover from Metadata)
 core/search_replace.py                   - search/replace engine (plain text + regex)
 core/undo.py                               - bounded undo stack for in-memory edits
@@ -904,6 +951,8 @@ gui/toc_generate_dialog.py           - the Generate Table of Contents dialog
 gui/send_to_ereader_dialog.py        - the Send to eReader (Wireless) dialog
 gui/os_utils.py                       - shared OS helpers (reveal a file in the file manager)
 gui/open_library_dialog.py         - the Import Metadata from Open Library dialog
+gui/isfdb_dialog.py                - the Import Metadata from ISFDB (Local Database) dialog
+gui/isfdb_settings_dialog.py       - Tools > ISFDB Database: where the database is, and Build from the backup
 gui/cover_render.py                   - draws the actual placeholder cover image (QPainter/QImage)
 gui/cover_generator_dialog.py         - the Generate Cover from Metadata dialog
 gui/case_conversion_dialog.py       - the Case Conversion dialog
@@ -937,6 +986,7 @@ test_missing_space.py                    - automated test for Detect Missing Spa
 test_case_conversion.py                 - automated test for case conversion transforms
 test_series_numbering.py                 - automated test for the Number Series generator
 test_open_library_lookup.py               - automated test for Open Library metadata + cover lookup (canned responses)
+test_isfdb.py                             - automated test for the ISFDB build, lookups, Redact step, dialogs and menus (synthetic backup)
 test_cover_generator.py                    - automated test for placeholder-cover color/text decision logic
 test_validation.py                  - automated test for validation + fix-application
 test_validation_issue.py             - automated test for status classification
