@@ -4,9 +4,10 @@ import sys
 import time
 
 sys.path.insert(0, os.path.dirname(__file__))
+from tmp_support import scratch_dir  # noqa: E402
 import core.perf_log as perf_log  # noqa: E402
 
-TEST_DIR = "/tmp/epub_test_perf_log"
+TEST_DIR = scratch_dir("epub_test_perf_log")
 os.makedirs(TEST_DIR, exist_ok=True)
 
 

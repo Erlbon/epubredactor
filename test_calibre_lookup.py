@@ -9,13 +9,14 @@ import subprocess
 import sys
 
 sys.path.insert(0, os.path.dirname(__file__))
+from tmp_support import scratch_dir  # noqa: E402
 from core.calibre_lookup import (  # noqa: E402
     CalibreLookupError,
     fetch_metadata,
     parse_calibre_opf,
 )
 
-TEST_DIR = "/tmp/calibre_lookup_test"
+TEST_DIR = scratch_dir("calibre_lookup_test")
 os.makedirs(TEST_DIR, exist_ok=True)
 
 REALISTIC_OPF = b"""<?xml version='1.0' encoding='utf-8'?>

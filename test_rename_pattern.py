@@ -4,6 +4,7 @@ import shutil
 import sys
 
 sys.path.insert(0, os.path.dirname(__file__))
+from tmp_support import scratch_dir  # noqa: E402
 from core.epub_metadata import EpubMetadata  # noqa: E402
 from core.rename_pattern import (  # noqa: E402
     rename_book_file,
@@ -160,7 +161,7 @@ def test_long_filename_truncated():
     print("PASS: very long filenames truncated")
 
 
-def test_unique_path_collision_on_disk(tmp_dir="/tmp/rename_test"):
+def test_unique_path_collision_on_disk(tmp_dir=scratch_dir("rename_test")):
     os.makedirs(tmp_dir, exist_ok=True)
     existing = os.path.join(tmp_dir, "Book.epub")
     open(existing, "w").close()
@@ -170,7 +171,7 @@ def test_unique_path_collision_on_disk(tmp_dir="/tmp/rename_test"):
     print("PASS: collision with existing file on disk avoided")
 
 
-def test_unique_path_collision_within_batch(tmp_dir="/tmp/rename_test2"):
+def test_unique_path_collision_within_batch(tmp_dir=scratch_dir("rename_test2")):
     os.makedirs(tmp_dir, exist_ok=True)
     taken = set()
 
@@ -287,7 +288,7 @@ def test_validate_filename_stem_normal_punctuation_allowed():
 # rename_book_file
 # ----------------------------------------------------------------------
 
-RENAME_TEST_DIR = "/tmp/rename_book_file_test"
+RENAME_TEST_DIR = scratch_dir("rename_book_file_test")
 shutil.rmtree(RENAME_TEST_DIR, ignore_errors=True)  # clean slate each run, avoids stale-file collisions
 
 

@@ -5,6 +5,7 @@ import subprocess
 import sys
 
 sys.path.insert(0, os.path.dirname(__file__))
+from tmp_support import scratch_dir  # noqa: E402
 from core.ebook_polish import (  # noqa: E402
     EbookPolishError,
     PolishOptions,
@@ -12,7 +13,7 @@ from core.ebook_polish import (  # noqa: E402
     polish_book,
 )
 
-TEST_DIR = "/tmp/ebook_polish_test"
+TEST_DIR = scratch_dir("ebook_polish_test")
 os.makedirs(TEST_DIR, exist_ok=True)
 
 
@@ -135,7 +136,7 @@ def test_polish_book_success():
 def test_polish_book_no_options_raises():
     source = _make_file("book2.epub")
     try:
-        polish_book("/fake/exe", source, "/tmp/out.epub", PolishOptions(), run_fn=lambda *a, **k: None)
+        polish_book("/fake/exe", source, os.path.join(TEST_DIR, "out.epub"), PolishOptions(), run_fn=lambda *a, **k: None)
         assert False, "should have raised"
     except EbookPolishError as exc:
         assert "no polish actions" in str(exc).lower()
@@ -145,7 +146,7 @@ def test_polish_book_no_options_raises():
 def test_polish_book_missing_source_raises():
     try:
         polish_book(
-            "/fake/exe", "/nonexistent/book.epub", "/tmp/out.epub",
+            "/fake/exe", "/nonexistent/book.epub", os.path.join(TEST_DIR, "out.epub"),
             PolishOptions(smarten_punctuation=True), run_fn=lambda *a, **k: None,
         )
         assert False, "should have raised"
@@ -158,7 +159,7 @@ def test_polish_book_unsupported_format_raises():
     source = _make_file("book3.mobi")
     try:
         polish_book(
-            "/fake/exe", source, "/tmp/out.mobi",
+            "/fake/exe", source, os.path.join(TEST_DIR, "out.mobi"),
             PolishOptions(smarten_punctuation=True), run_fn=lambda *a, **k: None,
         )
         assert False, "should have raised"
@@ -177,7 +178,7 @@ def test_polish_book_contradictory_options_raise_before_running():
 
     try:
         polish_book(
-            "/fake/exe", source, "/tmp/out.epub",
+            "/fake/exe", source, os.path.join(TEST_DIR, "out.epub"),
             PolishOptions(add_soft_hyphens=True, remove_soft_hyphens=True), run_fn=fake_run,
         )
         assert False, "should have raised"
@@ -195,7 +196,7 @@ def test_polish_book_nonzero_returncode_raises():
 
     try:
         polish_book(
-            "/fake/exe", source, "/tmp/out.epub",
+            "/fake/exe", source, os.path.join(TEST_DIR, "out.epub"),
             PolishOptions(smarten_punctuation=True), run_fn=fake_run,
         )
         assert False, "should have raised"
@@ -212,7 +213,7 @@ def test_polish_book_timeout_raises():
 
     try:
         polish_book(
-            "/fake/exe", source, "/tmp/out.epub",
+            "/fake/exe", source, os.path.join(TEST_DIR, "out.epub"),
             PolishOptions(smarten_punctuation=True), run_fn=fake_run,
         )
         assert False, "should have raised"
@@ -229,7 +230,7 @@ def test_polish_book_missing_executable_raises():
 
     try:
         polish_book(
-            "/fake/does-not-exist", source, "/tmp/out.epub",
+            "/fake/does-not-exist", source, os.path.join(TEST_DIR, "out.epub"),
             PolishOptions(smarten_punctuation=True), run_fn=fake_run,
         )
         assert False, "should have raised"

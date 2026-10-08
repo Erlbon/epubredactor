@@ -6,9 +6,10 @@ import shutil
 import sys
 
 sys.path.insert(0, os.path.dirname(__file__))
+from tmp_support import scratch_dir  # noqa: E402
 from core.kobo_usb import KoboSendError, find_connected_kobos, send_to_kobo  # noqa: E402
 
-TEST_DIR = "/tmp/kobo_usb_test"
+TEST_DIR = scratch_dir("kobo_usb_test")
 shutil.rmtree(TEST_DIR, ignore_errors=True)  # clean slate each run, avoids stale-file collisions
 os.makedirs(TEST_DIR, exist_ok=True)
 

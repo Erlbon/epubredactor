@@ -21,6 +21,7 @@ import sys
 import zipfile
 
 sys.path.insert(0, os.path.dirname(__file__))
+from tmp_support import scratch_dir  # noqa: E402
 from PyQt6.QtWidgets import QApplication  # noqa: E402
 
 from core.epub_metadata import EpubMetadata  # noqa: E402
@@ -178,7 +179,7 @@ def test_repeated_author_in_batch_is_confirmed():
 
 
 def test_unconfirmed_author_falls_back_to_folder_filenames():
-    tmp_dir = "/tmp/epub_test_dialog_folder_fallback2"
+    tmp_dir = scratch_dir("epub_test_dialog_folder_fallback2")
     os.makedirs(tmp_dir, exist_ok=True)
     for name in ["Terry Pratchett - Mort.epub", "Terry Pratchett - Guards Guards.epub"]:
         open(os.path.join(tmp_dir, name), "w").close()
@@ -205,7 +206,7 @@ def test_unconfirmed_author_falls_back_to_folder_metadata():
     # the exact real-world case the feature is for: the book being fixed
     # has bad everything (name AND metadata), but other, previously
     # curated files often sit right next to it in the same folder.
-    tmp_dir = "/tmp/epub_test_dialog_metadata_fallback2"
+    tmp_dir = scratch_dir("epub_test_dialog_metadata_fallback2")
     os.makedirs(tmp_dir, exist_ok=True)
     for f in os.listdir(tmp_dir):
         os.remove(os.path.join(tmp_dir, f))
@@ -227,7 +228,7 @@ def test_filename_fallback_preferred_over_metadata_fallback():
     # When BOTH tier 2 (folder filenames) and tier 3 (folder metadata)
     # could confirm a value, tier 2 wins -- it's the cheaper check, and
     # is tried first.
-    tmp_dir = "/tmp/epub_test_dialog_tier_order"
+    tmp_dir = scratch_dir("epub_test_dialog_tier_order")
     os.makedirs(tmp_dir, exist_ok=True)
     for f in os.listdir(tmp_dir):
         os.remove(os.path.join(tmp_dir, f))
@@ -337,7 +338,7 @@ def test_accept_flushes_a_pending_refresh_and_applies_the_new_preview():
 
 
 def test_folder_metadata_is_scanned_once_per_folder_and_cached():
-    tmp_dir = "/tmp/epub_test_dialog_scan_cache"
+    tmp_dir = scratch_dir("epub_test_dialog_scan_cache")
     os.makedirs(tmp_dir, exist_ok=True)
     for f in os.listdir(tmp_dir):
         os.remove(os.path.join(tmp_dir, f))

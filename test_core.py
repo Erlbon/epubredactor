@@ -14,9 +14,10 @@ import sys
 import zipfile
 
 sys.path.insert(0, os.path.dirname(__file__))
+from tmp_support import scratch_dir  # noqa: E402
 from core.epub_metadata import EpubBook  # noqa: E402
 
-TEST_DIR = "/tmp/epub_test"
+TEST_DIR = scratch_dir("epub_test")
 os.makedirs(TEST_DIR, exist_ok=True)
 SAMPLE_PATH = os.path.join(TEST_DIR, "sample.epub")
 

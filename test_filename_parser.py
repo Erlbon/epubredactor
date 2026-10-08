@@ -3,6 +3,7 @@ import os
 import sys
 
 sys.path.insert(0, os.path.dirname(__file__))
+from tmp_support import scratch_dir  # noqa: E402
 from core.filename_parser import (  # noqa: E402
     best_matching_pattern,
     build_parser_regex,
@@ -266,7 +267,7 @@ def test_normalize_field_value():
 
 
 def test_sibling_epub_stems_lists_other_epubs_same_folder():
-    tmp_dir = "/tmp/epub_test_sibling_stems"
+    tmp_dir = scratch_dir("epub_test_sibling_stems")
     os.makedirs(tmp_dir, exist_ok=True)
     for name in ["Author - Book One.epub", "Author - Book Two.EPUB", "cover.jpg", "notes.txt"]:
         open(os.path.join(tmp_dir, name), "w").close()
@@ -278,7 +279,8 @@ def test_sibling_epub_stems_lists_other_epubs_same_folder():
 
 
 def test_sibling_epub_stems_missing_directory_returns_empty():
-    assert sibling_epub_stems("/tmp/epub_test_sibling_stems_does_not_exist/Book.epub") == []
+    missing = os.path.join(scratch_dir("epub_test_sibling_stems_missing"), "no_such_folder", "Book.epub")
+    assert sibling_epub_stems(missing) == []
     print("PASS: sibling_epub_stems() on a nonexistent folder returns an empty list, not an error")
 
 
@@ -324,7 +326,7 @@ def _build_tagged_epub(path, title, author, series=""):
 
 
 def test_folder_metadata_field_counts_finds_tagged_siblings():
-    tmp_dir = "/tmp/epub_test_folder_metadata_counts"
+    tmp_dir = scratch_dir("epub_test_folder_metadata_counts")
     os.makedirs(tmp_dir, exist_ok=True)
     for f in os.listdir(tmp_dir):
         os.remove(os.path.join(tmp_dir, f))
@@ -343,7 +345,7 @@ def test_folder_metadata_field_counts_finds_tagged_siblings():
 
 
 def test_folder_metadata_field_counts_excludes_given_path():
-    tmp_dir = "/tmp/epub_test_folder_metadata_counts_exclude"
+    tmp_dir = scratch_dir("epub_test_folder_metadata_counts_exclude")
     os.makedirs(tmp_dir, exist_ok=True)
     for f in os.listdir(tmp_dir):
         os.remove(os.path.join(tmp_dir, f))
@@ -356,12 +358,13 @@ def test_folder_metadata_field_counts_excludes_given_path():
 
 
 def test_folder_metadata_field_counts_missing_directory_returns_empty():
-    assert folder_metadata_field_counts("/tmp/epub_test_does_not_exist_at_all", "authors") == {}
+    missing = os.path.join(scratch_dir("epub_test_folder_metadata_counts_missing"), "no_such_folder")
+    assert folder_metadata_field_counts(missing, "authors") == {}
     print("PASS: folder_metadata_field_counts() on a nonexistent folder returns an empty dict, not an error")
 
 
 def test_folder_metadata_field_counts_respects_limit():
-    tmp_dir = "/tmp/epub_test_folder_metadata_counts_limit"
+    tmp_dir = scratch_dir("epub_test_folder_metadata_counts_limit")
     os.makedirs(tmp_dir, exist_ok=True)
     for f in os.listdir(tmp_dir):
         os.remove(os.path.join(tmp_dir, f))

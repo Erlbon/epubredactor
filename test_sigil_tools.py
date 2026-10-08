@@ -3,9 +3,10 @@ import os
 import sys
 
 sys.path.insert(0, os.path.dirname(__file__))
+from tmp_support import scratch_dir  # noqa: E402
 from core.sigil_tools import SigilLaunchError, find_sigil, open_in_sigil  # noqa: E402
 
-TEST_DIR = "/tmp/sigil_tools_test"
+TEST_DIR = scratch_dir("sigil_tools_test")
 os.makedirs(TEST_DIR, exist_ok=True)
 
 

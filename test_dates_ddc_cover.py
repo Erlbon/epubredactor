@@ -7,13 +7,14 @@ import zipfile
 import zlib
 
 sys.path.insert(0, os.path.dirname(__file__))
+from tmp_support import scratch_dir  # noqa: E402
 from core.epub_metadata import (  # noqa: E402
     EpubBook,
     format_date_parts,
     parse_date_parts,
 )
 
-TEST_DIR = "/tmp/epub_test_dates_cover"
+TEST_DIR = scratch_dir("epub_test_dates_cover")
 os.makedirs(TEST_DIR, exist_ok=True)
 
 # A real, minimal, valid 1x1 transparent PNG.

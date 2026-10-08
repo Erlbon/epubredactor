@@ -1,8 +1,10 @@
 """Tests for core/crash_log.py."""
+import atexit
 import os
 import sys
 
 sys.path.insert(0, os.path.dirname(__file__))
+from tmp_support import scratch_dir  # noqa: E402
 import core.crash_log as crash_log  # noqa: E402
 from core.crash_log import (  # noqa: E402
     format_crash_entry,
@@ -10,8 +12,25 @@ from core.crash_log import (  # noqa: E402
     write_crash_entry,
 )
 
-TEST_DIR = "/tmp/crash_log_test"
+TEST_DIR = scratch_dir("crash_log_test")
 os.makedirs(TEST_DIR, exist_ok=True)
+
+
+def _release_faulthandler_log():
+    """install() keeps its faulthandler log open for the life of the process
+    and Windows cannot delete an open file, so close it at exit -- before the
+    scratch folder is removed (atexit runs last-registered first)."""
+    import faulthandler
+
+    from redactor_common.core import crash_log as shared
+
+    handle = getattr(shared, "_faulthandler_file", None)
+    if handle is not None:
+        faulthandler.disable()
+        handle.close()
+
+
+atexit.register(_release_faulthandler_log)
 
 
 def _make_exc_info():
@@ -53,9 +72,15 @@ def test_write_crash_entry_appends_to_file():
 
 def test_write_crash_entry_never_raises_on_bad_path():
     exc_type, exc_value, exc_tb = _make_exc_info()
-    # A path in a directory that doesn't exist -- open() will raise
-    # OSError/FileNotFoundError internally, which must be swallowed.
-    write_crash_entry(exc_type, exc_value, exc_tb, path="/this/does/not/exist/crash.log")
+    # A path that can never be written: a "folder" that is really a file.
+    # (A merely missing folder is not enough -- the writer creates it, which
+    # on Windows turned the old fake path /this/does/not/exist into a real
+    # C:\this\does\not\exist.) open()/makedirs raise OSError internally,
+    # which must be swallowed.
+    blocker = os.path.join(TEST_DIR, "not_a_folder")
+    with open(blocker, "w") as f:
+        f.write("a file where a folder would have to be")
+    write_crash_entry(exc_type, exc_value, exc_tb, path=os.path.join(blocker, "crash.log"))
     print("PASS: an unwritable path is handled silently, doesn't raise")
 
 

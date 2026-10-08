@@ -6,9 +6,10 @@ import sys
 import zipfile
 
 sys.path.insert(0, os.path.dirname(__file__))
+from tmp_support import scratch_dir  # noqa: E402
 from core.epub_metadata import EpubBook  # noqa: E402
 
-TEST_DIR = "/tmp/epub_test_image_compress"
+TEST_DIR = scratch_dir("epub_test_image_compress")
 os.makedirs(TEST_DIR, exist_ok=True)
 
 CONTAINER_XML = """<?xml version="1.0" encoding="UTF-8"?>

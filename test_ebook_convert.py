@@ -5,13 +5,14 @@ import subprocess
 import sys
 
 sys.path.insert(0, os.path.dirname(__file__))
+from tmp_support import scratch_dir  # noqa: E402
 from core.ebook_convert import (  # noqa: E402
     EbookConvertError,
     convert_to_epub,
     is_supported_source,
 )
 
-TEST_DIR = "/tmp/ebook_convert_test"
+TEST_DIR = scratch_dir("ebook_convert_test")
 os.makedirs(TEST_DIR, exist_ok=True)
 
 
@@ -62,7 +63,7 @@ def test_convert_success():
 
 def test_convert_missing_source_raises():
     try:
-        convert_to_epub("/fake/exe", "/nonexistent/book.mobi", "/tmp/out.epub", run_fn=lambda *a, **k: None)
+        convert_to_epub("/fake/exe", "/nonexistent/book.mobi", os.path.join(TEST_DIR, "out.epub"), run_fn=lambda *a, **k: None)
         assert False, "should have raised"
     except EbookConvertError as exc:
         assert "not found" in str(exc).lower()
@@ -72,7 +73,7 @@ def test_convert_missing_source_raises():
 def test_convert_unsupported_format_raises():
     source = _make_file("book.xyz")
     try:
-        convert_to_epub("/fake/exe", source, "/tmp/out.epub", run_fn=lambda *a, **k: None)
+        convert_to_epub("/fake/exe", source, os.path.join(TEST_DIR, "out.epub"), run_fn=lambda *a, **k: None)
         assert False, "should have raised"
     except EbookConvertError as exc:
         assert "unsupported" in str(exc).lower()
@@ -86,7 +87,7 @@ def test_convert_nonzero_returncode_raises():
         return _FakeCompletedProcess(returncode=1, stderr=b"Conversion failed: corrupt input file")
 
     try:
-        convert_to_epub("/fake/exe", source, "/tmp/out.epub", run_fn=fake_run)
+        convert_to_epub("/fake/exe", source, os.path.join(TEST_DIR, "out.epub"), run_fn=fake_run)
         assert False, "should have raised"
     except EbookConvertError as exc:
         assert "corrupt input file" in str(exc)
@@ -100,7 +101,7 @@ def test_convert_timeout_raises():
         raise subprocess.TimeoutExpired(cmd=args, timeout=timeout)
 
     try:
-        convert_to_epub("/fake/exe", source, "/tmp/out.epub", run_fn=fake_run)
+        convert_to_epub("/fake/exe", source, os.path.join(TEST_DIR, "out.epub"), run_fn=fake_run)
         assert False, "should have raised"
     except EbookConvertError as exc:
         assert "timed out" in str(exc).lower()
@@ -114,7 +115,7 @@ def test_convert_missing_executable_raises():
         raise OSError("No such file or directory")
 
     try:
-        convert_to_epub("/fake/does-not-exist", source, "/tmp/out.epub", run_fn=fake_run)
+        convert_to_epub("/fake/does-not-exist", source, os.path.join(TEST_DIR, "out.epub"), run_fn=fake_run)
         assert False, "should have raised"
     except EbookConvertError as exc:
         assert "Could not run" in str(exc)

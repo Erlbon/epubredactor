@@ -3,9 +3,10 @@ import os
 import sys
 
 sys.path.insert(0, os.path.dirname(__file__))
+from tmp_support import scratch_dir  # noqa: E402
 from core.calibre_tools import find_install_dir, find_tool, no_console_window_kwargs  # noqa: E402
 
-TEST_DIR = "/tmp/calibre_tools_test"
+TEST_DIR = scratch_dir("calibre_tools_test")
 os.makedirs(TEST_DIR, exist_ok=True)
 
 
