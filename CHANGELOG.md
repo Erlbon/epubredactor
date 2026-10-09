@@ -4,6 +4,13 @@ All notable changes to The ƎPUB Redactor, by version. Trimmed to new
 functionality and real fixes — cosmetic/UX-only adjustments aren't
 listed here.
 
+## 2026-10-09#02 -- Command line
+
+- The one exe is now also a command line: `epubredactor info`, `set`, `rename`, `move`, `convert`, `redact` and `validate` run the command and never open the window; with no command, or a file to open, the window starts as before. The same code as the window, the same settings and saved Redact recipe; `--dry-run` previews the commands that change files, `--json` prints one JSON document, `--output FILE` writes the result to a file for scripts, and the exit code says whether books failed (see the README's Command line section, which documents every option).
+- `validate` lists a book's structural issues and, with `--fix`, repairs the fixable ones and saves; `convert` turns MOBI, AZW3, DOCX, FB2 and the other formats Calibre reads into EPUB.
+- Nothing is overwritten and nothing is deleted for good: names that are taken get numbers, an existing `.epub` is skipped, originals go to the Recycle Bin (or `--trash-dir`), and renames and moves are recorded for File > Undo Last Rename. A book the pattern has no name for is skipped instead of being called "untitled".
+- Requires redactor_common 2026-10-09-06.
+
 ## 2026-10-09#01 -- Shared library update
 
 - Updates the shared redactor_common library to 2026-10-08-02: the Recycle Bin move now accepts extended-length and mixed-slash paths (it failed with "[Errno 3] path not found" although the file existed), and error messages can be wrapped to fit a dialog.

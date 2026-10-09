@@ -376,6 +376,248 @@ them in one go.
   a completed rename or overwrite would mean touching the filesystem
   again in ways that could surprise you.
 
+## Command line
+
+The one exe (`epubredactor.exe`, or `python main.py` from source) is also the command line. When its first
+argument is a command name, it runs that command and the window never opens; with no command, or with a file
+or folder to open, the window starts as usual. `epubredactor --help` lists the commands and
+`epubredactor COMMAND --help` lists the options of one.
+
+```
+epubredactor info      PATH...  [--fields LIST | --all]
+epubredactor set       PATH...  -s FIELD=VALUE ... [--clear FIELD ...] [-n]
+epubredactor rename    PATH...  [-p PATTERN] [--zero-pad N] [--ascii] [-n]
+epubredactor move      PATH...  -p PATTERN [--root FOLDER] [--copy] [--zero-pad N] [--ascii] [-n]
+epubredactor convert   PATH...  [--trash-original] [-n]
+epubredactor redact    [PATH...] [--recipe FILE] [--enable STEP] [--disable STEP] [--threshold N]
+                                 [--trash-dir FOLDER] [--list-steps]
+epubredactor validate  PATH...  [--fix] [-n]
+```
+
+The command line uses the same code as the window, so the results are the same. It reads the same settings file
+(`epubredactor_settings.ini` next to the exe: the saved Redact recipe, the library root, the offline Open Library
+and ISFDB databases, the Calibre folder) and the same secret store for the API keys. Not every window function
+is available from the command line; the commands above are what is.
+
+### Options every command has
+
+| Option | Meaning |
+| --- | --- |
+| `PATH...` | One or more EPUB files, folders or wildcards (`D:\Books\Dune*.epub`). A folder is searched recursively for `.epub` files (`convert` looks for the other e-book formats). A file you name is always used. A path that matches nothing is reported, and if nothing at all matches the command stops with exit code 2. |
+| `-R`, `--no-recurse` | For a folder, look only at the files directly in it. |
+| `--json` | Print one JSON document on stdout instead of text (see "JSON output"). Nothing else goes to stdout. |
+| `-q`, `--quiet` | No progress lines and no warnings on stderr (errors are still shown). |
+| `-o FILE`, `--output FILE` | Write the result (the text, or with `--json` the JSON document) to FILE instead of stdout. The file is complete when the program exits. This is the reliable way for a script to read a result. |
+| `-n`, `--dry-run` | On the commands that change files (`set`, `rename`, `move`, `convert`, and `validate --fix`): show what would happen and change nothing. |
+| `-h`, `--help` | Help for the program or for one command. |
+| `--version` | The version (top level only). |
+
+Progress lines (`[3/20] name.epub`) go to stderr when more than one file is processed.
+
+### info
+
+`epubredactor info PATH... [--fields LIST | --all]`
+
+Shows each book's validation status (`OK`, `ISSUES`, `INVALID`, `DRM`, or the load error), whether it has a
+cover, and its metadata.
+
+| Option | Meaning |
+| --- | --- |
+| `--fields LIST` | Comma-separated fields to show, e.g. `--fields title,authors,series`. Default: `title, authors, series, series_index, year`. |
+| `--all` | Show every field that has a value. |
+
+Only fields with a value are listed. Exit code 1 if a book could not be read.
+
+### set
+
+`epubredactor set PATH... -s FIELD=VALUE [-s ...] [--clear FIELD ...] [-n]`
+
+Sets or empties metadata fields and saves each book in place (the same save as the window's Save). Fields and
+values are checked before any book is touched; a bad one stops the command with exit code 2.
+
+| Option | Meaning |
+| --- | --- |
+| `-s FIELD=VALUE`, `--set FIELD=VALUE` | Set a field (repeat for several). Several authors or genres are separated by `;`: `-s "authors=Frank Herbert; Brian Herbert"`. |
+| `--clear FIELD` | Empty a field (repeat for several). |
+| `-n`, `--dry-run` | Show the old and new value of each field, save nothing. |
+
+The fields are: title, isbn, authors, author_sort, series, series_index, collection, genres, publisher, year,
+month, day, ddc, language, description. Field names are case-insensitive and the usual spellings work: `author`,
+`Author(s)`, `genre`, `tags`, `Series #`, `series_number`, `pub_year`.
+
+Checks: `isbn` must be a valid ISBN-10 or ISBN-13 (hyphens are removed); `series_index` is a number (`2`, `2.5`);
+`year` is a four-digit year, `month` 1-12, `day` 1-31; `language` is a language code (`en`, `eng`, `nb`, `en-GB`).
+
+Each book's result is `changed`, `unchanged` (nothing differed), `planned` (dry run) or `failed`.
+
+### rename
+
+`epubredactor rename PATH... [-p PATTERN] [--zero-pad N] [--ascii] [-n]`
+
+Renames each book from its metadata, in its own folder, like Rename / Export / Move > Rename files in place.
+Never overwrites: a name that is taken gets `(2)`, `(3)`, ...
+
+| Option | Meaning |
+| --- | --- |
+| `-p PATTERN`, `--pattern PATTERN` | The new name (without `.epub`), with `%field%` tokens, e.g. `"%series% %series_index% - %title%"` (the default). Quote it so the shell leaves the `%` signs alone. |
+| `--zero-pad N` | Pad the series number to N digits (`--zero-pad 2` gives `02`). |
+| `--ascii` | ASCII-safe names (é becomes e, æ becomes ae, other symbols are dropped). |
+| `-n`, `--dry-run` | Show the new names, rename nothing. |
+
+Tokens: `%title%`, `%isbn%`, `%authors%`, `%author_sort%`, `%series%`, `%series_index%`, `%collection%`, `%genres%`,
+`%publisher%`, `%year%`, `%month%`, `%day%`, `%ddc%`, `%language%`, `%description%` (the window's Rename dialog lists
+them all). A book the pattern gives no name for (all its fields are empty) is `skipped`, not renamed to
+"untitled". A book that already has the name is `unchanged`. The rename is recorded, so File > Undo Last Rename in
+the app undoes it.
+
+### move
+
+`epubredactor move PATH... -p PATTERN [--root FOLDER] [--copy] [--zero-pad N] [--ascii] [-n]`
+
+Moves (or copies) each book into a folder tree under a library folder, like Rename / Export / Move > Move into
+folders. The pattern may contain `/` to make sub-folders: `"%authors%/%series%/%title%"`. Missing folders are
+created; nothing is overwritten (a taken name gets `(2)`); a destination outside the library folder or too long
+is refused.
+
+| Option | Meaning |
+| --- | --- |
+| `-p PATTERN`, `--pattern PATTERN` | Required. The path under the library folder, with `%field%` tokens. |
+| `--root FOLDER` | The library folder. Default: the one saved in the app (Rename / Export / Move window). The folder must exist. |
+| `--copy` | Copy instead of move, leaving the originals (nothing is logged for undo). |
+| `--zero-pad N`, `--ascii` | As for `rename`. |
+| `-n`, `--dry-run` | Show where each book would go, change nothing. |
+
+Across volumes a move is a verified copy followed by sending the original to the Recycle Bin. A book the pattern
+has no name for is `skipped`. Moves are recorded for File > Undo Last Rename.
+
+### convert
+
+`epubredactor convert PATH... [--trash-original] [-n]`
+
+Converts MOBI, AZW, AZW3, KFX, DOCX, ODT, RTF, TXT, FB2, CBZ and the other formats Calibre reads to EPUB with
+Calibre's `ebook-convert` (Calibre must be installed; the app finds it on PATH, in its usual install folders or in
+the folder saved under Tools), beside the original (same name, `.epub`). Never overwrites: if the `.epub` already
+exists the file is `skipped`; an EPUB is `skipped` too.
+
+| Option | Meaning |
+| --- | --- |
+| `--trash-original` | After the `.epub` is made, send the original to the Recycle Bin (never deleted for good; if the Recycle Bin refuses, the original is kept and a warning says so). |
+| `-n`, `--dry-run` | Show what would be converted, change nothing. |
+
+Results: `converted`, `skipped`, `planned`, `failed`. The new path is in `new_path`. Without Calibre the command
+stops with exit code 1 and says so.
+
+### redact
+
+`epubredactor redact [PATH...] [--recipe FILE] [--enable STEP] [--disable STEP] [--threshold N] [--trash-dir FOLDER] [--list-steps]`
+
+Runs the Redact recipe on the books, the same steps as Operations > Redact: repair, clean up, tags from the path
+and filename, lookups on Open Library, ISFDB and Google Books, cover, rename, move into folders. Each changed book
+is saved in place and its original goes to the Recycle Bin (or `--trash-dir`). Guesses below the confidence
+threshold are listed under "needs review" and not applied. There is no `--dry-run`: use `info` and `validate`
+first, and `--disable` for the steps you do not want. A cover that has to be drawn (regenerating a junk cover)
+needs the window and is skipped from the command line.
+
+| Option | Meaning |
+| --- | --- |
+| `--recipe FILE` | Use this recipe (a JSON file in the format the app stores) instead of the one saved in the app. |
+| `--enable STEP` | Turn a step on for this run (repeatable). |
+| `--disable STEP` | Turn a step off for this run (repeatable). |
+| `--threshold N` | Confidence needed to apply a guess, `0`-`1` or a percentage (`0.9` or `90`). |
+| `--trash-dir FOLDER` | Move originals into this folder (created if needed) instead of the Recycle Bin, for a machine or a task that has none. |
+| `--list-steps` | Show the steps and whether the recipe has each on, then stop (no `PATH` needed). |
+
+Steps: `validate_fix`, `dedupe_manifest_ids`, `rebuild_manifest`, `repair_navigation`, `generate_toc`,
+`strip_description_html`, `language`, `path_tags`, `scan_isbn`, `scan_publisher`, `scan_year`, `scan_series`,
+`metadata_lookup`, `clean_authors`, `cover`, `rename`, `move_into_folders`. Without `--recipe` the recipe saved in
+the app is used (the defaults if none was saved). The offline databases, the library root and the saved patterns
+come from the app's settings. A book that is DRM-protected is left untouched. Exit code 1 if any book failed;
+books that need review are not failures.
+
+### validate
+
+`epubredactor validate PATH... [--fix] [-n]`
+
+Checks each book's structure, the same checks as the Validate / Fix dialog, and lists the issues with their
+severity and whether they can be repaired automatically. With `--fix` the fixable issues are repaired and the
+book is saved in place; the status afterwards is what is on disk.
+
+| Option | Meaning |
+| --- | --- |
+| `--fix` | Repair the fixable issues and save the book. |
+| `-n`, `--dry-run` | With `--fix`: list what would be fixed, change nothing. |
+
+Exit code 1 when a book still has errors or warnings (or could not be read) after the command. A DRM-locked book
+is reported (`DRM`) but is not a failure.
+
+### JSON output
+
+`--json` prints one document: `{"results": [...], <summary fields>, "warnings": [...]}`.
+
+| Command | Each entry in `results` | Summary fields |
+| --- | --- | --- |
+| `info` | `path`, `status`, `has_cover`, `issues` (a count), `fields` (name to value) | `files`, `failed` |
+| `set` | `path`, `status`, `changes` (field to `{old, new}`), `message` | `files`, `failed`, `dry_run` |
+| `rename`, `move` | `path`, `status`, `new_path`, `message` | `files`, `failed`, `dry_run`, and `pattern` or `root` |
+| `convert` | `path`, `status`, `new_path`, `message` | `files`, `failed`, `dry_run` |
+| `redact` | `file`, `path`, `status`, `applied`, `needs_review` (step, value, confidence, reason), `failures`, `notes`, `skipped`, `not_saved` | `files`, `failed`, `needs_review`, `cancelled`, `confidence_threshold`, `run_notes` |
+| `redact --list-steps` | `step`, `label`, `enabled` | `confidence_threshold` |
+| `validate` | `path`, `status`, `problem`, `issues` (code, severity, message, fixable), `fixed`, `issues_after`, `message` | `files`, `problems`, `fix`, `dry_run` |
+
+### Exit codes
+
+| Code | Meaning |
+| --- | --- |
+| 0 | Done (files that were skipped or unchanged are not failures). |
+| 1 | The command ran but some books failed (for `validate`: some books have problems), or Calibre is missing for `convert`. |
+| 2 | Bad arguments, an unknown field or step, or no files found. The reason is on stderr. |
+| 70 | An internal error (a bug); the traceback is on stderr. |
+| 130 | Interrupted with Ctrl+C. |
+
+### Using it from scripts and scheduled tasks (Windows)
+
+`epubredactor.exe` is a windowed program, and Windows shells treat those differently from console programs:
+typed by hand in a terminal its output appears there and `>` / `|` redirection works, but an interactive shell
+does not wait for it (the prompt can come back before the output), and a script cannot read a windowed
+program's output unless it is redirected. So for automation: ask for the result in a file with `--output`, wait
+for the process, and read the exit code.
+
+```
+:: batch file (cmd waits for the program in a batch file; %errorlevel% is the exit code)
+epubredactor.exe validate "D:\Books" --json --output "%TEMP%\validate.json"
+if errorlevel 1 echo some books have problems
+
+:: interactive cmd: start /wait waits and keeps the exit code
+start /wait epubredactor.exe redact "D:\Incoming" --quiet --trash-dir "D:\Trash"
+
+# PowerShell: wait with Start-Process, read .ExitCode
+$p = Start-Process epubredactor.exe -ArgumentList 'validate','D:\Books','--json','-o','C:\Temp\validate.json' -Wait -PassThru
+$p.ExitCode
+(Get-Content C:\Temp\validate.json -Raw | ConvertFrom-Json).results | Where-Object problem
+
+# PowerShell: piping to Out-Null also waits
+epubredactor.exe convert "D:\Incoming" --trash-original | Out-Null; $LASTEXITCODE
+```
+
+Task Scheduler waits for the program and records its exit code as it is. On Linux and macOS there is no such
+distinction: the output goes to the terminal and pipes as usual.
+
+### Examples
+
+```
+epubredactor info "D:\Books\Herbert" --all                                  what is in a folder
+epubredactor set "D:\Books\Herbert" -s series="Dune Chronicles" -n          preview a bulk edit, then run it without -n
+epubredactor set dune.epub -s isbn=978-0-441-17271-9 -s series_index=1
+epubredactor rename "D:\Books\Herbert" -p "%authors% - %title%" --ascii -n
+epubredactor move "D:\Incoming" -p "%authors%/%series%/%series_index% - %title%" --zero-pad 2 --root "D:\Library"
+epubredactor convert "D:\Incoming" --trash-original                          MOBI/AZW3/DOCX to EPUB, recycle the originals
+epubredactor validate "D:\Books" --fix --json -o report.json                 repair what can be repaired, report the rest
+epubredactor redact "D:\Incoming" --disable metadata_lookup --trash-dir "D:\Trash"
+```
+
+What the commands will not do: overwrite a file, delete anything for good, or ask a question. Everything that
+could be a prompt in the window is a flag here or a skipped file in the report.
+
 ## Running from source (any OS with Python)
 
 ```
