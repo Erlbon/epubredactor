@@ -6,8 +6,7 @@ epubcli/cmd_files.py
   convert PATH...   MOBI/AZW3/DOCX/FB2/... to EPUB with Calibre's ebook-convert, beside the original
 
 Rename and move are the shared implementations in redactor_common.cli.commands; this file only says how a
-book's fields and path are read. Renames and moves are recorded in the same log the app's File > Undo Last
-Rename reads.
+book's fields and path are read. There is no undo for the command line (it is not recorded in the app's rename log).
 """
 
 from __future__ import annotations
@@ -20,12 +19,12 @@ from core.ebook_convert import SUPPORTED_SOURCE_EXTENSIONS, EbookConvertError, c
 from core.epub_metadata import EpubBook
 from core.rename_pattern import DEFAULT_PATTERN, placeholder_values
 from gui import app_settings
-from redactor_common.cli import EXIT_OK, EXIT_PARTIAL, CliError, Output, add_common_options, commands
+from redactor_common.cli import EXIT_PARTIAL, CliError, Output, add_common_options, commands
 from redactor_common.cli.commands import add_pattern_options, new_row, say
 from redactor_common.core.rename_pattern import zero_pad_numeric_value
 from redactor_common.core.trash import TrashError, move_to_trash
 
-from epubcli.files import add_path_arguments, collect, load_books, rename_log, skip_reason
+from epubcli.files import add_path_arguments, collect, load_books, skip_reason
 
 
 def _values_for(book: EpubBook, zero_pad: int) -> dict[str, str]:
@@ -54,11 +53,9 @@ def run_rename(args: argparse.Namespace, out: Output) -> int:
     books = load_books(collect(args.paths, out, recurse=not args.no_recurse))
     failed = commands.rename_items(
         books, pattern=pattern, values_for=lambda b: _values_for(b, args.zero_pad), path_of=lambda b: b.path,
-        skip_reason=skip_reason, out=out, dry_run=args.dry_run, ascii_only=args.ascii, log=rename_log(),
-        log_label="Rename by Pattern (command line)",
+        skip_reason=skip_reason, out=out, dry_run=args.dry_run, ascii_only=args.ascii,
     )
-    out.finish({"files": len(books), "failed": failed, "dry_run": args.dry_run, "pattern": pattern})
-    return EXIT_PARTIAL if failed else EXIT_OK
+    return commands.finish_run(out, failed, files=len(books), dry_run=args.dry_run, pattern=pattern)
 
 
 # --- move ---------------------------------------------------------------------------
@@ -84,10 +81,9 @@ def run_move(args: argparse.Namespace, out: Output) -> int:
     failed = commands.move_items(
         books, root=root, pattern=args.pattern, values_for=lambda b: _values_for(b, args.zero_pad),
         path_of=lambda b: b.path, skip_reason=skip_reason, out=out, dry_run=args.dry_run, copy=args.copy,
-        ascii_only=args.ascii, log=rename_log(), log_label="Move into folders (command line)",
+        ascii_only=args.ascii,
     )
-    out.finish({"files": len(books), "failed": failed, "dry_run": args.dry_run, "root": root})
-    return EXIT_PARTIAL if failed else EXIT_OK
+    return commands.finish_run(out, failed, files=len(books), dry_run=args.dry_run, root=root)
 
 
 # --- convert ------------------------------------------------------------------------
@@ -146,5 +142,4 @@ def run_convert(args: argparse.Namespace, out: Output) -> int:
                         out.warn(f"{os.path.basename(path)}: the original was kept ({exc})")
         out.record(row)
         say(out, row)
-    out.finish({"files": len(files), "failed": failed, "dry_run": args.dry_run})
-    return EXIT_PARTIAL if failed else EXIT_OK
+    return commands.finish_run(out, failed, files=len(files), dry_run=args.dry_run)

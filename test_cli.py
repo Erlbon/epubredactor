@@ -1,5 +1,5 @@
 """The command line (epubcli/): every command on real small EPUBs, text and --json output, exit codes,
---dry-run, and the log File > Undo Last Rename reads. Settings are the test-isolated ones (conftest)."""
+--dry-run. Settings are the test-isolated ones (conftest)."""
 
 import json
 import os
@@ -11,7 +11,6 @@ from core.epub_metadata import EpubBook
 from epubcli import cmd_files, cmd_redact, files as cli_files
 from epubcli.main import main
 from redactor_common.cli import CliError
-from redactor_common.core.rename_log import RenameLog
 from test_redact_steps import make_epub
 
 
@@ -24,14 +23,6 @@ def run(capsys, *argv):
 def run_json(capsys, *argv):
     code, out, _err = run(capsys, *argv, "--json")
     return code, json.loads(out)
-
-
-@pytest.fixture(autouse=True)
-def private_log(tmp_path, monkeypatch):
-    log = RenameLog(str(tmp_path / "_cli_rename_log.json"))
-    for module in (cmd_files, cmd_redact):
-        monkeypatch.setattr(module, "rename_log", lambda log=log: log)
-    return log
 
 
 @pytest.fixture
@@ -123,14 +114,12 @@ def test_set_on_an_unreadable_book_fails_with_exit_1(tmp_path, capsys):
 # --- rename / move -----------------------------------------------------------------------------------
 
 
-def test_rename_by_pattern_with_padding_and_the_undo_log(tmp_path, capsys, private_log):
+def test_rename_by_pattern_with_padding(tmp_path, capsys):
     path = make_epub(str(tmp_path / "x.epub"), title="Dune", authors=("Frank Herbert",))
     run(capsys, "set", path, "-s", "series=Dune", "-s", "series_index=2")
     code, document = run_json(capsys, "rename", path, "-p", "%series% %series_index% - %title%", "--zero-pad", "3")
     new_path = str(tmp_path / "Dune 002 - Dune.epub")
     assert code == 0 and document["results"][0]["status"] == "renamed" and os.path.exists(new_path)
-    assert private_log.last_batch().renames == [(path, new_path)]
-    assert private_log.undo_last() is not None and os.path.exists(path)  # what File > Undo Last Rename does
 
 
 def test_rename_dry_run_collisions_and_nameless(tmp_path, capsys):

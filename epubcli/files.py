@@ -6,12 +6,9 @@ Finding and loading the EPUB files a command works on, and the app's own log, re
 
 from __future__ import annotations
 
-import os
 
-from core.app_paths import base_dir
 from core.epub_metadata import EpubBook
 from redactor_common.cli import CliError, Output, expand_paths
-from redactor_common.core.rename_log import RenameLog
 
 EXTENSIONS = (".epub",)
 
@@ -36,11 +33,6 @@ def collect(paths: list[str], out: Output, recurse: bool = True, extensions=EXTE
 
 def load_books(files: list[str]) -> list[EpubBook]:
     return [EpubBook(path) for path in files]
-
-
-def rename_log() -> RenameLog:
-    """The same log File > Undo Last Rename reads, so a rename done here can be undone from the app."""
-    return RenameLog(os.path.join(str(base_dir()), "epubredactor_rename_log.json"))
 
 
 def skip_reason(book: EpubBook) -> str:

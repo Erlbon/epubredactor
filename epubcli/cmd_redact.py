@@ -28,7 +28,7 @@ from redactor_common.cli.commands import (
 )
 from redactor_common.core.path_parser import split_pattern_history
 
-from epubcli.files import collect, load_books, rename_log
+from epubcli.files import collect, load_books
 
 
 def add_redact_parser(sub) -> None:
@@ -54,7 +54,7 @@ def build_env(args: argparse.Namespace) -> RedactEnv:
     """What the steps share, read from the app's settings like the window does -- minus anything visual."""
     return RedactEnv(
         trash=trash_to(args.trash_dir) if args.trash_dir else None,
-        rename_log=rename_log(),
+        rename_log=None,
         library_root=app_settings.load_library_root(),
         ascii_only=app_settings.load_ascii_filenames(),
         zero_pad=app_settings.load_rename_zero_pad(),
