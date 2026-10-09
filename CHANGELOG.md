@@ -4,6 +4,10 @@ All notable changes to The ƎPUB Redactor, by version. Trimmed to new
 functionality and real fixes — cosmetic/UX-only adjustments aren't
 listed here.
 
+## 2026-10-09#01 -- Shared library update
+
+- Updates the shared redactor_common library to 2026-10-08-02: the Recycle Bin move now accepts extended-length and mixed-slash paths (it failed with "[Errno 3] path not found" although the file existed), and error messages can be wrapped to fit a dialog.
+
 ## 2026-10-05#01 -- ISFDB: series and series number from a local database
 
 - New **Tools > ISFDB Database…**: builds an offline lookup database from the ISFDB (Internet Speculative Fiction Database) MySQL backup, which you download from isfdb.org yourself (the app never downloads it). The build takes about two minutes and gives a ~150 MB file (425,000 books, 211,000 of them in a series, 638,000 editions with an ISBN). ISFDB's data is licensed Creative Commons Attribution; it is credited under Help > Credits.
