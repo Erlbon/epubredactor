@@ -4,6 +4,15 @@ All notable changes to The ƎPUB Redactor, by version. Trimmed to new
 functionality and real fixes — cosmetic/UX-only adjustments aren't
 listed here.
 
+## 2026-10-10#01 -- Command line: second review fixes
+
+- `set` reads the saved file back: a value the EPUB cannot hold (a series number without a series, a month or day without a year) is reported as `failed` with the field in `not_stored` instead of "changed"; values are compared the way the book stores them (`A;B` = `A; B`); control characters, non-ASCII digits and line breaks (outside `description`) are refused; a year needs four digits. DRM-protected books can be edited with `set` and `validate --fix`, with a warning.
+- `validate`: `--fix` also repairs the `mimetype` warnings (every save writes a correct one), lists only fixes that reached the file (a failed save is a `problem`, with nothing in `fixed`), and a DRM book that has warnings or errors counts as a problem.
+- Redact from the command line can now measure covers, so the cover step no longer skips the minimum-width check.
+- `convert`: the original is sent to the Recycle Bin only after the new EPUB opens; `--dry-run` and a real run agree when two sources would become the same `.epub`; a named file Calibre does not convert is skipped.
+- `rename` / `move` take their zero-pad and ASCII defaults from the app's saved Rename choices; an unknown `%token%` is refused, and a pattern that reads nothing for a book skips it. Redact and `--trash-original` retry a Recycle Bin move a virus scanner blocks for a moment; a `--recipe` file that is not a recipe is refused; a big batch shows "reading N/M". README: the non-existent `%description%` token is gone.
+- Requires redactor_common 2026-10-10-01.
+
 ## 2026-10-09#03 -- Command line: review fixes
 
 - There is no undo for the command line: renames, moves and Redact run from it are no longer recorded in the app's rename log (File > Undo Last Rename does not see them). Preview with `--dry-run`; nothing is overwritten and nothing is deleted for good.

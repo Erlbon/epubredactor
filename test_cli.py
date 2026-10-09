@@ -182,7 +182,7 @@ def test_convert_with_calibre_keeps_or_trashes_the_original(tmp_path, capsys, mo
     mobi = tmp_path / "old.mobi"
     mobi.write_bytes(b"mobi")
     monkeypatch.setattr(cmd_files, "find_tool", lambda *a, **k: "ebook-convert")
-    monkeypatch.setattr(cmd_files, "convert_to_epub", lambda tool, src, dst: shutil.copyfile(shutil.which("python") or src, dst) if False else open(dst, "wb").write(b"epub"))
+    monkeypatch.setattr(cmd_files, "convert_to_epub", lambda tool, src, dst: make_epub(dst))
     code, document = run_json(capsys, "convert", str(mobi))
     assert code == 0 and document["results"][0]["status"] == "converted" and (tmp_path / "old.epub").exists() and mobi.exists()
     (tmp_path / "old.epub").unlink()
@@ -250,7 +250,7 @@ def test_redact_text_report_and_a_broken_file(tmp_path, capsys):
     bad = tmp_path / "bad.epub"
     bad.write_bytes(b"not a zip")
     code, out, _ = run(capsys, "redact", str(bad), "--disable", "metadata_lookup")
-    assert "Redact report" in out and code in (0, 1) and bad.read_bytes() == b"not a zip"
+    assert "Redact report" in out and code == 0 and "could not be loaded" in out and bad.read_bytes() == b"not a zip"
 
 
 def test_redact_rejects_unknown_steps_and_thresholds(book):
@@ -367,3 +367,135 @@ def test_the_readme_lists_the_exit_codes_and_the_scripting_ways():
         assert code in section
     for way in ("start /wait", "Start-Process", "Out-Null", "--output"):
         assert way in section
+
+
+# --- second review -------------------------------------------------------------------------------------------
+
+
+def test_convert_trashes_the_original_only_after_the_new_epub_opens(tmp_path, capsys, monkeypatch):
+    mobi = tmp_path / "old.mobi"
+    mobi.write_bytes(b"mobi")
+    monkeypatch.setattr(cmd_files, "find_tool", lambda *a, **k: "ebook-convert")
+    monkeypatch.setattr(cmd_files, "convert_to_epub", lambda tool, src, dst: open(dst, "wb").write(b"not an epub"))
+    trashed = []
+    monkeypatch.setattr(cmd_files, "move_to_trash", trashed.append)
+    code, document = run_json(capsys, "convert", str(mobi), "--trash-original")
+    row = document["results"][0]
+    assert trashed == [] and mobi.exists() and "original was kept" in row["message"]
+    (tmp_path / "old.epub").unlink()
+    monkeypatch.setattr(cmd_files, "convert_to_epub", lambda tool, src, dst: make_epub(dst))
+    run(capsys, "convert", str(mobi), "--trash-original")
+    assert trashed == [str(mobi)]
+
+
+def test_convert_dry_run_and_the_real_run_agree_when_two_sources_share_a_name(tmp_path, capsys, monkeypatch):
+    (tmp_path / "x.mobi").write_bytes(b"1")
+    (tmp_path / "x.azw3").write_bytes(b"2")
+    (tmp_path / "x.jpg").write_bytes(b"3")
+    monkeypatch.setattr(cmd_files, "find_tool", lambda *a, **k: "ebook-convert")
+    monkeypatch.setattr(cmd_files, "convert_to_epub", lambda tool, src, dst: make_epub(dst))
+    _code, plan = run_json(capsys, "convert", str(tmp_path), "-n")
+    assert sorted(r["status"] for r in plan["results"]) == ["planned", "skipped"]
+    _code, real = run_json(capsys, "convert", str(tmp_path))
+    assert sorted(r["status"] for r in real["results"]) == ["converted", "skipped"]
+    _code, named = run_json(capsys, "convert", str(tmp_path / "x.jpg"), "-n")  # named in full, but not a book format
+    assert named["results"][0]["status"] == "skipped" and "not an e-book format" in named["results"][0]["message"]
+
+
+def test_set_reports_a_value_the_epub_cannot_hold(book, capsys):
+    code, document = run_json(capsys, "set", book, "-s", "series_index=2")  # a number without a series
+    row = document["results"][0]
+    assert code == 1 and row["status"] == "failed" and row["not_stored"] == ["series_index"]
+    code, document = run_json(capsys, "set", book, "-s", "series=Dune", "-s", "series_index=2")
+    assert code == 0 and document["results"][0]["status"] == "changed"
+
+
+def test_set_compares_values_the_way_the_book_stores_them(book, capsys):
+    run_json(capsys, "set", book, "-s", "authors=Frank Herbert;Brian Herbert")
+    code, document = run_json(capsys, "set", book, "-s", "authors=Frank Herbert; Brian Herbert")
+    assert code == 0 and document["results"][0]["status"] == "unchanged"
+
+
+@pytest.mark.parametrize("argv,message", [
+    (["-s", "title=bad\x01char"], "control character"),
+    (["-s", "year=²²²²"], "whole number"),
+    (["-s", "year=202"], "four-digit"),
+    (["-s", "title=two\nlines"], "control character"),
+])
+def test_set_refuses_values_no_opf_can_store(book, argv, message):
+    before = open(book, "rb").read()
+    with pytest.raises(CliError, match=message):
+        main(["set", book, *argv])
+    assert open(book, "rb").read() == before
+
+
+def test_set_on_a_drm_book_is_allowed_with_a_warning(tmp_path, capsys):
+    drm = make_epub(str(tmp_path / "drm.epub"), encrypted=True)
+    code, out, err = run(capsys, "set", drm, "-s", "title=New", "--json")
+    document = json.loads(out)
+    assert code == 0 and document["results"][0]["status"] == "changed"
+    assert "DRM" in document["results"][0]["message"] and any("DRM" in w for w in document["warnings"])
+    assert EpubBook(drm).metadata.title == "New"
+
+
+def _break_mimetype(path):
+    """The mimetype entry compressed and last, as some tools write it."""
+    import zipfile
+
+    with zipfile.ZipFile(path) as src:
+        items = [(i.filename, src.read(i.filename)) for i in src.infolist()]
+    with zipfile.ZipFile(path, "w") as dst:
+        for name, data in items:
+            if name != "mimetype":
+                dst.writestr(name, data, compress_type=zipfile.ZIP_DEFLATED)
+        dst.writestr("mimetype", b"application/epub+zip", compress_type=zipfile.ZIP_DEFLATED)
+
+
+def test_validate_fix_repairs_the_mimetype_by_saving(tmp_path, capsys):
+    path = make_epub(str(tmp_path / "m.epub"))
+    _break_mimetype(path)
+    code, document = run_json(capsys, "validate", path)
+    assert code == 1 and any(i["code"] == "MIMETYPE_POSITION" and i["fixable"] for i in document["results"][0]["issues"])
+    code, document = run_json(capsys, "validate", path, "--fix")
+    row = document["results"][0]
+    assert code == 0 and row["problem"] is False and any("MIMETYPE_POSITION" in f for f in row["fixed"])
+    assert not row["issues_after"]
+
+
+def test_validate_counts_warnings_on_a_drm_book_as_a_problem(tmp_path, capsys):
+    drm = make_epub(str(tmp_path / "drm.epub"), encrypted=True, toc=False)
+    code, document = run_json(capsys, "validate", drm)
+    assert code == 1 and document["results"][0]["problem"] is True
+
+
+def test_validate_fix_does_not_claim_fixes_when_the_save_fails(tmp_path, capsys, monkeypatch):
+    path = make_epub(str(tmp_path / "g.epub"), language="")
+    from core.epub_metadata import EpubError
+
+    def refuse(self, *a, **k):
+        raise EpubError("disk full")
+
+    monkeypatch.setattr(EpubBook, "save", refuse)
+    code, document = run_json(capsys, "validate", path, "--fix")
+    row = document["results"][0]
+    assert code == 1 and row["problem"] is True and row["fixed"] == [] and "not saved" in row["message"]
+
+
+def test_redact_gets_an_image_size_reader_for_the_cover_step():
+    import argparse
+
+    from epubcli import cmd_redact
+
+    env = cmd_redact.build_env(argparse.Namespace(trash_dir=None))
+    assert env.image_size is not None
+
+
+def test_rename_defaults_come_from_the_saved_settings(book, capsys):
+    from gui import app_settings
+
+    run_json(capsys, "set", book, "-s", "series=Dune", "-s", "series_index=4")
+    app_settings.save_rename_zero_pad(True, 3)
+    _code, document = run_json(capsys, "rename", book, "-p", "%series% %series_index%", "-n")
+    assert document["results"][0]["new_path"].endswith("Dune 004.epub")
+    _code, document = run_json(capsys, "rename", book, "-p", "%series% %series_index%", "--zero-pad", "0", "-n")
+    assert document["results"][0]["new_path"].endswith("Dune 4.epub")

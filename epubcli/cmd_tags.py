@@ -8,11 +8,15 @@ epubcli/cmd_tags.py
 from __future__ import annotations
 
 import argparse
+import os
 
 from core.epub_metadata import EpubBook, EpubError
+from core.validation_issue import STATUS_DRM
 from redactor_common.cli import EXIT_OK, EXIT_PARTIAL, CliError, Output, add_common_options
 
-from epubcli.fields import CLI_FIELDS, DEFAULT_INFO_FIELDS, FIELD_NAMES, attr_for, parse_assignment, resolve_field
+from epubcli.fields import (
+    CLI_FIELDS, DEFAULT_INFO_FIELDS, FIELD_NAMES, attr_for, normalize, parse_assignment, resolve_field,
+)
 from epubcli.files import add_path_arguments, collect, load_books, skip_reason
 
 LABELS = {attr: name for name, attr in CLI_FIELDS.items()}
@@ -36,7 +40,7 @@ def run_info(args: argparse.Namespace, out: Output) -> int:
         [resolve_field(name) for name in args.fields.split(",") if name.strip()] if args.fields else DEFAULT_INFO_FIELDS
     )
     failed = 0
-    for index, book in enumerate(load_books(files), start=1):
+    for index, book in enumerate(load_books(files, out), start=1):
         out.progress(index, len(files), book.path)
         fields = {n: getattr(book.metadata, CLI_FIELDS[n], "") for n in wanted}
         fields = {n: v for n, v in fields.items() if (v or "").strip()}
@@ -83,7 +87,7 @@ def run_set(args: argparse.Namespace, out: Output) -> int:
 
     files = collect(args.paths, out, recurse=not args.no_recurse)
     failed = 0
-    for index, book in enumerate(load_books(files), start=1):
+    for index, book in enumerate(load_books(files, out), start=1):
         out.progress(index, len(files), book.path)
         row = {"path": book.path, "status": "", "changes": {}, "message": ""}
         reason = skip_reason(book)
@@ -93,14 +97,14 @@ def run_set(args: argparse.Namespace, out: Output) -> int:
         else:
             for attr, new in changes.items():
                 old = getattr(book.metadata, attr, "") or ""
-                if old != new:
+                if normalize(attr, old) != normalize(attr, new):
                     row["changes"][LABELS[attr]] = {"old": old, "new": new}
             if not row["changes"]:
                 row["status"] = "unchanged"
             elif args.dry_run:
                 row["status"] = "planned"
             else:
-                row["status"] = _save(book, changes, row)
+                row["status"] = _save(book, changes, row, out)
                 failed += row["status"] == "failed"
         out.record(row)
         out.line(f"{row['status']:9} {book.path}" + (f"  ({row['message']})" if row["message"] else ""))
@@ -110,11 +114,31 @@ def run_set(args: argparse.Namespace, out: Output) -> int:
     return EXIT_PARTIAL if failed else EXIT_OK
 
 
-def _save(book: EpubBook, changes: dict[str, str], row: dict) -> str:
+def _save(book: EpubBook, changes: dict[str, str], row: dict, out: Output) -> str:
+    """Saves the changes and reads the file back: a value the EPUB cannot hold (a series number without a series,
+    a month without a year) is reported, not claimed as changed."""
+    drm = book.validation_status == STATUS_DRM
     book.apply_metadata(changes)
     try:
         book.save()
     except (EpubError, OSError) as exc:
         row["message"] = str(book.save_error or exc)
+        return "failed"
+    if drm:  # allowed, but the user should know: the metadata was edited, the protected content was not touched
+        note = "DRM-protected book: its metadata was changed anyway (the protected content is untouched)"
+        row["message"] = note
+        out.warn(f"{os.path.basename(book.path)}: {note}")
+    after = EpubBook(book.path)
+    if after.load_error:
+        row["message"] = f"saved, but the file could not be read back: {after.load_error}"
+        return "failed"
+    not_stored = [
+        LABELS[attr] for attr, new in changes.items()
+        if normalize(attr, getattr(after.metadata, attr, "") or "") != normalize(attr, new)
+    ]
+    if not_stored:
+        what = ", ".join(not_stored)
+        row["message"] = f"saved, but not stored by the EPUB: {what} (a series number needs a series, a month or day needs a year)"
+        row["not_stored"] = not_stored
         return "failed"
     return "changed"

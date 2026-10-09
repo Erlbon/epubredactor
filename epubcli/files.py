@@ -31,8 +31,14 @@ def collect(paths: list[str], out: Output, recurse: bool = True, extensions=EXTE
     return files
 
 
-def load_books(files: list[str]) -> list[EpubBook]:
-    return [EpubBook(path) for path in files]
+def load_books(files: list[str], out: Output | None = None) -> list[EpubBook]:
+    """Loads each file; `out` shows "reading N/M" on stderr while a big batch is read."""
+    books = []
+    for index, path in enumerate(files, start=1):
+        if out is not None:
+            out.progress(index, len(files), f"reading {path}")
+        books.append(EpubBook(path))
+    return books
 
 
 def skip_reason(book: EpubBook) -> str:

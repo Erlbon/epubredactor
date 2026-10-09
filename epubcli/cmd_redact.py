@@ -24,7 +24,7 @@ from core.redact_steps import (
 from gui import app_settings
 from redactor_common.cli import CliError, Output, add_common_options
 from redactor_common.cli.commands import (
-    add_redact_options, build_recipe, list_steps, read_recipe_file, redact_items, trash_to,
+    add_redact_options, build_recipe, list_steps, read_recipe_file, redact_items, trash_to, trash_with_retries,
 )
 from redactor_common.core.path_parser import split_pattern_history
 
@@ -52,8 +52,11 @@ def _patterns() -> tuple[str, str]:
 
 def build_env(args: argparse.Namespace) -> RedactEnv:
     """What the steps share, read from the app's settings like the window does -- minus anything visual."""
+    from gui.cover_quality import image_size  # reads an image header; needs no window
+
     return RedactEnv(
-        trash=trash_to(args.trash_dir) if args.trash_dir else None,
+        trash=trash_to(args.trash_dir) if args.trash_dir else trash_with_retries(),
+        image_size=image_size,
         rename_log=None,
         library_root=app_settings.load_library_root(),
         ascii_only=app_settings.load_ascii_filenames(),
@@ -74,7 +77,7 @@ def run_redact(args: argparse.Namespace, out: Output) -> int:
     if not args.paths:
         raise CliError("give the EPUB files to redact (or --list-steps)")
 
-    books = load_books(collect(args.paths, out, recurse=not args.no_recurse))
+    books = load_books(collect(args.paths, out, recurse=not args.no_recurse), out)
     env = build_env(args)
     env.begin()
 

@@ -446,7 +446,16 @@ month, day, ddc, language, description. Field names are case-insensitive and the
 `Author(s)`, `genre`, `tags`, `Series #`, `series_number`, `pub_year`.
 
 Checks: `isbn` must be a valid ISBN-10 or ISBN-13 (hyphens are removed); `series_index` is a number (`2`, `2.5`);
-`year` is a four-digit year, `month` 1-12, `day` 1-31; `language` is a language code (`en`, `eng`, `nb`, `en-GB`).
+`year` is a four-digit year, `month` 1-12, `day` 1-31 (all written with the digits 0-9); `language` is a language
+code (`en`, `eng`, `nb`, `en-GB`). A value with a control character in it is refused, and so is a line break or tab
+in any field except `description`, since the OPF cannot store them. If a field is given both `-s` and `--clear`,
+`--clear` wins whatever the order. A value is compared the way the book stores it (`A;B` and `A; B` are the same
+authors).
+
+The save is read back: a value the EPUB cannot hold (a `series_index` on a book with no series, a `month` or `day`
+without a `year`, clearing the `isbn` that is the book's primary identifier) makes the book `failed` with the field
+named in `not_stored`, instead of being claimed as changed. A DRM-protected book is edited like any other, with a
+warning: its metadata is changed, the protected content is not touched.
 
 Each book's result is `changed`, `unchanged` (nothing differed), `planned` (dry run) or `failed`.
 
@@ -460,14 +469,20 @@ Never overwrites: a name that is taken gets `(2)`, `(3)`, ... A change of letter
 | Option | Meaning |
 | --- | --- |
 | `-p PATTERN`, `--pattern PATTERN` | The new name (without `.epub`), with `%field%` tokens, e.g. `"%series% %series_index% - %title%"` (the default). Quote it so the shell leaves the `%` signs alone. |
-| `--zero-pad N` | Pad the series number to N digits (`--zero-pad 2` gives `02`). |
-| `--ascii` | ASCII-safe names (é becomes e, æ becomes ae, other symbols are dropped). |
+| `--zero-pad N` | Pad the series number to N digits (`--zero-pad 2` gives `02`). Default: the choice saved in the app's Rename window (on, with its width, or off); `--zero-pad 0` turns it off. |
+| `--ascii` | ASCII-safe names (é becomes e, æ becomes ae, other symbols are dropped). Also on when the app's Rename window has it saved. |
 | `-n`, `--dry-run` | Show the new names, rename nothing. |
 
 Tokens: `%title%`, `%isbn%`, `%authors%`, `%author_sort%`, `%series%`, `%series_index%`, `%collection%`, `%genres%`,
-`%publisher%`, `%year%`, `%month%`, `%day%`, `%ddc%`, `%language%`, `%description%` (the window's Rename dialog lists
-them all). A book the pattern gives no name for (all its fields are empty) is `skipped`, not renamed to
-"untitled". A book that already has the name is `unchanged`. There is no undo for the command line: preview with `--dry-run`.
+`%publisher%`, `%year%`, `%month%`, `%day%`, `%ddc%`, `%language%` (the window's Rename dialog lists them all; `%tags%`,
+`%pub_year%`, `%pub_month%` and `%pub_day%` are other spellings of `%genres%`, `%year%`, `%month%` and `%day%`). A token
+that is not in that list (a typo such as `%tittle%`) is refused with exit code 2 instead of silently rendering as
+nothing, and a rename pattern cannot contain `/` or `\` (`move` makes folders). A book the pattern gives no name for (all
+its fields are empty) is `skipped`, not renamed to "untitled". A book that already has the name is `unchanged`. There is
+no undo for the command line: preview with `--dry-run`.
+
+In a batch file write `%%` for each `%` (`-p "%%series%% %%title%%"`): cmd expands a single `%name%` itself, and a pattern
+that then reads nothing makes the book `skipped`.
 
 ### move
 
@@ -496,11 +511,13 @@ has no name for is `skipped`. There is no undo for a move either: preview with `
 Converts MOBI, AZW, AZW3, KFX, DOCX, ODT, RTF, TXT, FB2, CBZ and the other formats Calibre reads to EPUB with
 Calibre's `ebook-convert` (Calibre must be installed; the app finds it on PATH, in its usual install folders or in
 the folder saved under Tools), beside the original (same name, `.epub`). Never overwrites: if the `.epub` already
-exists the file is `skipped`; an EPUB is `skipped` too.
+exists the file is `skipped`; an EPUB is `skipped` too, and so is a file whose extension Calibre does not convert
+(a named file is otherwise always used) and the second of two files in one run that would become the same `.epub`
+(`--dry-run` says the same).
 
 | Option | Meaning |
 | --- | --- |
-| `--trash-original` | After the `.epub` is made, send the original to the Recycle Bin (never deleted for good; if the Recycle Bin refuses, the original is kept and a warning says so). |
+| `--trash-original` | After the `.epub` is made and read back successfully, send the original to the Recycle Bin (never deleted for good; if the new file cannot be read, or the Recycle Bin refuses, the original is kept and a warning says so). |
 | `-n`, `--dry-run` | Show what would be converted, change nothing. |
 
 Results: `converted`, `skipped`, `planned`, `failed`. The new path is in `new_path`. Without Calibre the command
@@ -514,15 +531,16 @@ Runs the Redact recipe on the books, the same steps as Operations > Redact: repa
 and filename, lookups on Open Library, ISFDB and Google Books, cover, rename, move into folders. Each changed book
 is saved in place and its original goes to the Recycle Bin (or `--trash-dir`). Guesses below the confidence
 threshold are listed under "needs review" and not applied. There is no `--dry-run`: use `info` and `validate`
-first, and `--disable` for the steps you do not want. A cover that has to be drawn (regenerating a junk cover)
-needs the window and is skipped from the command line.
+first, and `--disable` for the steps you do not want. The cover step replaces a cover only with a better one it
+finds (it measures the sizes itself); a cover that has to be drawn (regenerating a junk cover) needs the window and
+is skipped from the command line.
 
 | Option | Meaning |
 | --- | --- |
 | `--recipe FILE` | Use this recipe (a JSON file in the format the app stores) instead of the one saved in the app. |
 | `--enable STEP` | Turn a step on for this run (repeatable). |
 | `--disable STEP` | Turn a step off for this run (repeatable). |
-| `--threshold N` | Confidence needed to apply a guess, `0`-`1` or a percentage (`0.9`, `90` or `90%`); a plain number from 1 to 5 such as `1.5` is refused as ambiguous. |
+| `--threshold N` | Confidence needed to apply a guess: a fraction `0`-`1` (`0.9`, also `1`), or a percentage with at least two digits (`90`, `90%`, `100`); a number above 1 and below 5 such as `1.5` is refused as ambiguous. |
 | `--trash-dir FOLDER` | Move originals into this folder (created if needed) instead of the Recycle Bin, for a machine or a task that has none. |
 | `--list-steps` | Show the steps and whether the recipe has each on, then stop (no `PATH` needed). |
 
@@ -530,8 +548,10 @@ Steps: `validate_fix`, `dedupe_manifest_ids`, `rebuild_manifest`, `repair_naviga
 `strip_description_html`, `language`, `path_tags`, `scan_isbn`, `scan_publisher`, `scan_year`, `scan_series`,
 `metadata_lookup`, `clean_authors`, `cover`, `rename`, `move_into_folders`. Without `--recipe` the recipe saved in
 the app is used (the defaults if none was saved). The offline databases, the library root and the saved patterns
-come from the app's settings. A book that is DRM-protected is left untouched. Exit code 1 if any book failed;
-books that need review are not failures.
+come from the app's settings. A book that is DRM-protected is left untouched (`set` and `validate --fix` do edit
+one, with a warning, because you named the change). A `--recipe` file that is not valid JSON or not a recipe is refused
+(exit code 2) rather than replaced by the default recipe. Exit code 1 if any book failed; books that need review are
+not failures.
 
 ### validate
 
@@ -539,15 +559,18 @@ books that need review are not failures.
 
 Checks each book's structure, the same checks as the Validate / Fix dialog, and lists the issues with their
 severity and whether they can be repaired automatically. With `--fix` the fixable issues are repaired and the
-book is saved in place; the status afterwards is what is on disk.
+book is saved in place; the status afterwards is what is on disk. The `mimetype` warnings count as fixable: every
+save writes a correct `mimetype` entry. `fixed` lists only what reached the file; a book that could not be saved
+is a `problem` with `not saved` in its message and nothing in `fixed`.
 
 | Option | Meaning |
 | --- | --- |
 | `--fix` | Repair the fixable issues and save the book. |
 | `-n`, `--dry-run` | With `--fix`: list what would be fixed, change nothing. |
 
-Exit code 1 when a book still has errors or warnings (or could not be read) after the command. A DRM-locked book
-is reported (`DRM`) but is not a failure.
+Exit code 1 when a book still has errors or warnings (or could not be read) after the command. A DRM lock on
+its own is reported (`DRM`) but is not a failure; a DRM-protected book that also has warnings or errors is one. With `--fix`
+a DRM-protected book is repaired too, with a warning.
 
 ### JSON output
 

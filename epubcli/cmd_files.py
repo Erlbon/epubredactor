@@ -27,6 +27,18 @@ from redactor_common.core.trash import TrashError, move_to_trash
 from epubcli.files import add_path_arguments, collect, load_books, skip_reason
 
 
+def _zero_pad(args: argparse.Namespace) -> int:
+    """--zero-pad N, else the choice saved in the app's Rename window (on: its width), else none."""
+    if args.zero_pad is not None:
+        return args.zero_pad
+    enabled, width = app_settings.load_rename_zero_pad()
+    return width if enabled else 0
+
+
+def _ascii(args: argparse.Namespace) -> bool:
+    return bool(args.ascii) or app_settings.load_ascii_filenames()
+
+
 def _values_for(book: EpubBook, zero_pad: int) -> dict[str, str]:
     values = dict(placeholder_values(book.metadata))
     if zero_pad > 0 and values.get("series_index"):
@@ -50,10 +62,11 @@ def add_rename_parser(sub) -> None:
 
 def run_rename(args: argparse.Namespace, out: Output) -> int:
     pattern = args.pattern or DEFAULT_PATTERN
-    books = load_books(collect(args.paths, out, recurse=not args.no_recurse))
+    zero_pad = _zero_pad(args)
+    books = load_books(collect(args.paths, out, recurse=not args.no_recurse), out)
     failed = commands.rename_items(
-        books, pattern=pattern, values_for=lambda b: _values_for(b, args.zero_pad), path_of=lambda b: b.path,
-        skip_reason=skip_reason, out=out, dry_run=args.dry_run, ascii_only=args.ascii,
+        books, pattern=pattern, values_for=lambda b: _values_for(b, zero_pad), path_of=lambda b: b.path,
+        skip_reason=skip_reason, out=out, dry_run=args.dry_run, ascii_only=_ascii(args),
     )
     return commands.finish_run(out, failed, files=len(books), dry_run=args.dry_run, pattern=pattern)
 
@@ -77,11 +90,12 @@ def add_move_parser(sub) -> None:
 
 def run_move(args: argparse.Namespace, out: Output) -> int:
     root = args.root or app_settings.load_library_root()
-    books = load_books(collect(args.paths, out, recurse=not args.no_recurse))
+    zero_pad = _zero_pad(args)
+    books = load_books(collect(args.paths, out, recurse=not args.no_recurse), out)
     failed = commands.move_items(
-        books, root=root, pattern=args.pattern, values_for=lambda b: _values_for(b, args.zero_pad),
+        books, root=root, pattern=args.pattern, values_for=lambda b: _values_for(b, zero_pad),
         path_of=lambda b: b.path, skip_reason=skip_reason, out=out, dry_run=args.dry_run, copy=args.copy,
-        ascii_only=args.ascii,
+        ascii_only=_ascii(args),
     )
     return commands.finish_run(out, failed, files=len(books), dry_run=args.dry_run, root=root)
 
@@ -103,21 +117,41 @@ def add_convert_parser(sub) -> None:
     parser.set_defaults(handler=run_convert)
 
 
+def _trash_original(path: str, target: str, row: dict, out: Output) -> None:
+    """The original goes to the Recycle Bin only when the new EPUB opens; otherwise it is kept and a warning says so."""
+    check = EpubBook(target)
+    if check.load_error:
+        row["message"] = f"converted, but the original was kept: the new EPUB could not be read ({check.load_error})"
+        out.warn(f"{os.path.basename(path)}: the original was kept (the new EPUB could not be read)")
+        return
+    try:
+        commands.trash_with_retries(move_to_trash)(path)
+    except TrashError as exc:
+        row["message"] = f"converted, but the original was kept: {exc}"
+        out.warn(f"{os.path.basename(path)}: the original was kept ({exc})")
+
+
 def run_convert(args: argparse.Namespace, out: Output) -> int:
     files = collect(
         args.paths, out, recurse=not args.no_recurse, extensions=sorted(SUPPORTED_SOURCE_EXTENSIONS), noun="e-book"
     )
     tool = None
     failed = 0
+    taken: set[str] = set()  # the .epub names this run has claimed (a dry run must say what a real one does)
     for index, path in enumerate(files, start=1):
         out.progress(index, len(files), path)
         row = new_row(path)
         target = os.path.splitext(path)[0] + ".epub"
         if path.lower().endswith(".epub"):
             row["status"], row["message"] = "skipped", "already an EPUB"
+        elif os.path.splitext(path)[1].lower() not in SUPPORTED_SOURCE_EXTENSIONS:
+            row["status"], row["message"] = "skipped", "not an e-book format Calibre converts"
         elif os.path.lexists(target):
             row["status"], row["message"], row["new_path"] = "skipped", "an .epub of that name already exists; left alone", target
+        elif os.path.normcase(target) in taken:
+            row["status"], row["message"], row["new_path"] = "skipped", "another file in this run converts to the same name; left alone", target
         elif args.dry_run:
+            taken.add(os.path.normcase(target))
             row["status"], row["new_path"] = "planned", target
         else:
             if tool is None:
@@ -127,6 +161,7 @@ def run_convert(args: argparse.Namespace, out: Output) -> int:
                         "Calibre's ebook-convert was not found. Install Calibre (calibre-ebook.com) or set its folder "
                         "in the app (Tools > Calibre).", EXIT_PARTIAL,
                     )
+            taken.add(os.path.normcase(target))
             try:
                 convert_to_epub(tool, path, target)
             except EbookConvertError as exc:
@@ -135,11 +170,7 @@ def run_convert(args: argparse.Namespace, out: Output) -> int:
             else:
                 row["status"], row["new_path"] = "converted", target
                 if args.trash_original:
-                    try:
-                        move_to_trash(path)
-                    except TrashError as exc:
-                        row["message"] = f"converted, but the original was kept: {exc}"
-                        out.warn(f"{os.path.basename(path)}: the original was kept ({exc})")
+                    _trash_original(path, target, row, out)
         out.record(row)
         say(out, row)
     return commands.finish_run(out, failed, files=len(files), dry_run=args.dry_run)

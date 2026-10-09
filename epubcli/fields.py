@@ -13,6 +13,7 @@ import re
 from core.fields import FIELDS
 from core.isbn import is_valid_isbn, normalize_isbn
 from redactor_common.cli import CliError
+from redactor_common.cli.values import check_text, is_ascii_number
 
 # Field names as the CLI presents them, mapped to the EpubMetadata attribute the app edits.
 CLI_FIELDS = {
@@ -37,7 +38,7 @@ for _key, _label, _multiline in FIELDS:
     if _name:
         _LOOKUP[_label.lower()] = _name
 
-_NUMBER = re.compile(r"^\d+(\.\d+)?$")
+_NUMBER = re.compile(r"^[0-9]+(\.[0-9]+)?$")
 _LANGUAGE = re.compile(r"^[A-Za-z]{2,3}(-[A-Za-z0-9]{2,8})?$")
 
 DEFAULT_INFO_FIELDS = ["title", "authors", "series", "series_index", "year"]
@@ -55,9 +56,21 @@ def attr_for(name: str) -> str:
     return CLI_FIELDS[resolve_field(name)]
 
 
+MULTI_VALUE_ATTRS = ("authors_str", "author_sort_str", "tags_str")
+
+
+def normalize(attr: str, value: str) -> str:
+    """A value the way the book stores and reads it back, so a change is only a change when it differs
+    ("A;B" and "A; B" are the same authors)."""
+    value = (value or "").strip()
+    if attr in MULTI_VALUE_ATTRS:
+        return "; ".join(part.strip() for part in value.split(";") if part.strip())
+    return value
+
+
 def check_value(name: str, value: str) -> str:
     """The value to store (stripped), or a CliError when the field would not take it. "" clears the field."""
-    value = value.strip()
+    value = check_text(name, value, multiline=name == "description")
     if not value:
         return ""
     if name == "isbn":
@@ -67,15 +80,17 @@ def check_value(name: str, value: str) -> str:
     if name == "series_index" and not _NUMBER.match(value):
         raise CliError(f"series_index must be a number (2 or 2.5), not {value!r}")
     if name in ("year", "month", "day"):
-        if not value.isdigit():
-            raise CliError(f"{name} must be a whole number, not {value!r}")
+        if not is_ascii_number(value):
+            raise CliError(f"{name} must be a whole number written with the digits 0-9, not {value!r}")
         number = int(value)
-        if name == "year" and not 1 <= number <= 9999:
+        if name == "year" and not (len(value) == 4 and number >= 1):
             raise CliError("year must be a four-digit year")
         if name == "month" and not 1 <= number <= 12:
             raise CliError("month must be 1 to 12")
         if name == "day" and not 1 <= number <= 31:
             raise CliError("day must be 1 to 31")
+    if name == "series_index" and float(value) > 99999:
+        raise CliError(f"series_index is too large: {value}")
     if name == "language" and not _LANGUAGE.match(value):
         raise CliError(f"language must be a language code (en, eng, nb, en-GB), not {value!r}")
     return value
