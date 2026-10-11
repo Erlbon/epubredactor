@@ -11,6 +11,7 @@ argument is a command; the window never starts):
     epubredactor convert  PATH...                      MOBI/AZW3/DOCX/... -> EPUB (Calibre)
     epubredactor redact   PATH...                      run the saved Redact recipe
     epubredactor validate PATH... [--fix]              check (and repair) the EPUB structure
+    epubredactor headers  PATH... [--fix]              find (and remove) running headers and page numbers left by a scan
 
 Every command takes --json (one JSON document), --quiet and --output FILE (the result goes to a file: the
 reliable way to read it from a script, since a windowed exe cannot be waited for by an interactive shell),
@@ -26,7 +27,7 @@ from typing import Sequence
 from core.version import APP_VERSION
 from redactor_common.cli import make_output
 
-from epubcli import COMMANDS, cmd_files, cmd_redact, cmd_tags, cmd_validate
+from epubcli import COMMANDS, cmd_files, cmd_headers, cmd_redact, cmd_tags, cmd_validate
 
 PROG = "epubredactor"
 
@@ -45,6 +46,7 @@ def build_parser() -> argparse.ArgumentParser:
     cmd_files.add_convert_parser(sub)
     cmd_redact.add_redact_parser(sub)
     cmd_validate.add_validate_parser(sub)
+    cmd_headers.add_headers_parser(sub)
     assert tuple(sub.choices) == COMMANDS, "epubcli.COMMANDS must list the subcommands"
     return parser
 

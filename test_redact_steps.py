@@ -636,3 +636,41 @@ def test_clean_authors_step_leaves_a_clean_book_alone(tmp_path, env, trash):
 def test_clean_authors_step_is_in_the_catalogue_and_on_by_default():
     plain = Recipe.default_for(build_catalogue())
     assert plain.enabled["clean_authors"] is True
+
+
+# --- running headers and page numbers (scanned books) -----------------------------------------------------------
+
+
+def test_the_page_header_step_is_off_by_default_and_a_weak_case_goes_to_review(tmp_path, env):
+    from test_page_headers import scanned_book
+
+    assert {s.key: s.default_enabled for s in build_catalogue()}["remove_page_headers"] is False
+    path = scanned_book(tmp_path)  # twelve headers: evidence, but below the high-confidence bar
+    before = open(path, "rb").read()
+    report = run([load(path)], env, only("remove_page_headers"))
+    entry = only_entry(report)
+    assert entry.status.value == "needs review" and open(path, "rb").read() == before
+
+
+def test_a_book_full_of_page_headers_is_cleaned_in_place_and_the_original_is_kept(tmp_path, env, trash):
+    from core.page_headers import find_page_furniture
+    from test_page_headers import scanned_book
+
+    path = scanned_book(tmp_path, chapters=["THE FIRST DAY", "THE RIVER", "THE MINE", "THE FALL"], pages=8)
+    assert find_page_furniture(load(path)).confidence == 0.95
+    report = run([load(path)], env, only("remove_page_headers"))
+    entry = only_entry(report)
+    assert entry.status.value == "changed" and any("rejoined" in a for a in entry.applied)
+    assert not find_page_furniture(load(path)).changed and len(trash.trashed) == 1  # the original went to the bin
+
+
+def test_the_page_header_step_can_leave_the_cut_sentences_alone(tmp_path, env):
+    from core.page_headers import find_page_furniture, paragraph_blocks
+    from test_page_headers import scanned_book
+
+    path = scanned_book(tmp_path, chapters=["THE FIRST DAY", "THE RIVER", "THE MINE", "THE FALL"], pages=8)
+    run([load(path)], env, only("remove_page_headers", options={"remove_page_headers": {"join_sentences": False}}))
+    fresh = load(path)
+    assert not find_page_furniture(fresh).changed  # the headers are gone
+    paragraphs = [b.text for b in paragraph_blocks(fresh.read_archive_file("OEBPS/ch1.xhtml").decode("utf-8"))]
+    assert "And then he said that the rain would" in paragraphs  # but the cut sentence was left cut

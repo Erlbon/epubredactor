@@ -63,7 +63,8 @@ def test_menu_contents_and_order():
     ]
     assert _plain_items(m["Repair"]) == [
         "Validate and Fix", "Rebuild Manifest", "Deduplicate Manifest IDs", "Repair Navigation", "Find Duplicates", "-",
-        "Generate Table of Contents", "Detect Missing Spaces", "Strip HTML from Description", "Clean Up Authors", "-",
+        "Generate Table of Contents", "Detect Missing Spaces", "Remove Running Headers and Page Numbers",
+        "Strip HTML from Description", "Clean Up Authors", "-",
         "Polish Book", "Compress Images", "-", "Set Blank Language to Default",
     ]
     assert _plain_items(m["Send"]) == ["Send to Kobo (USB)", "Send to eReader (Wireless)", "Open in Sigil"]
@@ -110,7 +111,7 @@ OLD_TO_NEW_KEYS = {
     "validate": "validate", "rebuild_manifest": "rebuild_manifest",
     "dedupe_manifest_ids": "dedupe_manifest_ids", "repair_navigation": "repair_navigation",
     "find_duplicates": "find_duplicates",  # new: Repair > Find Duplicates
-    "generate_toc": "generate_toc", "missing_space": "missing_space",
+    "generate_toc": "generate_toc", "missing_space": "missing_space", "page_headers": "page_headers",
     "strip_description_html": "strip_description_html", "clean_authors": "clean_authors", "set_default_language": "set_default_language",
     "send_to_kobo_usb": "send_to_kobo_usb", "send_to_ereader": "send_to_ereader",
     "open_sigil": "open_sigil",  # was context-menu only

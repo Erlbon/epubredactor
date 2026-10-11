@@ -161,6 +161,7 @@ from core.redact_steps import (
 from core.toc_generate import stage_generated_toc_for
 from gui.manifest_rebuild_dialog import ManifestRebuildDialog
 from gui.missing_space_dialog import MissingSpaceDialog
+from gui.page_headers_dialog import PageHeadersDialog
 from gui.nav_repair_dialog import NavRepairDialog
 from gui.toc_generate_dialog import TocGenerateDialog
 from gui.isfdb_dialog import IsfdbDialog
@@ -693,6 +694,12 @@ class MainWindow(QMainWindow):
                 "generate_toc", "Generate &Table of Contents…", self.open_toc_generate_dialog,
             ),
             MenuAction("missing_space", "Detect &Missing Spaces…", self.open_missing_space_dialog),
+            MenuAction(
+                "page_headers", "Remove Running &Headers and Page Numbers…", self.open_page_headers_dialog,
+                tooltip="For scanned books: removes the printed page headers and numbers that ended up in the text "
+                        "and rejoins the sentences a page break cut in two. Only books where the headers prove "
+                        "themselves are listed.",
+            ),
             MenuAction(
                 "strip_description_html", "&Strip HTML from Description…",
                 self.open_strip_description_html_dialog,
@@ -3394,6 +3401,32 @@ class MainWindow(QMainWindow):
         self._refresh_rows_full(affected_books)
         self._refresh_status()
         self._on_selection_changed()  # bulk-edit panel may be showing the field this just changed
+
+    # ------------------------------------------------------------------
+    # Remove Running Headers and Page Numbers
+    # ------------------------------------------------------------------
+
+    def open_page_headers_dialog(self) -> None:
+        target_books = self._selection_or_all_books()
+        if not target_books:
+            QMessageBox.information(self, "No books", "Load some books first (or select the ones to check).")
+            return
+        dialog = PageHeadersDialog(target_books, self)
+        if dialog.exec() != PageHeadersDialog.DialogCode.Accepted:
+            return
+        plans = dialog.accepted_plans()  # book index -> plan
+        if not plans:
+            return
+        from core.page_headers import apply_page_furniture
+
+        # Not on the Undo stack, like the other structural repairs: nothing is written until the books are saved,
+        # and the original then goes to the Recycle Bin.
+        affected_books = [target_books[i] for i in plans]
+        for i, plan in plans.items():
+            apply_page_furniture(target_books[i], plan)
+        self._refresh_rows_full(affected_books)
+        self._refresh_status()
+        self._on_selection_changed()
 
     # ------------------------------------------------------------------
     # Strip HTML from Description

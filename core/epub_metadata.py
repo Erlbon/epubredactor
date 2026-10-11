@@ -1398,6 +1398,12 @@ class EpubBook:
         self._image_replacements[archive_path] = new_bytes
         self.dirty = True
 
+    def stage_content_replacement(self, archive_path: str, new_bytes: bytes) -> None:
+        """Stages `new_bytes` to replace a content document's bytes on the next save() (the running headers
+        removed from a scanned book's text, see core/page_headers.py). Same staging as an image replacement;
+        read_archive_file() returns the staged bytes, so a later step sees the changed text."""
+        self.stage_image_replacement(archive_path, new_bytes)
+
     def stage_generated_toc(self, files: dict[str, tuple[str, bytes]]) -> None:
         """Stages generated TOC documents ({"nav"/"ncx": (archive_path,
         bytes)}; see core/toc_generate.py) to be added to the archive,

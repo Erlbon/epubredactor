@@ -302,7 +302,7 @@ def test_validate_text_output_and_drm(tmp_path, capsys):
 def test_a_command_name_starts_the_command_line_and_a_path_starts_the_window():
     from epubcli import COMMANDS, cli_requested
 
-    assert set(COMMANDS) == {"info", "set", "rename", "move", "convert", "redact", "validate"}
+    assert set(COMMANDS) == {"info", "set", "rename", "move", "convert", "redact", "validate", "headers"}
     assert cli_requested(["epubredactor.exe", "info", "x.epub"]) and cli_requested(["epubredactor.exe", "--version"])
     assert not cli_requested(["epubredactor.exe"]) and not cli_requested(["epubredactor.exe", "D:/Books/a.epub"])
 
@@ -499,3 +499,60 @@ def test_rename_defaults_come_from_the_saved_settings(book, capsys):
     assert document["results"][0]["new_path"].endswith("Dune 004.epub")
     _code, document = run_json(capsys, "rename", book, "-p", "%series% %series_index%", "--zero-pad", "0", "-n")
     assert document["results"][0]["new_path"].endswith("Dune 4.epub")
+
+
+# --- headers: running headers and page numbers from a scan ----------------------------------------------------------
+
+
+def _scanned(tmp_path, **kw):
+    from test_page_headers import scanned_book
+
+    return scanned_book(tmp_path, **kw)
+
+
+def test_headers_reports_a_scanned_book_without_touching_it(tmp_path, capsys):
+    path = _scanned(tmp_path)
+    plain = make_epub(str(tmp_path / "plain.epub"))
+    before = open(path, "rb").read()
+    code, document = run_json(capsys, "headers", path, plain)
+    rows = {os.path.basename(r["path"]): r for r in document["results"]}
+    assert code == 1 and document["found"] == 1 and open(path, "rb").read() == before
+    assert rows["scanned.epub"]["status"] == "found" and rows["scanned.epub"]["headers"] == 12
+    assert rows["scanned.epub"]["removed"] >= 12 and rows["scanned.epub"]["joined"] == 12 and rows["scanned.epub"]["examples"]
+    assert rows["plain.epub"]["status"] == "clean"
+    _code, text, _err = run(capsys, "headers", path)
+    assert "found" in text and "header with page number" in text
+
+
+def test_headers_on_a_clean_book_is_exit_0(tmp_path, capsys):
+    code, document = run_json(capsys, "headers", make_epub(str(tmp_path / "plain.epub")))
+    assert code == 0 and document["found"] == 0
+
+
+def test_headers_fix_cleans_the_book_and_keeps_the_original(tmp_path, capsys):
+    from core.page_headers import find_page_furniture
+
+    path = _scanned(tmp_path)
+    original = open(path, "rb").read()
+    bin_dir = tmp_path / "bin"
+    code, document = run_json(capsys, "headers", path, "--fix", "--trash-dir", str(bin_dir))
+    assert code == 0 and document["results"][0]["status"] == "changed"
+    assert not find_page_furniture(EpubBook(path)).changed
+    assert [open(p, "rb").read() for p in bin_dir.iterdir()] == [original]  # the original, kept
+
+
+def test_headers_fix_dry_run_and_no_join(tmp_path, capsys):
+    from core.page_headers import find_page_furniture
+
+    path = _scanned(tmp_path)
+    before = open(path, "rb").read()
+    code, document = run_json(capsys, "headers", path, "--fix", "-n")
+    assert code == 1 and open(path, "rb").read() == before and document["results"][0]["status"] == "found"
+    run_json(capsys, "headers", path, "--fix", "--no-join", "--trash-dir", str(tmp_path / "bin"))
+    assert not find_page_furniture(EpubBook(path)).changed
+    from core.page_headers import paragraph_blocks
+    import zipfile
+
+    with zipfile.ZipFile(path) as zf:
+        paragraphs = [b.text for b in paragraph_blocks(zf.read("OEBPS/ch1.xhtml").decode("utf-8"))]
+    assert "And then he said that the rain would" in paragraphs  # the cut sentence was left alone

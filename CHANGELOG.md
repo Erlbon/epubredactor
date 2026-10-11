@@ -4,6 +4,12 @@ All notable changes to The ƎPUB Redactor, by version. Trimmed to new
 functionality and real fixes — cosmetic/UX-only adjustments aren't
 listed here.
 
+## 2026-10-11#01 -- Remove running headers and page numbers (scanned books)
+
+- **New: Repair > Remove Running Headers and Page Numbers.** A scan-and-OCR conversion often leaves the printed page furniture in the text: `30 BOOK TITLE` on left pages, `CHAPTER TITLE 33` on right ones, bare page numbers, empty paragraphs, and sentences a page break cut in two (a header lands mid-sentence; a word is hyphenated at the page end). The repair removes them and rejoins the sentences. It wants evidence, not a pattern: a heading that repeats and page numbers that rise through the whole book, the title page kept, a Title Case chapter title never taken for the running header, an OCR-damaged heading still caught when its number fits. A book without that evidence is never touched. The dialog shows each book's counts and examples first; the text is edited paragraph by paragraph so the rest of every document is kept byte for byte. Found in the four Biff Brewster books (about 150 headers each).
+- **New Redact step** `remove_page_headers` (off by default; twenty or more headers apply automatically, fewer goes to Needs review) and **new command** `epubredactor headers PATH... [--fix] [--no-join] [--trash-dir FOLDER] [-n]`: reports what it found, and with `--fix` saves each cleaned book in place with the original in the Recycle Bin.
+- Requires redactor_common 2026-10-10-01.
+
 ## 2026-10-10#01 -- Command line: second review fixes
 
 - `set` reads the saved file back: a value the EPUB cannot hold (a series number without a series, a month or day without a year) is reported as `failed` with the field in `not_stored` instead of "changed"; values are compared the way the book stores them (`A;B` = `A; B`); control characters, non-ASCII digits and line breaks (outside `description`) are refused; a year needs four digits. DRM-protected books can be edited with `set` and `validate --fix`, with a warning.

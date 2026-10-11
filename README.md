@@ -150,6 +150,25 @@ them in one go.
   `Hello.World`), a common sign of bad text extraction or scraped
   metadata. Scoped to Title and Series — see "Notes on Detect Missing
   Spaces" below for why a broader check isn't included.
+- **Remove Running Headers and Page Numbers** (Repair menu) — for a
+  scanned book whose text still carries the printed page furniture:
+  `30 BOOK TITLE` on left pages, `CHAPTER TITLE 33` on right ones, bare
+  page numbers and the empty paragraphs around them, with the sentences a
+  page break cut in two (a paragraph that stops mid-sentence, a header,
+  one that carries on in lower case; a word hyphenated at the page end).
+  The detection wants EVIDENCE, not a pattern match: a heading that
+  repeats, page numbers that rise through the whole book, the title page
+  kept as front matter, a Title Case chapter title never mistaken for the
+  running header in capitals, a heading with an OCR slip ("RINO",
+  "BANDITS1") still caught when its number fits the sequence. A book
+  without that evidence is not listed, so an ordinary book is never
+  touched. The dialog shows each book's counts and examples before you
+  apply; the text is edited paragraph by paragraph, never re-serialised,
+  so the rest of every document is kept byte for byte. Also a Redact step
+  (`remove_page_headers`, off by default: a book with twenty or more
+  headers applies automatically, fewer goes to Needs review) and the
+  `headers` command. Nothing is written until you save; the original then
+  goes to the Recycle Bin.
 - **Rebuild Manifest** — for the "file referenced in manifest is
   missing from archive" validation error. A separate, manually-triggered
   action (not a one-click Validate/Fix Issues fix), since it can affect
@@ -392,6 +411,7 @@ epubredactor convert   PATH...  [--trash-original] [-n]
 epubredactor redact    [PATH...] [--recipe FILE] [--enable STEP] [--disable STEP] [--threshold N]
                                  [--trash-dir FOLDER] [--list-steps]
 epubredactor validate  PATH...  [--fix] [-n]
+epubredactor headers   PATH...  [--fix] [--no-join] [--trash-dir FOLDER] [-n]
 ```
 
 The command line uses the same code as the window, so the results are the same. It reads the same settings file
@@ -545,7 +565,7 @@ is skipped from the command line.
 | `--list-steps` | Show the steps and whether the recipe has each on, then stop (no `PATH` needed). |
 
 Steps: `validate_fix`, `dedupe_manifest_ids`, `rebuild_manifest`, `repair_navigation`, `generate_toc`,
-`strip_description_html`, `language`, `path_tags`, `scan_isbn`, `scan_publisher`, `scan_year`, `scan_series`,
+`remove_page_headers`, `strip_description_html`, `language`, `path_tags`, `scan_isbn`, `scan_publisher`, `scan_year`, `scan_series`,
 `metadata_lookup`, `clean_authors`, `cover`, `rename`, `move_into_folders`. Without `--recipe` the recipe saved in
 the app is used (the defaults if none was saved). The offline databases, the library root and the saved patterns
 come from the app's settings. A book that is DRM-protected is left untouched (`set` and `validate --fix` do edit
@@ -572,6 +592,27 @@ Exit code 1 when a book still has errors or warnings (or could not be read) afte
 its own is reported (`DRM`) but is not a failure; a DRM-protected book that also has warnings or errors is one. With `--fix`
 a DRM-protected book is repaired too, with a warning.
 
+### headers
+
+`epubredactor headers PATH... [--fix] [--no-join] [--trash-dir FOLDER] [-n]`
+
+Finds the running headers and page numbers a scan-and-OCR conversion left in the text of each book (and the sentences a
+page break cut in two), the same detection as Repair > Remove Running Headers and Page Numbers and the Redact step
+`remove_page_headers`. A book is only reported when its headers prove themselves: a heading that repeats and page
+numbers that rise through the whole book. Without `--fix` nothing is written; a book is `found` (with the number of
+headers, lines that would be removed, sentences that would be rejoined and a few examples) or `clean`. With `--fix`
+each changed book is saved in place by the Redact engine, verified, with the original going to the Recycle Bin (or
+`--trash-dir`).
+
+| Option | Meaning |
+| --- | --- |
+| `--fix` | Remove the page furniture and save the book in place. |
+| `--no-join` | Only remove the headers; leave the sentences a page break cut in two as they are. |
+| `--trash-dir FOLDER` | With `--fix`: move originals into this folder (created if needed) instead of the Recycle Bin. |
+| `-n`, `--dry-run` | With `--fix`: only report what would be removed, change nothing. |
+
+Exit code 1 when a book still has page furniture after the command (found but not fixed) or could not be read.
+
 ### JSON output
 
 `--json` prints one document: `{"results": [...], <summary fields>, "warnings": [...], "errors": [...]}`. It is ASCII-only (a non-ASCII character in a path is a `\uXXXX` escape, which any JSON reader decodes). If a command fails or is interrupted after it started, the document is still printed, with what was done so far and an `error` entry, so a script reading `--output FILE` never finds an empty or half-written file.
@@ -585,6 +626,7 @@ a DRM-protected book is repaired too, with a warning.
 | `redact` | `file`, `path`, `status`, `applied`, `needs_review` (step, value, confidence, reason), `failures`, `notes`, `skipped`, `not_saved` | `files`, `failed`, `needs_review`, `cancelled`, `confidence_threshold`, `run_notes` |
 | `redact --list-steps` | `step`, `label`, `enabled` | `confidence_threshold` |
 | `validate` | `path`, `status`, `problem`, `issues` (code, severity, message, fixable), `fixed`, `issues_after`, `message` | `files`, `problems`, `fix`, `dry_run` |
+| `headers` | without `--fix`: `path`, `status` (`found`, `clean`, `failed`), `headers`, `removed`, `joined`, `hyphenated`, `confidence`, `headings`, `examples`, `message`; with `--fix` the same rows as `redact` | `files`, `found`, `failed`, `fix`, `dry_run` (with `--fix` the `redact` summary) |
 
 ### Exit codes
 
@@ -1189,6 +1231,7 @@ core/app_paths.py                       - where this app's persistent files live
 core/crash_log.py                       - global crash logging + faulthandler for native-level crashes
 core/toc_generate.py                    - heading-based table-of-contents generation (Generate Table of Contents)
 core/missing_space.py                   - punctuation-adjacent-to-letter detection (Detect Missing Spaces)
+core/page_headers.py                    - running headers / page numbers left by a scan: detection with evidence, removal, rejoined sentences (Remove Running Headers and Page Numbers)
 core/case_conversion.py                - UPPERCASE/lowercase/Title Case/Sentence case transforms
 core/series_numbering.py                - sequential Series # generator (Number Series)
 core/open_library_lookup.py             - Open Library metadata + cover lookup, network call injectable for testing
@@ -1210,6 +1253,7 @@ gui/ebook_convert_dialog.py       - the Import to EPUB dialog
 gui/polish_book_dialog.py          - the Polish Book dialog
 gui/send_to_kobo_dialog.py          - the Send to Kobo (USB) dialog
 gui/missing_space_dialog.py          - the Detect Missing Spaces dialog
+gui/page_headers_dialog.py           - the Remove Running Headers and Page Numbers dialog
 gui/manifest_rebuild_dialog.py       - the Rebuild Manifest dialog
 gui/toc_generate_dialog.py           - the Generate Table of Contents dialog
 gui/send_to_ereader_dialog.py        - the Send to eReader (Wireless) dialog
@@ -1247,6 +1291,7 @@ test_error_summary.py                    - automated test for the bounded per-bo
 test_app_paths.py                        - automated test for the shared app-data-directory logic
 test_crash_log.py                        - automated test for crash logging (append/trim/hook-chaining)
 test_missing_space.py                    - automated test for Detect Missing Spaces
+test_page_headers.py                     - automated test for the running-header / page-number repair (synthetic scanned books)
 test_case_conversion.py                 - automated test for case conversion transforms
 test_series_numbering.py                 - automated test for the Number Series generator
 test_open_library_lookup.py               - automated test for Open Library metadata + cover lookup (canned responses)

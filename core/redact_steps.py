@@ -87,6 +87,7 @@ from core.google_books_lookup import (
 )
 from core.isbn import best_isbn13, is_valid_isbn
 from core.languages import is_blank_or_unknown_language
+from core.page_headers import apply_page_furniture, find_page_furniture
 from core.open_library_lookup import (
     OpenLibraryLookupError,
     search_open_library,
@@ -564,6 +565,37 @@ class RepairNavigationStep(Step):
         if self.options_for(ctx)["remove_orphans"]:
             changes += [f"removed orphaned file {path}" for path in work.remove_orphaned_files()]
         return StepResult.applied(*changes) if changes else StepResult.nothing()
+
+
+class RemovePageHeadersStep(Step):
+    key = "remove_page_headers"
+    label = "Remove running headers and page numbers"
+    description = (
+        "For a scanned book whose text still carries the printed page furniture (\"30 BOOK TITLE\", \"CHAPTER TITLE "
+        "33\", bare page numbers and the empty paragraphs around them), removes it and puts back together the "
+        "sentences a page break cut in two (Repair > Remove Running Headers and Page Numbers). Only a book where the "
+        "headers PROVE themselves is touched: a heading that repeats and page numbers that rise through the whole "
+        "book. Many headers are high confidence; a handful goes to Needs review. This edits the book's text, so it "
+        "is off by default; the original goes to the Recycle Bin when the book is saved."
+    )
+    default_enabled = False
+    options = (
+        OptionSpec(
+            "join_sentences", "Also rejoin sentences cut by a page break", "bool", True,
+            tooltip="A paragraph that stops mid-sentence, a header, then a paragraph that carries on in lower case "
+                    "become one paragraph; a word hyphenated at the page end is made whole again.",
+        ),
+    )
+
+    def run(self, ctx: EpubCtx) -> StepResult:
+        plan = find_page_furniture(ctx.work, join_sentences=self.options_for(ctx)["join_sentences"])
+        if not plan.changed:
+            return StepResult.nothing()
+        return StepResult.suggestion(plan, plan.confidence, f"{plan.headers} page headers found; {plan.summary()}")
+
+    def apply_suggestion(self, ctx: EpubCtx, result: StepResult) -> str:
+        apply_page_furniture(ctx.work, result.value)
+        return result.value.summary()
 
 
 @dataclass
@@ -1333,6 +1365,7 @@ def build_catalogue(
         DedupeManifestIdsStep(),
         RebuildManifestStep(),
         RepairNavigationStep(),
+        RemovePageHeadersStep(),
         GenerateTocStep(),
         StripDescriptionHtmlStep(),
         LanguageStep(),
