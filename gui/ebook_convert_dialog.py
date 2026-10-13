@@ -1,7 +1,7 @@
 """
 gui/ebook_convert_dialog.py
 
-Import to EPUB: converts other ebook/document formats into EPUB via
+File > Import and Convert (dialog title "Import to EPUB"): converts other ebook/document formats into EPUB via
 Calibre's ebook-convert tool (see core/ebook_convert.py). Converted
 files are returned to the caller (gui/main_window.py), which adds them
 straight into the working list for metadata editing, the same as any
@@ -137,7 +137,7 @@ class EbookConvertDialog(QDialog):
         self.add_paths(paths)
 
     def add_paths(self, paths: list[str]) -> None:
-        """Puts files in the list (once each): from Add Files, or handed over by Add Folder."""
+        """Puts files in the list (once each): from this dialog's Add Files, or handed over by Open Folder."""
         for path in paths:
             if path not in self._source_paths:
                 self._source_paths.append(path)

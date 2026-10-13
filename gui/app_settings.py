@@ -79,7 +79,7 @@ def load_last_pattern(default: str) -> str:
 
 
 # ------------------------------------------------------------------
-# Last-used directory (for Add Files / Add Folder dialogs)
+# Last-used directory (for Open Files / Open Folder dialogs)
 # ------------------------------------------------------------------
 
 def load_last_directory() -> str:
@@ -91,7 +91,7 @@ def load_last_directory() -> str:
 
 
 def load_include_subfolders() -> bool:
-    """File > Include Subfolders: ON unless the user turned it off (how Add Folder always behaved)."""
+    """File > Include Subfolders: ON unless the user turned it off (how Open Folder always behaved)."""
     return _settings().value("include_subfolders", True, type=bool)
 
 

@@ -1,5 +1,11 @@
 # Changelog
 
+## 2026-10-14#02 -- Ctrl+S and F8 aliases gone, "Open" wording, Delete Files (Recycle Bin)
+
+- **Shortcuts**: the old Ctrl+S (Save All) and F8 (Delete Files) aliases are removed, as announced. Save All is Ctrl+Shift+A and Delete Files is Shift+Delete.
+- **Wording**: the file and folder pickers, messages and README now use the menu's own words, Open Files / Open Folder (the pickers were titled "Add EPUB Files" and "Add Folders of EPUBs"; "Load some books first" is now "Open some books first"), and the Calibre converter is called Import and Convert (its dialog keeps the title "Import to EPUB").
+- **Delete Files (Recycle Bin)**: File > Delete Files and the right-click entry now say where the files go, as do the tooltip and the confirmation dialog's title.
+
 ## 2026-10-14#01 -- Check File on the databases no longer freezes the window
 
 - The "Check File" button in the Open Library and ISFDB database dialogs now runs the check off the GUI thread under a progress dialog (redactor_common 2026-10-14-01); before, opening a big database file could freeze the window.

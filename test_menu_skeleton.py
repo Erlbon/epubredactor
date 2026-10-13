@@ -46,7 +46,7 @@ def test_menu_contents_and_order():
         "Rename File", "Undo Last Rename", "Rename / Export / Move", "-",
         "Read Book", "-",
         "Export Settings", "Import Settings", "-",
-        "Remove from List", "Clear List", "Delete Files", "-",
+        "Remove from List", "Clear List", "Delete Files (Recycle Bin)", "-",
         "Exit",
     ]
     assert _plain_items(m["Edit"]) == [
@@ -143,17 +143,17 @@ def _keys(action):
     return [s.toString() for s in action.shortcuts()]
 
 
-def test_save_all_is_save_files_renamed_and_keeps_ctrl_s_as_an_alias():
+def test_save_all_is_save_files_renamed_and_the_ctrl_s_alias_is_gone():
     window = mw.MainWindow()
     registry = get_action_registry(window)
     assert "save" not in registry  # there is no save-selected to offer
     assert labels.plain_label(window.save_act.text()) == "Save All"
-    assert _keys(window.save_act) == ["Ctrl+Shift+A", "Ctrl+S"]
+    assert _keys(window.save_act) == ["Ctrl+Shift+A"]  # Ctrl+S alias dropped 2026-10-14
 
 
-def test_shortcut_fixes_and_their_aliases():
+def test_shortcut_fixes_without_compatibility_aliases():
     registry = get_action_registry(mw.MainWindow())
-    assert _keys(registry["delete_files"]) == ["Shift+Del", "F8"]
+    assert _keys(registry["delete_files"]) == ["Shift+Del"]  # F8 alias dropped 2026-10-14
     assert _keys(registry["about"]) == []  # F1 is Help contents, never About
     assert _keys(registry["refresh_list"]) == ["F5", "Ctrl+R"]
     assert _keys(registry["command_palette"]) == ["Ctrl+K"]
@@ -247,7 +247,7 @@ def test_context_menu():
     assert _names(items) == [
         "-", "Rename File", "-", "Look Up>", "Read Book", "Organize>", "Cover>", "-",
         "Redact", "Validate and Fix", "Open in Sigil", "Send to>", "-",
-        "Remove from List", "Delete Files",
+        "Remove from List", "Delete Files (Recycle Bin)",
     ]
 
     def sub(name):
@@ -280,6 +280,7 @@ def test_command_palette_lists_every_action_and_runs_one():
     palette.show_palette()
     titles = {c.title for c in palette.visible_commands()}
     assert {"Open Files", "Redact", "Validate and Fix", "Open in Sigil", "Scan File Content"} <= titles
+    assert "Delete Files (Recycle Bin)" in titles
     palette.filter_edit.setText("refresh")
     assert [c.title for c in palette.visible_commands()][0] == "Refresh List"
     assert registry["command_palette"].shortcut().toString() == "Ctrl+K"

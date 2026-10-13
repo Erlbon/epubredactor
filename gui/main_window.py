@@ -780,12 +780,15 @@ class MainWindow(QMainWindow):
         )
         build_standard_menu_bar(self, spec)
         actions = get_action_registry(self)
+        # Owner decision 2026-10-14: say where the files go. The shared label
+        # is "&Delete Files…"; the lint only checks the canonical spelling of
+        # an exact match, so this longer label passes it.
+        actions["delete_files"].setText("&Delete Files (Recycle Bin)…")
+        actions["delete_files"].setToolTip("Send the selected books' files to the Recycle Bin (Shift+Delete)")
         add_command_palette(self, actions)  # Ctrl+K, View > Command Palette…
 
-        # Shortcuts that moved keep their old key as a secondary one for one
-        # release (remove these aliases in the release after this one):
-        with_aliases(actions["save_all"], "Ctrl+S")  # was "Save Files"; Save All is Ctrl+Shift+A
-        with_aliases(actions["delete_files"], "F8")  # family key is Shift+Delete
+        # Save All is Ctrl+Shift+A and Delete Files is Shift+Delete (family
+        # keys); the old Ctrl+S / F8 aliases were dropped 2026-10-14.
         # F1 used to open About; F1 is Help contents everywhere else, so it is
         # simply unbound now (no alias: lint forbids F1 on About).
 
@@ -1394,7 +1397,7 @@ class MainWindow(QMainWindow):
     def add_files_dialog(self) -> None:
         start_dir = app_settings.load_last_directory()
         paths, _filter = QFileDialog.getOpenFileNames(
-            self, "Add EPUB Files", start_dir, "EPUB files (*.epub)"
+            self, "Open Files", start_dir, "EPUB files (*.epub)"
         )
         if paths:
             app_settings.save_last_directory(paths[0])
@@ -1411,7 +1414,7 @@ class MainWindow(QMainWindow):
         # file browser rather than the OS's native folder picker.
         start_dir = app_settings.load_last_directory()
         dialog = QFileDialog(
-            self, "Add Folders of EPUBs (Ctrl/Shift-click to select more than one)", start_dir
+            self, "Open Folder (Ctrl/Shift-click to select more than one)", start_dir
         )
         dialog.setFileMode(QFileDialog.FileMode.Directory)
         dialog.setOption(QFileDialog.Option.DontUseNativeDialog, True)
@@ -1425,7 +1428,7 @@ class MainWindow(QMainWindow):
         # Opening a folder replaces the current list rather than adding
         # to it -- choosing a whole new folder to work in usually means
         # starting fresh, not building up a mixed set from several
-        # places (Load Files, or drag-and-drop, still add to whatever's
+        # places (Open Files, or drag-and-drop, still add to whatever's
         # already loaded, since those are more often used specifically
         # to top up an existing working set with a few more files).
         # Same unsaved-changes confirmation as the existing Clear List
@@ -1463,8 +1466,8 @@ class MainWindow(QMainWindow):
         self._offer_import_of_other_formats(others, epub_paths)
 
     def _offer_import_of_other_formats(self, others: list[str], epub_paths: list[str]) -> None:
-        """Add Folder loads only .epub. Say what else Calibre could convert in those folders (and subfolders),
-        and offer to open Import to EPUB with the files already listed."""
+        """Open Folder loads only .epub. Say what else Calibre could convert in those folders (and subfolders),
+        and offer to open Import and Convert with the files already listed."""
         if not others:
             return
         kinds = ", ".join(sorted({os.path.splitext(p)[1].lstrip(".").upper() for p in others}))
@@ -1474,7 +1477,7 @@ class MainWindow(QMainWindow):
         box.setWindowTitle("Other E-book Formats Found")
         box.setText(
             f"{intro} {len(others)} file(s) in other formats ({kinds}) that Calibre can convert to EPUB.\n\n"
-            "Open Import to EPUB with them listed?"
+            "Open File > Import and Convert with them listed?"
         )
         shown = others[:200]
         more = f"\n... and {len(others) - len(shown)} more" if len(others) > len(shown) else ""
@@ -2245,7 +2248,7 @@ class MainWindow(QMainWindow):
         target_books = self._selection_or_all_books()
         if not target_books:
             QMessageBox.information(
-                self, "No books", "Load some books first (or select the ones to search)."
+                self, "No books", "Open some books first (or select the ones to search)."
             )
             return
 
@@ -2679,7 +2682,7 @@ class MainWindow(QMainWindow):
             preview += f"\n...and {len(to_delete) - 10} more"
         reply = QMessageBox.question(
             self,
-            "Delete Files?",
+            "Delete Files (Recycle Bin)?",
             f"Send {len(to_delete)} file(s) to the Recycle Bin?\n\n{preview}\n\n"
             "This removes them from disk (recoverable from the Recycle Bin) "
             "and from this list.",
@@ -2720,7 +2723,7 @@ class MainWindow(QMainWindow):
 
     def _drop_trashed_books(self, trashed: list[EpubBook]) -> None:
         """Removes books whose files were just sent to the Recycle Bin from
-        the list (shared by Delete Files and Find Duplicates)."""
+        the list (shared by Delete Files (Recycle Bin) and Find Duplicates)."""
         trashed_ids = {id(b) for b in trashed}
         self.books = [b for b in self.books if id(b) not in trashed_ids]
         self._rebuild_table()
@@ -2733,7 +2736,7 @@ class MainWindow(QMainWindow):
         nothing is selected or changed unless the user picks an action."""
         books = [b for b in self.books if not b.load_error]
         if len(books) < 2:
-            QMessageBox.information(self, "Find Duplicates", "Load at least two books first.")
+            QMessageBox.information(self, "Find Duplicates", "Open at least two books first.")
             return
         by_path = {os.path.normcase(os.path.abspath(b.path)): b for b in books}
 
@@ -2770,7 +2773,7 @@ class MainWindow(QMainWindow):
 
         Doesn't discover a brand-new subfolder you haven't loaded
         anything from yet (only folders already represented in your
-        current list get scanned, non-recursively) -- use Load Folder
+        current list get scanned, non-recursively) -- use Open Folder
         for that. A file that's disappeared from disk is dropped
         from the list (only files still present are shown).
 
@@ -2995,7 +2998,7 @@ class MainWindow(QMainWindow):
         target_books = self._selection_or_all_books()
         if not target_books:
             QMessageBox.information(
-                self, "No books", "Load some books first (or select the ones to rename)."
+                self, "No books", "Open some books first (or select the ones to rename)."
             )
             return
 
@@ -3192,7 +3195,7 @@ class MainWindow(QMainWindow):
         if targets:
             return targets
         if not self.books:
-            QMessageBox.information(self, "No books loaded", "Load some books first.")
+            QMessageBox.information(self, "No books loaded", "Open some books first.")
             return []
         reply = QMessageBox.question(
             self, "Redact all books?",
@@ -3278,7 +3281,7 @@ class MainWindow(QMainWindow):
         target_books = self._selection_or_all_books()
         if not target_books:
             QMessageBox.information(
-                self, "No books", "Load some books first (or select the ones to look up)."
+                self, "No books", "Open some books first (or select the ones to look up)."
             )
             return
 
@@ -3329,7 +3332,7 @@ class MainWindow(QMainWindow):
         target_books = self._selection_or_all_books()
         if not target_books:
             QMessageBox.information(
-                self, "No books", "Load some books first (or select the ones to validate)."
+                self, "No books", "Open some books first (or select the ones to validate)."
             )
             return
         self._show_validation_dialog(target_books)
@@ -3352,7 +3355,7 @@ class MainWindow(QMainWindow):
         target_books = self._selection_or_all_books()
         if not target_books:
             QMessageBox.information(
-                self, "No books", "Load some books first (or select the ones to parse)."
+                self, "No books", "Open some books first (or select the ones to parse)."
             )
             return
 
@@ -3388,7 +3391,7 @@ class MainWindow(QMainWindow):
         target_books = self._selection_or_all_books()
         if not target_books:
             QMessageBox.information(
-                self, "No books", "Load some books first (or select the ones to scan)."
+                self, "No books", "Open some books first (or select the ones to scan)."
             )
             return
 
@@ -3419,7 +3422,7 @@ class MainWindow(QMainWindow):
         target_books = self._selection_or_all_books()
         if not target_books:
             QMessageBox.information(
-                self, "No books", "Load some books first (or select the ones to suggest genres for)."
+                self, "No books", "Open some books first (or select the ones to suggest genres for)."
             )
             return
 
@@ -3457,7 +3460,7 @@ class MainWindow(QMainWindow):
         target_books = self._selection_or_all_books()
         if not target_books:
             QMessageBox.information(
-                self, "No books", "Load some books first (or select the ones to look up)."
+                self, "No books", "Open some books first (or select the ones to look up)."
             )
             return
 
@@ -3498,7 +3501,7 @@ class MainWindow(QMainWindow):
         target_books = self._selection_or_all_books()
         if not target_books:
             QMessageBox.information(
-                self, "No books", "Load some books first (or select the ones to convert)."
+                self, "No books", "Open some books first (or select the ones to convert)."
             )
             return
 
@@ -3531,7 +3534,7 @@ class MainWindow(QMainWindow):
     def open_page_headers_dialog(self) -> None:
         target_books = self._selection_or_all_books()
         if not target_books:
-            QMessageBox.information(self, "No books", "Load some books first (or select the ones to check).")
+            QMessageBox.information(self, "No books", "Open some books first (or select the ones to check).")
             return
         dialog = PageHeadersDialog(target_books, self)
         if dialog.exec() != PageHeadersDialog.DialogCode.Accepted:
@@ -3558,7 +3561,7 @@ class MainWindow(QMainWindow):
         target_books = self._selection_or_all_books()
         if not target_books:
             QMessageBox.information(
-                self, "No books", "Load some books first (or select the ones to check)."
+                self, "No books", "Open some books first (or select the ones to check)."
             )
             return
 
@@ -3586,7 +3589,7 @@ class MainWindow(QMainWindow):
         target_books = self._selection_or_all_books()
         if not target_books:
             QMessageBox.information(
-                self, "No books", "Load some books first (or select the ones to convert)."
+                self, "No books", "Open some books first (or select the ones to convert)."
             )
             return
 
@@ -3615,7 +3618,7 @@ class MainWindow(QMainWindow):
         target_books = self._selection_or_all_books()
         if not target_books:
             QMessageBox.information(
-                self, "No books", "Load some books first (or select the ones to clean up)."
+                self, "No books", "Open some books first (or select the ones to clean up)."
             )
             return
 
@@ -3643,7 +3646,7 @@ class MainWindow(QMainWindow):
         target_books = self._selection_or_all_books()
         if not target_books:
             QMessageBox.information(
-                self, "No books", "Load some books first (or select the ones to check)."
+                self, "No books", "Open some books first (or select the ones to check)."
             )
             return
 
@@ -3683,7 +3686,7 @@ class MainWindow(QMainWindow):
         target_books = self._selection_or_all_books()
         if not target_books:
             QMessageBox.information(
-                self, "No books", "Load some books first (or select the ones to check)."
+                self, "No books", "Open some books first (or select the ones to check)."
             )
             return
 
@@ -3724,7 +3727,7 @@ class MainWindow(QMainWindow):
         target_books = self._selection_or_all_books()
         if not target_books:
             QMessageBox.information(
-                self, "No books", "Load some books first (or select the ones to compress)."
+                self, "No books", "Open some books first (or select the ones to compress)."
             )
             return
 
@@ -3792,7 +3795,7 @@ class MainWindow(QMainWindow):
         target_books = self._selection_or_all_books()
         if not target_books:
             QMessageBox.information(
-                self, "No books", "Load some books first (or select the ones to check)."
+                self, "No books", "Open some books first (or select the ones to check)."
             )
             return
 
@@ -3838,7 +3841,7 @@ class MainWindow(QMainWindow):
         target_books = self._selection_or_all_books()
         if not target_books:
             QMessageBox.information(
-                self, "No books", "Load some books first (or select the ones to check)."
+                self, "No books", "Open some books first (or select the ones to check)."
             )
             return
 
@@ -3889,7 +3892,7 @@ class MainWindow(QMainWindow):
         target_books = self._selection_or_all_books()
         if not target_books:
             QMessageBox.information(
-                self, "No books", "Load some books first (or select the ones to scan)."
+                self, "No books", "Open some books first (or select the ones to scan)."
             )
             return
 
@@ -3958,7 +3961,7 @@ class MainWindow(QMainWindow):
         target_books = self._selection_or_all_books()
         if not target_books:
             QMessageBox.information(
-                self, "No books", "Load some books first (or select the ones to set)."
+                self, "No books", "Open some books first (or select the ones to set)."
             )
             return
 
@@ -4034,7 +4037,7 @@ class MainWindow(QMainWindow):
         target_books = self._selection_or_all_books()
         if not target_books:
             QMessageBox.information(
-                self, "No books", "Load some books first (or select the ones to polish)."
+                self, "No books", "Open some books first (or select the ones to polish)."
             )
             return
 
@@ -4081,7 +4084,7 @@ class MainWindow(QMainWindow):
         target_books = self._selection_or_all_books()
         if not target_books:
             QMessageBox.information(
-                self, "No books", "Load some books first (or select the ones to send)."
+                self, "No books", "Open some books first (or select the ones to send)."
             )
             return
         dialog = SendToKoboDialog(target_books, self)
@@ -4091,7 +4094,7 @@ class MainWindow(QMainWindow):
         target_books = self._selection_or_all_books()
         if not target_books:
             QMessageBox.information(
-                self, "No books", "Load some books first (or select the ones to send)."
+                self, "No books", "Open some books first (or select the ones to send)."
             )
             return
         dialog = SendToEreaderDialog(target_books, self)
@@ -4136,7 +4139,7 @@ class MainWindow(QMainWindow):
         target_books = self._selection_or_all_books()
         if not target_books:
             QMessageBox.information(
-                self, "No books", "Load some books first (or select the ones to look up)."
+                self, "No books", "Open some books first (or select the ones to look up)."
             )
             return
 
@@ -4175,7 +4178,7 @@ class MainWindow(QMainWindow):
         target_books = self._selection_or_all_books()
         if not target_books:
             QMessageBox.information(
-                self, "No books", "Load some books first (or select the ones to look up)."
+                self, "No books", "Open some books first (or select the ones to look up)."
             )
             return
         self._apply_lookup_dialog(IsfdbDialog(target_books, self, local_path=path), target_books, "ISFDB")
@@ -4231,7 +4234,7 @@ class MainWindow(QMainWindow):
         if not target_books:
             QMessageBox.information(
                 self, "No books",
-                "Load some books first (or select the ones to generate covers for).",
+                "Open some books first (or select the ones to generate covers for).",
             )
             return
 
@@ -4250,7 +4253,7 @@ class MainWindow(QMainWindow):
         self._refresh_affected_rows(affected_books)
 
     # ------------------------------------------------------------------
-    # Import to EPUB
+    # File > Import and Convert (the "Import to EPUB" dialog)
     # ------------------------------------------------------------------
 
     def open_ebook_convert_dialog(self) -> None:

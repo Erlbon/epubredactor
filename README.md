@@ -43,7 +43,7 @@ them in one go.
   the Cover Image section. A draggable divider between it and Bulk Edit
   Tags lets you give it much more room — Bulk Edit Tags scrolls rather
   than getting crushed if you drag it down small.
-- **Import to EPUB** — converts other ebook/document formats (MOBI,
+- **Import and Convert** (File menu) — converts other ebook/document formats (MOBI,
   AZW/AZW3, DOCX, RTF, TXT, FB2, and more) to EPUB via your Calibre
   installation's `ebook-convert` tool, then adds the results straight
   into your working list. PDF is deliberately not offered by default —
@@ -197,7 +197,7 @@ them in one go.
   selected book has unsaved changes here first, since Sigil edits the
   file on disk directly rather than through this app's own staged-edit
   model.
-- **Delete Files** — sends files to the Recycle Bin (recoverable, not a
+- **Delete Files (Recycle Bin)** (File menu, Shift+Delete) — sends files to the Recycle Bin (recoverable, not a
   permanent delete), with a confirmation prompt listing what's about to
   go; the status bar confirms how many went.
 - **Refresh List** — re-scans the folders your loaded books live in for
@@ -987,7 +987,7 @@ with the same key in every app:
 - **File** — Open Files…, Open Folder…, Include Subfolders, Import and
   Convert… | Save As…, Save All | Rename File…, Undo Last Rename,
   Rename / Export / Move… | Read Book… | Export Settings…, Import
-  Settings… | Remove from List, Clear List, Delete Files… | Exit
+  Settings… | Remove from List, Clear List, Delete Files (Recycle Bin)… | Exit
 - **Edit** — Undo, Redo | Apply to N Selected | Redact, Edit Redact
   Recipe… | Search and Replace…, Change Case…, Filter List
 - **View** — Show Metadata Panel | Zoom In, Zoom Out, Reset Zoom | Text
@@ -1014,7 +1014,7 @@ The right-click menu on the table repeats the per-book commands (Rename
 File, Look Up, Read Book, Organize > Rename / Export / Move and Number
 Series — the same dialog, with its preview, as the Metadata menu's —
 Cover, Redact, Validate and Fix, Open in Sigil, Send to, Remove from
-List, Delete Files).
+List, Delete Files (Recycle Bin)).
 
 Keyboard shortcuts:
 
@@ -1023,11 +1023,11 @@ Keyboard shortcuts:
 | File > Open Files | Ctrl+O |
 | File > Open Folder | Ctrl+Shift+O |
 | File > Save As | Ctrl+Shift+S |
-| File > Save All | Ctrl+Shift+A (Ctrl+S still works for one more release) |
+| File > Save All | Ctrl+Shift+A |
 | File > Rename File | F2 |
 | File > Rename / Export / Move | Ctrl+E |
 | File > Remove from List | Delete |
-| File > Delete Files (to the Recycle Bin) | Shift+Delete (F8 still works for one more release) |
+| File > Delete Files (Recycle Bin) | Shift+Delete |
 | Edit > Undo / Redo | Ctrl+Z / Ctrl+Y |
 | Edit > Apply to N Selected | Ctrl+Enter |
 | Edit > Redact | Ctrl+Shift+E |
@@ -1113,7 +1113,7 @@ the file on disk directly, so whichever of the two you save last wins.
 ## Notes on Polish Book
 
 - Also requires Calibre (shares the same install-folder setting as the
-  metadata lookup and Import to EPUB — set it once, all three use it).
+  metadata lookup and Import and Convert — set it once, all three use it).
 - Unlike everything else in this app, polishing isn't a staged
   in-memory edit — Calibre's `ebook-polish` operates on the actual file
   on disk. That means a book with unsaved changes can't be polished
@@ -1141,7 +1141,7 @@ the file on disk directly, so whichever of the two you save last wins.
   filesystem for supported formats on its next library refresh, so
   there's no specific folder they need to land in.
 - A filename collision on the device is auto-numbered (`Book (2).epub`),
-  same collision-safe logic as Rename/Export and Import to EPUB — it
+  same collision-safe logic as Rename/Export and Import and Convert — it
   will never silently overwrite something already on the device.
 
 ## Notes on Send to eReader (Wireless)
@@ -1279,7 +1279,7 @@ core/google_books_lookup.py           - Google Books metadata + cover lookup, ne
 core/calibre_tools.py               - shared Calibre install-folder/tool-path discovery, console-window suppression
 core/sigil_tools.py                     - Sigil detection + launch (Open with Sigil)
 core/calibre_lookup.py               - Calibre fetch-ebook-metadata integration, subprocess call injectable for testing
-core/ebook_convert.py                 - Calibre ebook-convert integration (Import to EPUB)
+core/ebook_convert.py                 - Calibre ebook-convert integration (Import and Convert)
 core/ebook_polish.py                   - Calibre ebook-polish integration (Polish Book)
 core/kobo_usb.py                        - USB Kobo detection + file copy (Send to Kobo)
 core/save_errors.py                     - recognizes+explains common save failures (esp. Windows path-length limit)
@@ -1306,7 +1306,7 @@ gui/content_scan_dialog.py       - the Scan Content for Metadata dialog
 gui/validation_dialog.py          - the Validate/Fix Issues dialog
 gui/google_books_dialog.py       - the Import Metadata from Google Books dialog
 gui/calibre_lookup_dialog.py     - the Calibre metadata lookup/review dialog
-gui/ebook_convert_dialog.py       - the Import to EPUB dialog
+gui/ebook_convert_dialog.py       - the Import and Convert dialog (titled "Import to EPUB")
 gui/polish_book_dialog.py          - the Polish Book dialog
 gui/send_to_kobo_dialog.py          - the Send to Kobo (USB) dialog
 gui/missing_space_dialog.py          - the Detect Missing Spaces dialog
@@ -1340,7 +1340,7 @@ test_collection.py                  - automated test for the Collection field
 test_calibre_lookup.py               - automated test for the Calibre metadata lookup (fake subprocess calls)
 test_calibre_tools.py                 - automated test for Calibre install-folder discovery
 test_sigil_tools.py                     - automated test for Sigil detection + launch
-test_ebook_convert.py                  - automated test for Import to EPUB (fake subprocess calls)
+test_ebook_convert.py                  - automated test for Import and Convert (fake subprocess calls)
 test_ebook_polish.py                    - automated test for Polish Book (fake subprocess calls)
 test_kobo_usb.py                         - automated test for Send to Kobo (USB)
 test_save_errors.py                      - automated test for save-error diagnosis (path-length detection)

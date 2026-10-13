@@ -85,7 +85,7 @@ def send_to_kobo(kobo_root: str, source_path: str, copy_fn=shutil.copy2) -> str:
     entire filesystem for supported formats, so there's no required
     destination folder -- files go straight in the root, auto-numbered
     on a filename collision (same collision-safe logic as Rename/Export
-    and Import to EPUB). Returns the path actually written to. Raises
+    and Import and Convert). Returns the path actually written to. Raises
     KoboSendError if the source file doesn't exist or the copy fails."""
     if not source_path or not os.path.isfile(source_path):
         raise KoboSendError(f"Source file not found: {source_path}")

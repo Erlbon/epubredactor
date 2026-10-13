@@ -1,5 +1,5 @@
-"""Add Folder tells about e-books in other formats that Calibre can convert (core.ebook_convert.find_convertible_in_folder)
-and hands them to the Import to EPUB dialog."""
+"""Open Folder tells about e-books in other formats that Calibre can convert (core.ebook_convert.find_convertible_in_folder)
+and hands them to the Import and Convert dialog (titled "Import to EPUB")."""
 
 import os
 import sys
