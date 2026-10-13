@@ -1,5 +1,12 @@
 # Changelog
 
+## 2026-10-13#02 -- Shared Include Subfolders item; no more prompt; folder scans show progress
+
+- **File > Include Subfolders** is now redactor_common's shared menu item (on by default, remembered) and replaces the "Include EPUB files in subfolders too?" question that Add Folder asked every time. It also decides whether a dropped folder and Refresh List look in subfolders.
+- Add Folder looks first and clears the list afterwards: a folder with nothing to open no longer empties the list, and says so ("No EPUB files found in that folder or its subfolders").
+- The folder walks (Add Folder, drops, the "other formats" check, Refresh List) run in the background under a progress dialog, so a big or networked library no longer looks frozen.
+- Requires redactor_common 2026-10-13-02.
+
 ## 2026-10-13#01 -- Add Folder lists e-books in other formats
 
 - After Add Folder (and its subfolders, if you chose to include them), the app now says when the folders also hold e-books Calibre can convert to EPUB (MOBI, AZW/AZW3, KFX, FB2, LIT, LRF, PDB, PML, SNB...), with the full list under "Show Details", and offers to open **Import to EPUB** with those files already listed. Before, such files were skipped without a word. Text, Word/ODT/RTF, saved web pages and comic archives are not announced (they sit in book folders for other reasons); they can still be added by hand in Import to EPUB.

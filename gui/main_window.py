@@ -77,7 +77,8 @@ from redactor_common.core.os_utils import reveal_in_file_manager
 from redactor_common.core.save_errors import describe_save_error
 from redactor_common.core.undo import UndoManager
 from redactor_common.gui.action_factory import make_action
-from redactor_common.gui.progress import run_with_progress
+from redactor_common.gui.folder_options import attach_include_subfolders, include_subfolders_slot
+from redactor_common.gui.progress import run_busy, run_with_progress
 from redactor_common.gui.settings_bundle_dialogs import export_settings, import_settings
 from redactor_common.gui.sortable_table import NumericTableWidgetItem, suspend_sorting
 
@@ -572,6 +573,7 @@ class MainWindow(QMainWindow):
             standard_file_items(
                 open_files=self.add_files_dialog,
                 open_folder=self.add_folder_dialog,
+                include_subfolders=include_subfolders_slot(),
                 import_and_convert=self.open_ebook_convert_dialog,
                 # "Save Files" has always saved EVERY changed book (there is
                 # no save-selected), so it is Save All here, not Save. The
@@ -785,6 +787,9 @@ class MainWindow(QMainWindow):
         # references these as self.<x>_act attributes directly.
         self.load_files_act = actions["open_files"]
         self.load_folder_act = actions["open_folder"]
+        attach_include_subfolders(
+            actions["include_subfolders"], load=app_settings.load_include_subfolders, save=app_settings.save_include_subfolders,
+        )
         self.save_act = actions["save_all"]  # saves every changed book, see above
         self.save_as_act = actions["save_as"]
         self.rename_file_act = actions["rename_file"]
@@ -1332,13 +1337,18 @@ class MainWindow(QMainWindow):
 
     def dropEvent(self, event) -> None:
         paths = [url.toLocalFile() for url in event.mimeData().urls()]
-        epub_paths: list[str] = []
-        for p in paths:
-            if os.path.isdir(p):
-                epub_paths.extend(self._find_epubs_in_folder(p, recursive=True))
-            elif p.lower().endswith(".epub"):
-                epub_paths.append(p)
-        self._load_paths(epub_paths)
+        recursive = app_settings.load_include_subfolders()
+
+        def scan() -> list[str]:
+            found: list[str] = []
+            for p in paths:
+                if os.path.isdir(p):
+                    found.extend(self._find_epubs_in_folder(p, recursive=recursive))
+                elif p.lower().endswith(".epub"):
+                    found.append(p)
+            return found
+
+        self._load_paths(run_busy(self, "Looking for EPUB files...", scan))
 
     # ------------------------------------------------------------------
     # Loading files
@@ -1384,7 +1394,27 @@ class MainWindow(QMainWindow):
         # Same unsaved-changes confirmation as the existing Clear List
         # action, since this is functionally that action immediately
         # followed by loading the new folder(s).
-        if self.books:
+        app_settings.save_last_directory(folders[-1])
+        recursive = app_settings.load_include_subfolders()
+
+        def scan() -> tuple[list[str], list[str]]:
+            epubs: list[str] = []
+            others: list[str] = []
+            for folder in folders:
+                epubs.extend(self._find_epubs_in_folder(folder, recursive=recursive))
+                others.extend(find_convertible_in_folder(folder, recursive=recursive))
+            return epubs, others
+
+        # Look first, clear after: a folder with nothing to open must not wipe the current list.
+        epub_paths, others = run_busy(self, "Looking for e-books...", scan)
+        if not epub_paths and not others:
+            QMessageBox.information(
+                self, "No EPUB Files",
+                "No EPUB files found in that folder" + (" or its subfolders." if recursive else ".")
+                + ("" if recursive else " (File > Include Subfolders is off.)"),
+            )
+            return
+        if self.books and epub_paths:
             if self._count_dirty() and not self._confirm_discard(
                 "clear the current list and open a new folder"
             ):
@@ -1392,27 +1422,12 @@ class MainWindow(QMainWindow):
             self.books = []
             self._rebuild_table()
             self._refresh_status()
-        app_settings.save_last_directory(folders[-1])
-        reply = QMessageBox.question(
-            self,
-            "Include Subfolders?",
-            "Include EPUB files in subfolders too?",
-            QMessageBox.StandardButton.Yes | QMessageBox.StandardButton.No,
-            QMessageBox.StandardButton.Yes,
-        )
-        recursive = reply == QMessageBox.StandardButton.Yes
-        epub_paths: list[str] = []
-        for folder in folders:
-            epub_paths.extend(self._find_epubs_in_folder(folder, recursive=recursive))
         self._load_paths(epub_paths)
-        self._offer_import_of_other_formats(folders, recursive, epub_paths)
+        self._offer_import_of_other_formats(others, epub_paths)
 
-    def _offer_import_of_other_formats(self, folders: list[str], recursive: bool, epub_paths: list[str]) -> None:
+    def _offer_import_of_other_formats(self, others: list[str], epub_paths: list[str]) -> None:
         """Add Folder loads only .epub. Say what else Calibre could convert in those folders (and subfolders),
         and offer to open Import to EPUB with the files already listed."""
-        others: list[str] = []
-        for folder in folders:
-            others.extend(find_convertible_in_folder(folder, recursive=recursive))
         if not others:
             return
         kinds = ", ".join(sorted({os.path.splitext(p)[1].lstrip(".").upper() for p in others}))
@@ -2697,9 +2712,11 @@ class MainWindow(QMainWindow):
             return
 
         existing_paths = [os.path.normpath(b.path) for b in self.books]
+        recursive = app_settings.load_include_subfolders()
         new_paths = [
-            os.path.normpath(p) for p in find_new_files_in_loaded_folders(
-                existing_paths, lambda folder: self._find_epubs_in_folder(folder, recursive=False),
+            os.path.normpath(p) for p in run_busy(
+                self, "Looking for new files...", find_new_files_in_loaded_folders,
+                existing_paths, lambda folder: self._find_epubs_in_folder(folder, recursive=recursive),
             )
         ]
         present_paths = [p for p in existing_paths if os.path.exists(p)]

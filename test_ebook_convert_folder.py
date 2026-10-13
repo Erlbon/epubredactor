@@ -36,3 +36,16 @@ def test_import_dialog_takes_the_listed_files_once(tmp_path):
     dialog = EbookConvertDialog(initial_paths=files)
     dialog.add_paths(files + [str(tmp_path / "d.fb2")])
     assert [dialog.file_list.item(i).text() for i in range(dialog.file_list.count())] == ["b.mobi", "c.azw3", "d.fb2"]
+
+
+def test_include_subfolders_setting_defaults_on_and_is_remembered(monkeypatch, tmp_path):
+    from PyQt6.QtCore import QSettings
+    from gui import app_settings
+
+    store = QSettings(str(tmp_path / "s.ini"), QSettings.Format.IniFormat)
+    monkeypatch.setattr(app_settings, "_settings", lambda: store)
+    assert app_settings.load_include_subfolders() is True
+    app_settings.save_include_subfolders(False)
+    assert app_settings.load_include_subfolders() is False
+    app_settings.save_include_subfolders(True)
+    assert app_settings.load_include_subfolders() is True

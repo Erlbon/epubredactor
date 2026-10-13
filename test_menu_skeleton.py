@@ -41,7 +41,7 @@ def test_headings_in_skeleton_order():
 def test_menu_contents_and_order():
     m = _menus(mw.MainWindow())
     assert _plain_items(m["File"]) == [
-        "Open Files", "Open Folder", "Import and Convert", "-",
+        "Open Files", "Open Folder", "Include Subfolders", "Import and Convert", "-",
         "Save As", "Save All", "-",
         "Rename File", "Undo Last Rename", "Rename / Export / Move", "-",
         "Read Book", "-",

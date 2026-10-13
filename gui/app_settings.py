@@ -90,6 +90,15 @@ def load_last_directory() -> str:
     return path if path and os.path.isdir(path) else ""
 
 
+def load_include_subfolders() -> bool:
+    """File > Include Subfolders: ON unless the user turned it off (how Add Folder always behaved)."""
+    return _settings().value("include_subfolders", True, type=bool)
+
+
+def save_include_subfolders(on: bool) -> None:
+    _settings().setValue("include_subfolders", bool(on))
+
+
 def save_last_directory(path: str) -> None:
     """Remember the directory containing `path` (a file or folder that
     was just added) as the starting point for the next file dialog."""
