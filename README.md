@@ -36,7 +36,7 @@ them in one go.
   them to (Tools > Columns) — no separate field-management
   screen needed. **Apply** lives in the toolbar and Edit menu now,
   always reachable regardless of panel size or how many fields are
-  ticked on. Saving (either Save Files or Save As Copy) applies any
+  ticked on. Saving (either Save All or Save As) applies any
   pending panel changes first, so you never lose an edit you typed but
   forgot to explicitly Apply.
 - Cover image preview grows or shrinks to fill the available space in

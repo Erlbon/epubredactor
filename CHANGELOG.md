@@ -1,5 +1,12 @@
 # Changelog
 
+## 2026-10-14#03 -- Three slow spots on a huge selection
+
+- **Undo / Redo:** capturing or restoring the state of thousands of selected books now shows a progress dialog once it passes 300 books (a small undo never flashes one); before, the window froze while every book was copied.
+- **Right-click on a huge selection:** the menu no longer fingerprints every selected cover just to decide whether to show Flag or Unflag Cover as Junk. Above 200 selected books it offers both (each skips the books it does not apply to), and Flag / Unflag read the covers of a big selection under a progress dialog.
+- **Row heights:** re-fitting row heights after a column or wrap change on a table of 1,500 rows or more runs row by row under a progress dialog instead of one long freeze.
+- README: the Save wording in the panel text now says Save All / Save As.
+
 ## 2026-10-14#02 -- Ctrl+S and F8 aliases gone, "Open" wording, Delete Files (Recycle Bin)
 
 - **Shortcuts**: the old Ctrl+S (Save All) and F8 (Delete Files) aliases are removed, as announced. Save All is Ctrl+Shift+A and Delete Files is Shift+Delete.

@@ -41,6 +41,7 @@ from PyQt6.QtCore import QItemSelectionModel, QSize, Qt, QTimer
 from PyQt6.QtGui import QActionGroup, QColor, QGuiApplication, QIcon
 from PyQt6.QtWidgets import (
     QAbstractItemView,
+    QApplication,
     QFileDialog,
     QHeaderView,
     QInputDialog,
@@ -78,7 +79,7 @@ from redactor_common.core.save_errors import describe_save_error
 from redactor_common.core.undo import UndoManager
 from redactor_common.gui.action_factory import make_action
 from redactor_common.gui.folder_options import attach_include_subfolders, include_subfolders_slot
-from redactor_common.gui.progress import run_busy, run_with_progress
+from redactor_common.gui.progress import ProgressReporter, run_busy, run_with_progress
 from redactor_common.gui.settings_bundle_dialogs import export_settings, import_settings
 from redactor_common.gui.sortable_table import NumericTableWidgetItem, suspend_sorting
 
@@ -215,6 +216,9 @@ STATUS_CELL_COLORS = {"OK": None, "ISSUES": DIRTY_COLOR, "DRM": DRM_COLOR, "INVA
 JUNK_COVER_COLOR = QColor("#f3d9fa")  # soft magenta -- distinct from the shared status colors
 COVER_ICON_SIZE = QSize(24, 32)
 UNDO_MAX_ENTRIES = 5
+UNDO_PROGRESS_AFTER = 300  # an undo/redo snapshot or restore over this many books shows a progress dialog
+CONTEXT_COVER_CHECK_MAX = 200  # above this many selected books the right-click menu does not fingerprint covers
+ROW_REFLOW_PROGRESS_THRESHOLD = 1500  # re-fitting row heights over this many rows runs row by row under a dialog
 LOAD_PROGRESS_THRESHOLD = 3  # don't bother with a progress dialog for a tiny batch
 # Populating each row is much cheaper than loading a whole book from
 # disk, so this threshold is deliberately much higher than the one
@@ -277,6 +281,41 @@ def resource_path(*parts: str) -> str:
     dir referenced by sys._MEIPASS at runtime)."""
     base = getattr(sys, "_MEIPASS", os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
     return os.path.join(base, *parts)
+
+
+class _LazyBusy:
+    """A progress dialog for a loop the caller cannot hand over (UndoManager.push/undo/redo run the per-book loop
+    inside redactor_common): the wrapped callables count their calls, and only once `after` books have been
+    processed an indeterminate dialog appears and the event loop is pumped every few books, so a small undo
+    never flashes a dialog and a huge one never looks frozen."""
+
+    def __init__(self, parent, label: str, after: int = UNDO_PROGRESS_AFTER, pump_every: int = 25):
+        self._parent, self._label, self._after, self._pump_every = parent, label, after, pump_every
+        self._count = 0
+        self._reporter = None
+
+    def wrap(self, fn):
+        def counted(*args):
+            result = fn(*args)
+            self._tick()
+            return result
+        return counted
+
+    def _tick(self) -> None:
+        self._count += 1
+        if self._reporter is None and self._count == self._after:
+            self._reporter = ProgressReporter(self._parent, 0, self._label, threshold=0, cancellable=False)
+            dialog = self._reporter.dialog
+            if dialog is not None:
+                dialog.setRange(0, 0)  # busy indicator
+            QApplication.processEvents()
+        elif self._reporter is not None and self._count % self._pump_every == 0:
+            QApplication.processEvents()
+
+    def close(self) -> None:
+        if self._reporter is not None:
+            self._reporter.close()
+            self._reporter = None
 
 
 class BookTableWidget(QTableWidget):
@@ -1002,12 +1041,20 @@ class MainWindow(QMainWindow):
         cover_items: MenuItems = [
             MenuAction("find_better_covers", "Find Better Covers…", self.open_find_better_covers_dialog),
         ]
-        books_with_covers = [b for b in books if b.cover_hash is not None]
-        if any(not self._book_is_junk_cover(b) for b in books_with_covers):
+        if len(books) > CONTEXT_COVER_CHECK_MAX:
+            # Deciding which of Flag / Unflag applies means fingerprinting every selected cover (unzip + decode
+            # each one): thousands of those would freeze the menu for minutes. Offer both; each action skips
+            # the books it does not apply to.
+            show_flag, show_unflag = True, True
+        else:
+            books_with_covers = [b for b in books if b.cover_hash is not None]
+            show_flag = any(not self._book_is_junk_cover(b) for b in books_with_covers)
+            show_unflag = any(self._book_is_junk_cover(b) for b in books_with_covers)
+        if show_flag:
             cover_items.append(MenuAction(
                 "flag_junk_cover", "Flag Cover as Junk", self.flag_selected_covers_as_junk,
             ))
-        if any(self._book_is_junk_cover(b) for b in books_with_covers):
+        if show_unflag:
             cover_items.append(MenuAction(
                 "unflag_junk_cover", "Unflag Cover as Junk", self.unflag_selected_covers_as_junk,
             ))
@@ -1336,7 +1383,11 @@ class MainWindow(QMainWindow):
     def _push_undo(self, label: str, books: list[EpubBook]) -> None:
         """Call BEFORE mutating `books`."""
         if books:
-            self.undo_manager.push(label, books, self._snapshot_book)
+            busy = _LazyBusy(self, "Saving undo information...")
+            try:
+                self.undo_manager.push(label, books, busy.wrap(self._snapshot_book))
+            finally:
+                busy.close()
             self.undo_act.setEnabled(True)
             self.redo_act.setEnabled(False)  # push() clears any pending redo
 
@@ -1344,7 +1395,11 @@ class MainWindow(QMainWindow):
         # snapshot_fn passed too (not just restore_fn) so the state
         # being overwritten is captured onto the redo stack first --
         # see redactor_common.core.undo's own docstring.
-        affected = self.undo_manager.undo(self._restore_book, self._snapshot_book)
+        busy = _LazyBusy(self, "Undoing...")
+        try:
+            affected = self.undo_manager.undo(busy.wrap(self._restore_book), busy.wrap(self._snapshot_book))
+        finally:
+            busy.close()
         if not affected:
             return
         self._refresh_rows_full(affected)
@@ -1354,7 +1409,11 @@ class MainWindow(QMainWindow):
         self.redo_act.setEnabled(self.undo_manager.can_redo())
 
     def on_redo(self) -> None:
-        affected = self.undo_manager.redo(self._restore_book, self._snapshot_book)
+        busy = _LazyBusy(self, "Redoing...")
+        try:
+            affected = self.undo_manager.redo(busy.wrap(self._restore_book), busy.wrap(self._snapshot_book))
+        finally:
+            busy.close()
         if not affected:
             return
         self._refresh_rows_full(affected)
@@ -1705,8 +1764,19 @@ class MainWindow(QMainWindow):
         fewer) lines than the row is currently tall enough to show
         cleanly, e.g. after a column was resized. Cheap to call whenever
         row heights might be stale; Qt only actually redraws what's
-        visible."""
-        self.table.resizeRowsToContents()
+        visible.
+
+        Measuring a row means laying out its cells' text, so over ROW_REFLOW_PROGRESS_THRESHOLD rows the one
+        Qt call would freeze the window: it is done row by row under a progress dialog instead."""
+        rows = self.table.rowCount()
+        if rows < ROW_REFLOW_PROGRESS_THRESHOLD:
+            self.table.resizeRowsToContents()
+            return
+        with ProgressReporter(self, rows, "Fitting row heights...", threshold=1, cancellable=False) as reporter:
+            for row in range(rows):
+                self.table.resizeRowToContents(row)
+                if row % 100 == 99:
+                    reporter.set_value(row + 1)
 
     def _apply_text_overflow_mode(self, mode: str) -> None:
         """Switches how an over-long cell value is shown when its column
@@ -2474,7 +2544,7 @@ class MainWindow(QMainWindow):
         column width or a custom genre, see app_settings.py), so it
         doesn't dirty the book or need saving."""
         books = self._currently_selected_books()
-        new_hashes = {b.cover_hash for b in books if b.cover_hash is not None}
+        new_hashes = self._selected_cover_hashes(books, "Reading covers...")
         if not new_hashes:
             QMessageBox.information(
                 self, "No cover to flag", "None of the selected book(s) have a cover to flag."
@@ -2485,13 +2555,27 @@ class MainWindow(QMainWindow):
         self._refresh_all_junk_cover_cells()
         self._on_selection_changed()  # cover preview panel's Junk button may need to flip to "Unflag"
 
+    def _selected_cover_hashes(self, books: list[EpubBook], label: str) -> set:
+        """The cover fingerprints of `books` (None skipped). A book's `cover_hash` unzips and decodes its cover the
+        first time it is asked for, so a big selection runs under a progress dialog (not cancellable: the
+        flag/unflag that follows needs the full set)."""
+        hashes: set = set()
+
+        def _hash(book: EpubBook, _i: int) -> None:
+            value = book.cover_hash
+            if value is not None:
+                hashes.add(value)
+
+        run_with_progress(self, books, _hash, label, threshold=LOAD_PROGRESS_THRESHOLD, cancellable=False)
+        return hashes
+
     def unflag_selected_covers_as_junk(self) -> None:
         """The exact inverse of flag_selected_covers_as_junk() above --
         same reasoning applies in reverse: unflagging any one book whose
         cover is currently flagged un-flags every other book sharing that
         exact cover image too."""
         books = self._currently_selected_books()
-        hashes_to_clear = {b.cover_hash for b in books if b.cover_hash is not None}
+        hashes_to_clear = self._selected_cover_hashes(books, "Reading covers...")
         if not hashes_to_clear:
             self.status.showMessage("Unflag Cover as Junk: none of the selected books has a cover.", 6000)
             return
