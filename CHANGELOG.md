@@ -1,5 +1,10 @@
 # Changelog
 
+## 2026-10-14#01 -- Check File on the databases no longer freezes the window
+
+- The "Check File" button in the Open Library and ISFDB database dialogs now runs the check off the GUI thread under a progress dialog (redactor_common 2026-10-14-01); before, opening a big database file could freeze the window.
+- Requires redactor_common 2026-10-14-01.
+
 ## 2026-10-13#05 -- Redact no longer freezes the window on a slow book
 
 - Redact now runs each book on a worker thread (redactor_common 2026-10-13-06): the window keeps painting and Cancel stays clickable while a big save, a Calibre call or a lookup is running. Before, the window could freeze for the whole length of one slow book and the Cancel click was only seen between books. The lookups are plain direct calls now (they used to be handed to the GUI thread one by one).
