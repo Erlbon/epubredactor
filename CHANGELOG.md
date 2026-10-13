@@ -1,5 +1,11 @@
 # Changelog
 
+## 2026-10-13#03 -- Review fixes: save rides out a file lock; honest page-headers wording
+
+- **Save** (A15c): the final swap of the rewritten book rides out a transient lock on the target (antivirus, indexer, sync client) for about 1.6 s instead of failing at once, via redactor_common's `replace_with_retry`.
+- **Remove Running Headers and Page Numbers** (A12): the dialog said the original goes to the Recycle Bin on save; Save rewrites the book in place and keeps no copy, and the text now says so.
+- Requires redactor_common 2026-10-13-04.
+
 ## 2026-10-13#02 -- Shared Include Subfolders item; no more prompt; folder scans show progress
 
 - **File > Include Subfolders** is now redactor_common's shared menu item (on by default, remembered) and replaces the "Include EPUB files in subfolders too?" question that Add Folder asked every time. It also decides whether a dropped folder and Refresh List look in subfolders.

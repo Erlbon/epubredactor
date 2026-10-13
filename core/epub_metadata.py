@@ -55,6 +55,7 @@ from dataclasses import dataclass, field
 from typing import Optional
 
 from lxml import etree
+from redactor_common.core.os_utils import replace_with_retry
 from redactor_common.core.scan_stamp import ScanStamp, make_stamp, parse_stamp
 
 from core.epub_fingerprint import entries_fingerprint, zip_fingerprint
@@ -1821,7 +1822,9 @@ class EpubBook:
                     for path, data in file_ops["add"].items():
                         if path not in written:
                             dst.writestr(path, data)
-            os.replace(tmp_fd_path, target)
+            # Rides out a transient lock on the target (antivirus, indexer, a sync client holding the
+            # .epub for a moment) instead of failing the save at once.
+            replace_with_retry(tmp_fd_path, target)
         finally:
             # Gone after a successful replace; left behind by ANY failure
             # mid-write (disk full, locked target, a corrupt source entry).

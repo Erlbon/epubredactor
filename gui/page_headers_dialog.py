@@ -7,8 +7,9 @@ what core/page_headers.py found, book by book, with the evidence, and removes it
 books where the headers prove themselves are listed (see that module). Same "preview, then Apply" shape as Strip
 HTML from Description.
 
-Nothing is written until the books are saved, and the original goes to the Recycle Bin then. Like the other
-structural repairs this is not on the Undo stack; closing the book without saving drops the change.
+Nothing is written until the books are saved; Save then rewrites each book in place (a temp file beside it, swapped
+in; the previous content is NOT kept, there is no Recycle Bin copy). Like the other structural repairs this is not
+on the Undo stack; closing the book without saving drops the change.
 """
 
 from __future__ import annotations
@@ -55,8 +56,8 @@ class PageHeadersDialog(QDialog):
             f"Looks at {len(self.books)} book(s) for the page furniture a scan-and-OCR conversion leaves in the text: "
             "running headers (\"30 BOOK TITLE\", \"CHAPTER TITLE 33\"), page numbers and the empty paragraphs around "
             "them. Only a book where the headers prove themselves (a repeating heading and page numbers that rise "
-            "through the whole book) is listed. Nothing is written until you save; the original then goes to the "
-            "Recycle Bin."
+            "through the whole book) is listed. Nothing is written until you save; Save then rewrites the book in "
+            "place (the previous content is not kept, so check the preview: this cannot be undone after saving)."
         ))
         self.join_check = QCheckBox("Also rejoin sentences a page break cut in two (and words hyphenated at the page end)")
         self.join_check.setChecked(True)
