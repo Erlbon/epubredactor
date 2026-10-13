@@ -41,7 +41,7 @@ def _file_filter() -> str:
 
 
 class EbookConvertDialog(QDialog):
-    def __init__(self, parent=None):
+    def __init__(self, parent=None, initial_paths: list[str] | None = None):
         super().__init__(parent)
         self.setWindowTitle("Import to EPUB")
         self.resize(600, 440)
@@ -51,6 +51,8 @@ class EbookConvertDialog(QDialog):
 
         self._build_ui()
         self._resolve_tool()
+        if initial_paths:
+            self.add_paths(initial_paths)
 
     def _build_ui(self) -> None:
         layout = QVBoxLayout(self)
@@ -130,6 +132,10 @@ class EbookConvertDialog(QDialog):
         paths, _filter = QFileDialog.getOpenFileNames(
             self, "Choose Files to Convert", "", _file_filter()
         )
+        self.add_paths(paths)
+
+    def add_paths(self, paths: list[str]) -> None:
+        """Puts files in the list (once each): from Add Files, or handed over by Add Folder."""
         for path in paths:
             if path not in self._source_paths:
                 self._source_paths.append(path)

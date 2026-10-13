@@ -1,5 +1,9 @@
 # Changelog
 
+## 2026-10-13#01 -- Add Folder lists e-books in other formats
+
+- After Add Folder (and its subfolders, if you chose to include them), the app now says when the folders also hold e-books Calibre can convert to EPUB (MOBI, AZW/AZW3, KFX, FB2, LIT, LRF, PDB, PML, SNB...), with the full list under "Show Details", and offers to open **Import to EPUB** with those files already listed. Before, such files were skipped without a word. Text, Word/ODT/RTF, saved web pages and comic archives are not announced (they sit in book folders for other reasons); they can still be added by hand in Import to EPUB.
+
 All notable changes to The ƎPUB Redactor, by version. Trimmed to new
 functionality and real fixes — cosmetic/UX-only adjustments aren't
 listed here.

@@ -30,6 +30,32 @@ SUPPORTED_SOURCE_EXTENSIONS = {
     ".cbz", ".cbr", ".cbc", ".html", ".htmlz", ".chm", ".snb",
 }
 
+# Formats that are only worth LISTING when found while opening a folder: documents, web pages, plain text and
+# comic archives sit in book folders for other reasons (notes, saved pages, comics), so they stay importable by
+# hand (Import to EPUB > Add Files) but are not announced.
+NOT_ANNOUNCED_EXTENSIONS = {".html", ".htmlz", ".txt", ".rtf", ".odt", ".docx", ".cbz", ".cbr", ".cbc", ".chm"}
+ANNOUNCED_SOURCE_EXTENSIONS = SUPPORTED_SOURCE_EXTENSIONS - NOT_ANNOUNCED_EXTENSIONS
+
+
+def find_convertible_in_folder(folder: str, recursive: bool = True) -> list[str]:
+    """The e-book files in `folder` (and its subfolders when `recursive`) that Calibre can convert to EPUB
+    (MOBI, AZW3, FB2, LIT... see ANNOUNCED_SOURCE_EXTENSIONS), sorted. Used to tell the user what Add Folder did
+    not load."""
+    found = []
+    if recursive:
+        for root, _dirs, files in os.walk(folder):
+            found.extend(os.path.join(root, f) for f in files if os.path.splitext(f)[1].lower() in ANNOUNCED_SOURCE_EXTENSIONS)
+    else:
+        try:
+            for f in os.listdir(folder):
+                full = os.path.join(folder, f)
+                if os.path.isfile(full) and os.path.splitext(f)[1].lower() in ANNOUNCED_SOURCE_EXTENSIONS:
+                    found.append(full)
+        except OSError:
+            pass
+    return sorted(found)
+
+
 DEFAULT_TIMEOUT_SECONDS = 180  # conversion can be slow for larger books
 
 

@@ -141,6 +141,7 @@ from gui.content_scan_dialog import ContentScanDialog
 from gui.genre_suggest_dialog import GenreSuggestDialog
 from gui.cover_generator_dialog import CoverGeneratorDialog
 from gui.cover_render import generate_cover_image
+from core.ebook_convert import find_convertible_in_folder
 from gui.ebook_convert_dialog import EbookConvertDialog
 from gui.filename_parse_dialog import FilenameParseDialog
 from gui.google_books_dialog import GoogleBooksDialog
@@ -1404,6 +1405,36 @@ class MainWindow(QMainWindow):
         for folder in folders:
             epub_paths.extend(self._find_epubs_in_folder(folder, recursive=recursive))
         self._load_paths(epub_paths)
+        self._offer_import_of_other_formats(folders, recursive, epub_paths)
+
+    def _offer_import_of_other_formats(self, folders: list[str], recursive: bool, epub_paths: list[str]) -> None:
+        """Add Folder loads only .epub. Say what else Calibre could convert in those folders (and subfolders),
+        and offer to open Import to EPUB with the files already listed."""
+        others: list[str] = []
+        for folder in folders:
+            others.extend(find_convertible_in_folder(folder, recursive=recursive))
+        if not others:
+            return
+        kinds = ", ".join(sorted({os.path.splitext(p)[1].lstrip(".").upper() for p in others}))
+        intro = "No EPUB files found, but" if not epub_paths else "Also found"
+        box = QMessageBox(self)
+        box.setIcon(QMessageBox.Icon.Question)
+        box.setWindowTitle("Other E-book Formats Found")
+        box.setText(
+            f"{intro} {len(others)} file(s) in other formats ({kinds}) that Calibre can convert to EPUB.\n\n"
+            "Open Import to EPUB with them listed?"
+        )
+        shown = others[:200]
+        more = f"\n... and {len(others) - len(shown)} more" if len(others) > len(shown) else ""
+        box.setDetailedText("\n".join(shown) + more)
+        box.setStandardButtons(QMessageBox.StandardButton.Yes | QMessageBox.StandardButton.No)
+        if box.exec() != QMessageBox.StandardButton.Yes:
+            return
+        dialog = EbookConvertDialog(self, initial_paths=others)
+        if dialog.exec() == EbookConvertDialog.DialogCode.Accepted:
+            converted = dialog.converted_epub_paths()
+            if converted:
+                self._load_paths(converted)
 
     @staticmethod
     def _find_epubs_in_folder(folder: str, recursive: bool = True) -> list[str]:
