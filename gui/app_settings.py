@@ -619,7 +619,7 @@ _ZERO_PAD_WIDTH_KEY = "rename/zero_pad_width"
 
 
 def load_rename_zero_pad() -> tuple[bool, int]:
-    """Rename Files (Pattern)'s zero-pad checkbox and width, remembered
+    """File > Rename / Export / Move's zero-pad checkbox and width, remembered
     between runs (redactor_common's RenamePatternDialog)."""
     settings = _settings()
     return (

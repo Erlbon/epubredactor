@@ -1,5 +1,22 @@
 # Changelog
 
+All notable changes to The ƎPUB Redactor, by version. Trimmed to new
+functionality and real fixes — cosmetic/UX-only adjustments aren't
+listed here.
+
+## 2026-10-13#04 -- Tidy-up: progress for every slow step, no silent no-ops, clearer Redact defaults
+
+- **Progress everywhere it was missing.** Polish Book and Import and Convert now run Calibre in the background: the window keeps painting during a long conversion and **Cancel stops the running ebook-convert / ebook-polish process** (it used to wait for the book in progress to finish while the window froze). Rebuild Manifest, Deduplicate Manifest IDs, the reload after an in-place Polish, Apply to a large selection, refreshing many rows after Undo or a lookup, cover updates for many books, the Junk Cover re-check across the library and Find Better Covers' preview thumbnails all show a progress dialog on a big batch. Checking which books from the last session still exist, and which loaded files are still on disk before Refresh List, run off the GUI thread.
+- **Redact: Rename by pattern is off by default**, like Move into folders. Having used a rename pattern once used to switch it on for every Redact; now you tick it in Edit > Edit Redact Recipe (the step's description says so). A recipe you already saved keeps what it saved.
+- **Delete Files** no longer shows a "Deleted" pop-up after a successful delete: the status bar says how many went to the Recycle Bin. Failures still get a dialog.
+- **Open in Sigil** asks first when more than 5 books are selected (one Sigil window per book) and refuses more than 25 at a time with a message.
+- **No silent no-ops**: F2 (Rename File) with no book or several books selected, Remove from List with nothing selected, Clear List and Refresh List on an empty list, Unflag Cover as Junk on books without a cover, loading files that are all already in the list, and a drop with no EPUB in it now say why in the status bar.
+- **Right-click > Organize > Number Series…** opens the same dialog, with its preview, as Metadata > Number Series (it was a different, preview-less prompt).
+- **Preferences**: Text wrapping and performance logging are no longer repeated in Preferences (they stay in View > Text Wrapping and Tools > Enable Performance Logging); the Tools and Paths page gains the **ISFDB database** and **ISFDB backup** paths, like the Open Library ones.
+- Messages and docs use the real menu names (File > Rename / Export / Move, Edit > Redact, Metadata > Cover, Repair > ...) instead of the old "Operations" and "Rename Files (Pattern)" names; the README's menu list and shortcut table are rewritten to the real menus and document File > Include Subfolders and the Open Folder "other formats" offer.
+- Requires redactor_common 2026-10-13-05 (its menu lint now rejects Ctrl+Alt shortcuts).
+- **Corrections**: the 2026-10-09#02 entry says the command line sends originals to the Recycle Bin; `convert` keeps the original unless you pass `--trash-original` (Redact and `headers --fix` do recycle the original of each book they change). This changelog's newest entries had also ended up above its title; they are back in order.
+
 ## 2026-10-13#03 -- Review fixes: save rides out a file lock; honest page-headers wording
 
 - **Save** (A15c): the final swap of the rewritten book rides out a transient lock on the target (antivirus, indexer, sync client) for about 1.6 s instead of failing at once, via redactor_common's `replace_with_retry`.
@@ -16,10 +33,6 @@
 ## 2026-10-13#01 -- Add Folder lists e-books in other formats
 
 - After Add Folder (and its subfolders, if you chose to include them), the app now says when the folders also hold e-books Calibre can convert to EPUB (MOBI, AZW/AZW3, KFX, FB2, LIT, LRF, PDB, PML, SNB...), with the full list under "Show Details", and offers to open **Import to EPUB** with those files already listed. Before, such files were skipped without a word. Text, Word/ODT/RTF, saved web pages and comic archives are not announced (they sit in book folders for other reasons); they can still be added by hand in Import to EPUB.
-
-All notable changes to The ƎPUB Redactor, by version. Trimmed to new
-functionality and real fixes — cosmetic/UX-only adjustments aren't
-listed here.
 
 ## 2026-10-11#01 -- Remove running headers and page numbers (scanned books)
 

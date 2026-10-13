@@ -12,6 +12,8 @@ from __future__ import annotations
 
 import os
 import shutil
+import subprocess
+import time
 
 from redactor_common.core.subprocess_utils import no_window_kwargs
 from redactor_common.core.tool_locator import find_tool as _shared_find_tool
@@ -40,6 +42,46 @@ def no_console_window_kwargs() -> dict:
     this windowed app -- redactor_common's no_window_kwargs(), shared
     with mp3 and video since 2026-09-23."""
     return no_window_kwargs()
+
+
+class ToolCancelled(OSError):
+    """The user cancelled a running Calibre tool; its process was killed.
+    An OSError so the converters' existing error handling (clean up the
+    half-written output, report per file) applies unchanged."""
+
+
+def cancellable_run(cancel_event, poll_seconds: float = 0.2):
+    """A drop-in for subprocess.run(args, capture_output=True, timeout=...,
+    **kwargs) that kills the process as soon as `cancel_event` (a
+    threading.Event) is set, raising ToolCancelled. Lets a progress
+    dialog's Cancel stop a long ebook-convert / ebook-polish run instead
+    of waiting for it to finish."""
+
+    def run(args, capture_output=True, timeout=None, **kwargs):
+        if cancel_event.is_set():
+            raise ToolCancelled("Cancelled.")
+        if capture_output:
+            kwargs.setdefault("stdout", subprocess.PIPE)
+            kwargs.setdefault("stderr", subprocess.PIPE)
+        kwargs.setdefault("stdin", subprocess.DEVNULL)
+        deadline = None if timeout is None else time.monotonic() + timeout
+        proc = subprocess.Popen(args, **kwargs)
+        try:
+            while True:
+                try:
+                    stdout, stderr = proc.communicate(timeout=poll_seconds)
+                    return subprocess.CompletedProcess(args, proc.returncode, stdout, stderr)
+                except subprocess.TimeoutExpired:
+                    if cancel_event.is_set():
+                        raise ToolCancelled("Cancelled.") from None
+                    if deadline is not None and time.monotonic() > deadline:
+                        raise subprocess.TimeoutExpired(args, timeout) from None
+        finally:
+            if proc.poll() is None:
+                proc.kill()
+                proc.communicate()
+
+    return run
 
 
 def _exe_name(base_name: str) -> str:

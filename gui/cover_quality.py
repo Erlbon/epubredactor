@@ -3,7 +3,7 @@ gui/cover_quality.py
 
 The Cover column: each book's cover size in pixels, so low-resolution
 and missing covers stand out (the idea of cbzredactor's Size column,
-applied to ebook covers) -- and Operations > Find Better Covers...
+applied to ebook covers) -- and Metadata > Cover > Find Better Covers...
 (gui/better_cover_dialog.py) to replace them.
 
 Only the image HEADER is read (QImageReader.size()), never the whole
@@ -61,7 +61,7 @@ def describe(book) -> tuple[str, Optional[QColor], str, float]:
     """(cell text, background or None, tooltip, sort value) for the Cover
     column. Sorts missing first, then smallest."""
     if not book.cover_bytes:
-        return "none", MISSING_COLOR, "No cover image. Operations > Find Better Covers… can look one up by ISBN.", -1.0
+        return "none", MISSING_COLOR, "No cover image. Metadata > Cover > Find Better Covers… can look one up by ISBN.", -1.0
     size = cover_size(book)
     if size is None:
         return "?", MISSING_COLOR, "The cover image can't be read.", 0.0
@@ -70,6 +70,6 @@ def describe(book) -> tuple[str, Optional[QColor], str, float]:
     if height < LOW_RES_HEIGHT:
         return (text, LOW_RES_COLOR,
                 f"Low-resolution cover (under {LOW_RES_HEIGHT}px tall): it will look soft on a current "
-                "e-reader. Operations > Find Better Covers… can look for a larger one by ISBN.",
+                "e-reader. Metadata > Cover > Find Better Covers… can look for a larger one by ISBN.",
                 float(height))
     return text, None, "", float(height)

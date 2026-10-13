@@ -7,8 +7,12 @@ redactor_common with this app's pages.
   Filenames   shared: ASCII-safe filenames, zero-pad numbers + width
               (this app has no Auto-Numbering, so no padding setting for it)
   Language    shared: the blank-language default (with its on/off switch)
-  Display     text overflow mode (also View > Text Wrapping), performance logging
-  Tools and Paths   Calibre folder, Sigil program, Open Library database and dumps
+  Tools and Paths   Calibre folder, Sigil program, Open Library database and dumps,
+                    ISFDB database and backup
+
+Text wrapping and performance logging are NOT here: they live in the menus
+(View > Text Wrapping, Tools > Enable Performance Logging), where the
+family's menu skeleton puts them. A second copy here was a duplicate.
 
 The dialog only maps its setting names onto the EXISTING ini keys (INI_KEYS
 below), so every loader in app_settings and File > Export / Import Settings
@@ -34,14 +38,14 @@ from redactor_common.gui.preferences_dialog import PreferencesDialog
 from gui import app_settings
 
 # App-specific setting names.
-KEY_TEXT_OVERFLOW_MODE = "text_overflow_mode"
-KEY_PERF_LOGGING = "perf_logging_enabled"
 KEY_CALIBRE_DIR = "calibre_install_dir"
 KEY_SIGIL_PATH = "sigil_exe_path"
 KEY_OPENLIBRARY_DB = "openlibrary_database"
 KEY_OPENLIBRARY_EDITIONS = "openlibrary_editions_dump"
 KEY_OPENLIBRARY_AUTHORS = "openlibrary_authors_dump"
 KEY_OPENLIBRARY_WORKS = "openlibrary_works_dump"
+KEY_ISFDB_DB = "isfdb_database"
+KEY_ISFDB_BACKUP = "isfdb_backup"
 
 # setting name -> the ini key it has always been stored under.
 INI_KEYS = {
@@ -50,14 +54,14 @@ INI_KEYS = {
     KEY_ZERO_PAD_WIDTH: "rename/zero_pad_width",
     KEY_BLANK_LANGUAGE_ENABLED: "language/blank_default_enabled",
     KEY_DEFAULT_LANGUAGE: "language/blank_default_code",  # stored as an ISO 639-1 (alpha2) code
-    KEY_TEXT_OVERFLOW_MODE: "table/text_overflow_mode",
-    KEY_PERF_LOGGING: "debug/perf_logging_enabled",
     KEY_CALIBRE_DIR: "calibre/install_dir",
     KEY_SIGIL_PATH: "sigil/exe_path",
     KEY_OPENLIBRARY_DB: "openlibrary/database",
     KEY_OPENLIBRARY_EDITIONS: "openlibrary/editions_dump",
     KEY_OPENLIBRARY_AUTHORS: "openlibrary/authors_dump",
     KEY_OPENLIBRARY_WORKS: "openlibrary/works_dump",
+    KEY_ISFDB_DB: "isfdb/database",
+    KEY_ISFDB_BACKUP: "isfdb/backup",
 }
 
 
@@ -65,29 +69,6 @@ def build_sections() -> list[PrefSection]:
     """The dialog's pages, in order. The language list is the app's own
     (defaults minus hidden ones, plus custom languages)."""
     languages = tuple(app_settings.load_languages())
-    display = PrefSection(
-        "display", "Display",
-        (
-            PrefSpec(
-                KEY_TEXT_OVERFLOW_MODE, "Long text in the table", "choice",
-                app_settings.DEFAULT_TEXT_OVERFLOW_MODE,
-                help="What to do with a value that does not fit its column: wrap it onto more lines "
-                     "(rows grow), cut it with an ellipsis, or cut it off at the column edge "
-                     "(rows keep one line). Also under View > Text Wrapping.",
-                choices=(
-                    ("wrap", "Wrap text (rows grow)"),
-                    ("ellipsis", "Truncate with an ellipsis"),
-                    ("clip", "Clip at the column edge"),
-                ),
-            ),
-            PrefSpec(
-                KEY_PERF_LOGGING, "Log timings of slow operations", "bool", False,
-                help="Writes a timing breakdown of table rebuilds and saves to a log file, for "
-                     "diagnosing a slowdown on a very large library. Leave off otherwise.",
-            ),
-        ),
-        "How the book list looks and what the app records about itself.",
-    )
     tools = PrefSection(
         "tools", "Tools and Paths",
         (
@@ -118,6 +99,15 @@ def build_sections() -> list[PrefSection]:
                 KEY_OPENLIBRARY_WORKS, "Open Library works dump (optional)", "path", "", path_mode="file",
                 help="Optional: adds authors to editions that list none themselves. Leave empty to skip.",
             ),
+            PrefSpec(
+                KEY_ISFDB_DB, "ISFDB database", "path", "", path_mode="file",
+                help="The offline ISFDB lookup database (series and series numbers). Build it with "
+                     "Tools > ISFDB Database.",
+            ),
+            PrefSpec(
+                KEY_ISFDB_BACKUP, "ISFDB backup", "path", "", path_mode="file",
+                help="The ISFDB MySQL backup the database is built from (kept for the next rebuild).",
+            ),
         ),
         "Where the optional outside tools and databases live.",
     )
@@ -127,7 +117,6 @@ def build_sections() -> list[PrefSection]:
             style="alpha2", include_enabled=True, default_code=app_settings.DEFAULT_BLANK_LANGUAGE_CODE,
             overrides={KEY_DEFAULT_LANGUAGE: {"choices": languages}},
         ),
-        display,
         tools,
     ]
 

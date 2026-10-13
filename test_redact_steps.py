@@ -550,17 +550,36 @@ def test_metadata_lookup_label_says_local_database_first_and_key_is_unchanged():
     assert "online" not in step.label.lower() and "local" in step.description.lower()
 
 
-def test_defaults_rename_on_only_with_a_pattern_and_move_off():
+def test_defaults_rename_and_move_off_even_with_a_saved_pattern():
     plain = Recipe.default_for(build_catalogue())
     assert plain.enabled["rename"] is False and plain.enabled["move_into_folders"] is False
+    # Having used a rename pattern once no longer turns the step on by itself (it did before).
     with_pattern = Recipe.default_for(build_catalogue("%authors% - %title%"))
-    assert with_pattern.enabled["rename"] is True
+    assert with_pattern.enabled["rename"] is False
     assert with_pattern.options["rename"]["pattern"] == ""  # empty = follows the app's pattern (the fallback)
     assert with_pattern.enabled["repair_navigation"] and with_pattern.options["repair_navigation"]["remove_orphans"] is False
     assert plain.confidence_threshold == 0.9
     for key in ("validate_fix", "dedupe_manifest_ids", "rebuild_manifest", "generate_toc", "language",
                 "strip_description_html", "cover", "metadata_lookup", "scan_isbn"):
         assert plain.enabled[key] is True, key
+
+
+def test_rename_step_says_how_to_turn_it_on_and_names_the_real_menu():
+    catalogue = {s.key: s for s in build_catalogue("%title%")}
+    for key in ("rename", "move_into_folders", "path_tags"):
+        description = catalogue[key].description
+        assert "Rename / Export / Move" in description, key
+        assert "Rename Files (Pattern)" not in description, key
+    assert "Edit Redact Recipe" in catalogue["rename"].description
+    assert "turn it on" in catalogue["rename"].description
+
+
+def test_a_saved_recipe_keeps_its_rename_choice():
+    catalogue = build_catalogue("%title%")
+    saved = Recipe.default_for(catalogue)
+    saved.enabled["rename"] = True
+    restored = recipe_from_setting(recipe_to_setting(saved), catalogue)
+    assert restored.enabled["rename"] is True
 
 
 def test_recipe_round_trips_through_the_setting_and_the_settings_file():
@@ -582,6 +601,7 @@ def test_recipe_round_trips_through_the_setting_and_the_settings_file():
 
 def test_the_guard_is_first_and_cannot_be_switched_off():
     recipe = Recipe.default_for(build_catalogue("%title%"))
+    recipe.enabled["rename"] = True  # off by default
     recipe.enabled["move_into_folders"] = True
     recipe.enabled["guard"] = False
     run_recipe_ = recipe_for_run(recipe)

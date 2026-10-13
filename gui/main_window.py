@@ -101,7 +101,6 @@ from redactor_common.gui.redact_dialog import run_redact as run_redact_dialog
 from redactor_common.gui.rename_single_file import rename_single_file as prompt_rename_single_file
 from redactor_common.gui.async_hash_cache import AsyncHashCache
 from redactor_common.gui.async_icon_cache import AsyncIconCache
-from redactor_common.gui.quick_series_number import prompt_and_generate_series_numbers
 from redactor_common.core import labels
 from redactor_common.gui.command_palette import add_command_palette
 from redactor_common.gui.menu_builder import MenuAction, MenuItems, Separator, Submenu
@@ -224,6 +223,10 @@ LOAD_PROGRESS_THRESHOLD = 3  # don't bother with a progress dialog for a tiny ba
 # (thousands of rows) are where an uninterrupted rebuild loop can run
 # long enough to look exactly like a frozen app with no feedback at all.
 REBUILD_PROGRESS_THRESHOLD = 500
+# Open in Sigil starts one Sigil process per book: confirm above a handful,
+# refuse above a cap (5,000 selected books would start 5,000 processes).
+SIGIL_CONFIRM_ABOVE = 5
+SIGIL_MAX_BOOKS = 25
 TAG_PANEL_COLLAPSED_WIDTH = 32  # slim strip, not zero -- keeps the panel's own toggle button reachable
 
 IMAGE_FILE_FILTER = "Images (*.jpg *.jpeg *.png *.gif *.webp)"
@@ -393,7 +396,10 @@ class MainWindow(QMainWindow):
         row -- that's a different, more mundane situation than a file
         that exists but is actually corrupted."""
         remembered = app_settings.load_last_session_files()
-        existing = [p for p in remembered if os.path.isfile(p)]
+        # One stat per remembered book (slow on a network share): off the GUI thread.
+        existing = run_busy(
+            self, "Checking last session's books...", lambda: [p for p in remembered if os.path.isfile(p)],
+        ) if remembered else []
         if existing:
             self._load_paths(existing)
         missing_count = len(remembered) - len(existing)
@@ -987,7 +993,8 @@ class MainWindow(QMainWindow):
             items.append(MenuAction("read_book", "Read Book…", self.open_read_book_dialog))
         items.append(Submenu("Organize", [
             self.rename_files_act,
-            MenuAction("number_series", "Number Series…", self.quick_number_series),
+            # The same dialog (with its preview) as Metadata > Number Series.
+            MenuAction("number_series", "Number Series…", self.open_series_number_dialog),
         ]))
         cover_items: MenuItems = [
             MenuAction("find_better_covers", "Find Better Covers…", self.open_find_better_covers_dialog),
@@ -1044,6 +1051,24 @@ class MainWindow(QMainWindow):
                 self, "No books selected", "Select the book(s) to open in Sigil first."
             )
             return
+        # Each book is its own Sigil process: a big selection would start
+        # hundreds of editor windows. Ask above a handful, refuse above a cap.
+        if len(books) > SIGIL_MAX_BOOKS:
+            QMessageBox.information(
+                self, "Too many books for Sigil",
+                f"{len(books)} books are selected. Open in Sigil starts one Sigil window per book, "
+                f"so it opens at most {SIGIL_MAX_BOOKS} at a time. Select fewer books and try again.",
+            )
+            return
+        if len(books) > SIGIL_CONFIRM_ABOVE:
+            reply = QMessageBox.question(
+                self, "Open in Sigil",
+                f"Open {len(books)} books in Sigil? Each one opens in its own Sigil window.",
+                QMessageBox.StandardButton.Yes | QMessageBox.StandardButton.No,
+                QMessageBox.StandardButton.No,
+            )
+            if reply != QMessageBox.StandardButton.Yes:
+                return
 
         dirty_books = [b for b in books if b.dirty]
         if dirty_books:
@@ -1240,10 +1265,18 @@ class MainWindow(QMainWindow):
         self._updating_table = True
         with suspend_sorting(self.table):
             rows_by_book = self._rows_by_book()
-            for book in books:
+
+            def _refresh(book: EpubBook, _i: int) -> None:
                 row = rows_by_book.get(book)
                 if row is not None:
                     self._refresh_row_cells(row, book)
+
+            # A whole library (Undo of a bulk edit, a lookup on everything)
+            # can be thousands of rows: same dialog as a table rebuild.
+            run_with_progress(
+                self, books, _refresh, "Updating list…",
+                threshold=REBUILD_PROGRESS_THRESHOLD, cancellable=False, update_every=50,
+            )
         self._updating_table = was_updating
 
     def _refresh_row_cells(self, row: int, book: EpubBook) -> None:
@@ -1348,7 +1381,11 @@ class MainWindow(QMainWindow):
                     found.append(p)
             return found
 
-        self._load_paths(run_busy(self, "Looking for EPUB files...", scan))
+        found = run_busy(self, "Looking for EPUB files...", scan)
+        if not found:
+            self.status.showMessage("No EPUB files in what was dropped.", 6000)
+            return
+        self._load_paths(found)
 
     # ------------------------------------------------------------------
     # Loading files
@@ -1489,6 +1526,8 @@ class MainWindow(QMainWindow):
                 already_loaded.add(_key(p))  # the same file twice in one drop/selection
                 new_paths.append(p)
         if not new_paths:
+            if paths:  # say why nothing happened rather than doing nothing
+                self.status.showMessage(f"Already in the list: {len(paths)} file(s), nothing new to load.", 6000)
             return
 
         added = 0
@@ -1949,7 +1988,7 @@ class MainWindow(QMainWindow):
         if is_junk:
             item.setToolTip(
                 "Flagged as a junk cover -- shares its cover image with every other book "
-                "flagged this way. See Operations > Regenerate Junk Covers…"
+                "flagged this way. See Metadata > Cover > Regenerate Junk Covers…"
             )
             item.setBackground(JUNK_COVER_COLOR)
             item.setForeground(HIGHLIGHT_TEXT_COLOR)
@@ -1963,6 +2002,8 @@ class MainWindow(QMainWindow):
             book = self._book_for_row(row)
             if book is not None and not book.load_error:
                 self.rename_single_file(book)
+            elif book is not None:
+                self.status.showMessage("This file could not be read as an EPUB, so it can't be renamed here.", 6000)
             return
         if col != STATUS_COL:
             return
@@ -2021,6 +2062,13 @@ class MainWindow(QMainWindow):
         selected = self._currently_selected_books()
         if len(selected) == 1:
             self.rename_single_file(selected[0])
+        elif not selected:
+            self.status.showMessage("Rename File: select one book first.", 6000)
+        else:
+            self.status.showMessage(
+                f"Rename File renames one book at a time ({len(selected)} are selected). "
+                "For several, use File > Rename / Export / Move.", 8000,
+            )
 
     def _apply_cached_cover_icon_only(self, item: QTableWidgetItem, book: EpubBook) -> None:
         """Sets item's icon from cache if already decoded, or a blank
@@ -2166,11 +2214,12 @@ class MainWindow(QMainWindow):
         self._updating_table = True
         with suspend_sorting(self.table):  # keep row positions stable mid-loop
             rows_by_book = self._rows_by_book()
-            for book in books:
+
+            def _apply(book: EpubBook, _i: int) -> None:
                 book.apply_metadata(values)
                 row = rows_by_book.get(book)
                 if row is None:
-                    continue
+                    return
                 for i, (key, _label, multiline) in enumerate(FIELDS):
                     if key in values:
                         col = FIRST_FIELD_COL + i
@@ -2178,6 +2227,13 @@ class MainWindow(QMainWindow):
                         if item is not None:
                             item.setText(self._field_display_text(getattr(book.metadata, key, ""), multiline))
                 self._set_row_dirty_style(row, book.dirty)
+
+            # Not cancellable: one Undo entry covers the whole apply, so a
+            # half-applied edit would be a confusing state to leave behind.
+            run_with_progress(
+                self, books, _apply, "Applying changes…",
+                threshold=REBUILD_PROGRESS_THRESHOLD, cancellable=False, update_every=50,
+            )
         self._updating_table = False
         self._refresh_status()
 
@@ -2304,7 +2360,7 @@ class MainWindow(QMainWindow):
         Delete right next to it (you're already looking at the live
         cover preview, so there's nothing a separate preview step would
         add here). For generating across many books at once with a
-        review table first, see Operations -> Generate Cover from
+        review table first, see Metadata > Cover > Generate Cover from
         Metadata instead (gui/cover_generator_dialog.py)."""
         books = self._currently_selected_books()
         if not books:
@@ -2380,22 +2436,29 @@ class MainWindow(QMainWindow):
         self._updating_table = True
         with suspend_sorting(self.table):
             rows_by_book = self._rows_by_book()
-            for book in books:
+
+            def _refresh(book: EpubBook, _i: int) -> None:
                 row = rows_by_book.get(book)
                 if row is None:
-                    continue
+                    return
                 item = self.table.item(row, FILENAME_COL)
                 if item is not None:
                     self._apply_cover_icon(item, book)
                 self._set_row_dirty_style(row, book.dirty)
                 self._update_junk_cover_cell(row, book)  # cover just changed -- its hash may have too
                 self._update_cover_size_cell(row, book)
+
+            # Re-hashes each changed cover: thousands of them take a while.
+            run_with_progress(
+                self, books, _refresh, "Updating covers…",
+                threshold=REBUILD_PROGRESS_THRESHOLD, cancellable=False, update_every=50,
+            )
         self._updating_table = was_updating
         self._refresh_status()
         self._on_selection_changed()  # refresh the cover preview panel too
 
     # ------------------------------------------------------------------
-    # Junk Cover flag (table right-click) / Regenerate Junk Covers (Operations)
+    # Junk Cover flag (table right-click) / Regenerate Junk Covers (Metadata > Cover)
     # ------------------------------------------------------------------
 
     def flag_selected_covers_as_junk(self) -> None:
@@ -2427,6 +2490,7 @@ class MainWindow(QMainWindow):
         books = self._currently_selected_books()
         hashes_to_clear = {b.cover_hash for b in books if b.cover_hash is not None}
         if not hashes_to_clear:
+            self.status.showMessage("Unflag Cover as Junk: none of the selected books has a cover.", 6000)
             return
         self._junk_cover_hashes -= hashes_to_clear
         app_settings.save_junk_cover_hashes(self._junk_cover_hashes)
@@ -2443,14 +2507,20 @@ class MainWindow(QMainWindow):
         self._updating_table = True
         with suspend_sorting(self.table):
             rows_by_book = self._rows_by_book()
-            for book in self.books:
+
+            def _update(book: EpubBook, _i: int) -> None:
                 row = rows_by_book.get(book)
                 if row is not None:
                     self._update_junk_cover_cell(row, book)
+
+            run_with_progress(
+                self, self.books, _update, "Updating list…",
+                threshold=REBUILD_PROGRESS_THRESHOLD, cancellable=False, update_every=50,
+            )
         self._updating_table = was_updating
 
     def open_find_better_covers_dialog(self) -> None:
-        """Operations > Find Better Covers…: for the selected books (or all)
+        """Metadata > Cover > Find Better Covers…: for the selected books (or all)
         that have an ISBN, asks Open Library for its cover and offers the
         ones LARGER than the current cover (or where there is none) side
         by side -- see core/better_cover.py, gui/better_cover_dialog.py.
@@ -2466,7 +2536,7 @@ class MainWindow(QMainWindow):
             QMessageBox.information(
                 self, "Find Better Covers",
                 "None of these books has an ISBN -- the cover is looked up by ISBN. "
-                "Import one first (e.g. Import > Google Books / Open Library).",
+                "Look one up first (Metadata > Look Up > Google Books / Open Library).",
             )
             return
         found: list = []
@@ -2526,9 +2596,9 @@ class MainWindow(QMainWindow):
         self._refresh_affected_rows([book for book, _data in chosen])
 
     def open_regenerate_junk_covers_dialog(self) -> None:
-        """Operations menu batch version of the table right-click's Flag
+        """Metadata > Cover menu batch version of the table right-click's Flag
         Cover as Junk -- runs the exact same Generate Cover from Metadata
-        preview/apply flow as Operations > Generate Cover from Metadata
+        preview/apply flow as Metadata > Cover > Generate Cover from Metadata
         (gui/cover_generator_dialog.py), just pre-filtered to books
         currently flagged, rather than the current selection."""
         target_books: list[EpubBook] = []
@@ -2570,6 +2640,7 @@ class MainWindow(QMainWindow):
     def remove_selected(self) -> None:
         to_remove = self._books_for_rows(self._selected_rows(), exclude_errors=False)
         if not to_remove:
+            self.status.showMessage("Remove from List: select the books to remove first.", 6000)
             return
         remove_ids = {id(b) for b in to_remove}  # O(N), not O(N*M)
         self.books = [b for b in self.books if id(b) not in remove_ids]
@@ -2578,6 +2649,7 @@ class MainWindow(QMainWindow):
 
     def clear_list(self) -> None:
         if not self.books:
+            self.status.showMessage("The list is already empty.", 6000)
             return
         if self._count_dirty() and not self._confirm_discard("clear the list"):
             return
@@ -2643,7 +2715,8 @@ class MainWindow(QMainWindow):
                 f"{len(deleted)} of {len(to_delete)} sent to the Recycle Bin.\n\nFailed:\n{details}",
             )
         else:
-            QMessageBox.information(self, "Deleted", f"Sent {len(deleted)} file(s) to the Recycle Bin.")
+            # Success needs no extra click: the rows are already gone from the list.
+            self.status.showMessage(f"Sent {len(deleted)} file(s) to the Recycle Bin.", 8000)
 
     def _drop_trashed_books(self, trashed: list[EpubBook]) -> None:
         """Removes books whose files were just sent to the Recycle Bin from
@@ -2705,6 +2778,7 @@ class MainWindow(QMainWindow):
         clears the undo stack, since its entries would reference book
         objects this replaces."""
         if not self.books:
+            self.status.showMessage("Refresh List: nothing is loaded yet. Open a folder or files first.", 6000)
             return
         if self._count_dirty() and not self._confirm_discard(
             "refresh the list (discarding unsaved changes)"
@@ -2719,7 +2793,9 @@ class MainWindow(QMainWindow):
                 existing_paths, lambda folder: self._find_epubs_in_folder(folder, recursive=recursive),
             )
         ]
-        present_paths = [p for p in existing_paths if os.path.exists(p)]
+        present_paths = run_busy(
+            self, "Checking loaded files...", lambda: [p for p in existing_paths if os.path.exists(p)],
+        )
         removed_count = len(existing_paths) - len(present_paths)
 
         # Re-reading every book is real per-book work (unzip + parse the
@@ -3043,7 +3119,7 @@ class MainWindow(QMainWindow):
     @staticmethod
     def _last_rename_pattern() -> str:
         """The most recently applied Rename/Export pattern ("" if none):
-        the Redact recipe's Rename step default, and what turns it on."""
+        the Redact recipe's Rename step pattern fallback."""
         names, _paths = split_pattern_history(app_settings.load_pattern_history())
         return names[0] if names else ""
 
@@ -3079,7 +3155,7 @@ class MainWindow(QMainWindow):
         return recipe_from_setting(app_settings.load_redact_recipe(), self._redact_catalogue())
 
     def edit_redact_recipe(self) -> None:
-        """Operations > Edit Redact Recipe...: the shared recipe editor over
+        """Edit > Edit Redact Recipe...: the shared recipe editor over
         this app's steps; the result is stored in the settings file."""
         catalogue = self._redact_catalogue()
         recipe = self._redact_recipe()
@@ -3129,7 +3205,7 @@ class MainWindow(QMainWindow):
         return list(self.books) if reply == QMessageBox.StandardButton.Yes else []
 
     def redact_books(self) -> None:
-        """Operations > Redact (Ctrl+Shift+E): runs the saved recipe on the
+        """Edit > Redact (Ctrl+Shift+E): runs the saved recipe on the
         targets through redactor_common's engine (progress, cancel, results
         with Needs review). A book with unsaved edits is skipped and named
         in the report, never overwritten; so is one that failed to load or
@@ -3587,9 +3663,15 @@ class MainWindow(QMainWindow):
         # dialog's own upfront confirmation (listing exactly what will
         # be removed) is the safeguard here instead.
         affected_books = [dialog.books[i] for i in indices]
-        total_removed = 0
-        for book in affected_books:
-            total_removed += len(book.rebuild_manifest())
+        removed_counts: list[int] = []
+
+        # Re-validates each book against its file on disk: per-book I/O.
+        run_with_progress(
+            self, affected_books, lambda book, _i: removed_counts.append(len(book.rebuild_manifest())),
+            "Rebuilding manifests…", threshold=LOAD_PROGRESS_THRESHOLD, cancellable=False,
+            label_for=lambda book: f"Rebuilding: {os.path.basename(book.path)}",
+        )
+        total_removed = sum(removed_counts)
         self._refresh_rows_full(affected_books)
         self._refresh_status()
         self._on_selection_changed()
@@ -3620,9 +3702,13 @@ class MainWindow(QMainWindow):
         # structural repair, not user-authored content, not pushed to
         # Undo -- the dialog's own upfront listing is the safeguard.
         affected_books = [dialog.books[i] for i in indices]
-        total_renamed = 0
-        for book in affected_books:
-            total_renamed += len(book.dedupe_manifest_ids())
+        renamed_counts: list[int] = []
+        run_with_progress(
+            self, affected_books, lambda book, _i: renamed_counts.append(len(book.dedupe_manifest_ids())),
+            "Deduplicating manifest IDs…", threshold=LOAD_PROGRESS_THRESHOLD, cancellable=False,
+            update_every=25,
+        )
+        total_renamed = sum(renamed_counts)
         self._refresh_rows_full(affected_books)
         self._refresh_status()
         self._on_selection_changed()
@@ -3852,14 +3938,8 @@ class MainWindow(QMainWindow):
         dialog.exec()
 
     def _on_preferences_applied(self, values: dict) -> None:
-        if preferences.KEY_TEXT_OVERFLOW_MODE in values:
-            mode = app_settings.load_text_overflow_mode()
-            self._apply_text_overflow_mode(mode)
-            get_action_registry(self)[f"text_wrap_mode_{mode}"].setChecked(True)
-        if preferences.KEY_PERF_LOGGING in values:
-            enabled = app_settings.load_perf_logging_enabled()
-            perf_log.set_enabled(enabled)
-            self.perf_logging_act.setChecked(enabled)
+        # Text wrapping and performance logging are menu items only
+        # (View / Tools), so the only live setting here is the language switch.
         if preferences.KEY_BLANK_LANGUAGE_ENABLED in values:
             self._update_blank_language_default_action_state()
 
@@ -3948,30 +4028,6 @@ class MainWindow(QMainWindow):
         self._refresh_status()
         self._on_selection_changed()  # bulk-edit panel may be showing the Series # field
 
-    def quick_number_series(self) -> None:
-        """The table right-click's quick version of Number Series: just
-        prompts for a starting value (no step, no preview) and numbers
-        the selected books +1 per row from there, in their current table
-        order. For anything beyond the plain "start here, count up by
-        one" case -- a different step, or a look at what's changing
-        before it does -- use Operations -> Number Series instead."""
-        target_books = self._currently_selected_books()
-        if not target_books:
-            return  # this menu item only ever shows with a selection already in place
-
-        values = prompt_and_generate_series_numbers(
-            self, len(target_books), field_label="Starting Series #"
-        )
-        if values is None:
-            return
-
-        self._push_undo("Number series", target_books)
-        for book, new_value in zip(target_books, values):
-            book.apply_metadata({"series_index": new_value})
-        self._refresh_rows_full(target_books)
-        self._refresh_status()
-        self._on_selection_changed()  # bulk-edit panel may be showing the Series # field
-
     # ------------------------------------------------------------------
     # Polish Book
     # ------------------------------------------------------------------
@@ -3997,9 +4053,13 @@ class MainWindow(QMainWindow):
             # and for the same reason: this isn't a staged edit, it's a
             # real file change. Undo entries may reference the
             # now-superseded book objects, so the stack is cleared too.
-            for old_book in polished_in_place:
-                idx = self.books.index(old_book)
-                self.books[idx] = EpubBook(old_book.path)
+            fresh: dict[int, EpubBook] = {}
+            run_with_progress(
+                self, polished_in_place, lambda old, _i: fresh.__setitem__(id(old), EpubBook(old.path)),
+                "Reloading…", threshold=LOAD_PROGRESS_THRESHOLD, cancellable=False,
+                label_for=lambda old: f"Loading: {os.path.basename(old.path)}",
+            )
+            self.books = [fresh.get(id(b), b) for b in self.books]
             self.undo_manager = UndoManager(max_entries=UNDO_MAX_ENTRIES)
             self.undo_act.setEnabled(False)
             self._rebuild_table()

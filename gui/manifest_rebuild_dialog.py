@@ -1,7 +1,7 @@
 """
 gui/manifest_rebuild_dialog.py
 
-Rebuild Manifest: a standalone, explicitly-triggered action (Operations
+Rebuild Manifest: a standalone, explicitly-triggered action (Repair
 menu) for cleaning up manifest entries that reference files no longer
 present in the archive. Deliberately kept separate from Validate/Fix
 Issues' one-click "Apply Fixes" flow -- removing a manifest entry can

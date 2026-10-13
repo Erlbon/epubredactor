@@ -16,9 +16,11 @@ them in one go.
 
 ## Features
 
-- **Menu bar** (File, Import, Operations, Settings, About) with a slim
-  toolbar alongside it for the handful of most-frequent actions. Full
-  keyboard shortcut list is in "Notes on the menu bar" below.
+- **Menu bar** (File, Edit, View, Metadata, Repair, Send, Tools, Help --
+  the Redactor family's shared layout) with a slim toolbar alongside it
+  for the handful of most-frequent actions, and a Command Palette
+  (Ctrl+K) that finds any command by name. The full menu and shortcut
+  list is in "Notes on the menu bar" below.
 - **Zoom** −/+ control on the right side of the toolbar (Ctrl+Plus/Minus
   also work) adjusts the table's font size, so you can shrink it to fit
   more content or enlarge it for readability. Shows a live percentage
@@ -31,8 +33,8 @@ them in one go.
   button lives right on the panel itself (top-right corner), or use the
   toolbar's "Panel" button. Its fields automatically mirror whichever
   table columns are currently visible, in whatever order you've dragged
-  them to (Settings → Add/Remove Columns) — no separate field-management
-  screen needed. **Apply** lives in the toolbar and Operations menu now,
+  them to (Tools > Columns) — no separate field-management
+  screen needed. **Apply** lives in the toolbar and Edit menu now,
   always reachable regardless of panel size or how many fields are
   ticked on. Saving (either Save Files or Save As Copy) applies any
   pending panel changes first, so you never lose an edit you typed but
@@ -73,7 +75,7 @@ them in one go.
   app's Language field expects, so it's left out rather than importing
   something that wouldn't match. Same per-field overwrite review as
   Google Books.
-- **Generate Cover from Metadata** (Operations menu) — creates a
+- **Generate Cover from Metadata** (Metadata > Cover) — creates a
   placeholder cover (title, author, and series if present, on a plain
   background) for selected books, to replace a missing or wrong cover,
   entirely offline — no lookup, nothing fetched. A **Generate** button
@@ -88,7 +90,7 @@ them in one go.
   loaded book whose cover is byte-for-byte the exact same image gets
   flagged too, automatically, not just the one you clicked. Shows as a
   sortable **Junk Cover** column (click its header to group them
-  together), and **Operations > Regenerate Junk Covers…** runs
+  together), and **Metadata > Cover > Regenerate Junk Covers…** runs
   Generate Cover from Metadata against every currently-flagged book in
   one go — a freshly generated cover naturally un-flags itself, since
   it's no longer that same junk image. **Unflag Cover as Junk**
@@ -100,7 +102,7 @@ them in one go.
   low-resolution cover (under 1000px tall -- soft on a current
   e-reader), red when there's none. Sortable, so the problem covers
   group together. Only the image header is read, so it's instant.
-- **Find Better Covers** (Operations menu) — for the selected books
+- **Find Better Covers** (Metadata > Cover) — for the selected books
   (or all) with an ISBN, looks up Open Library's cover for that ISBN
   and offers the ones LARGER than the current cover (or where there's
   none), current and found side by side with their sizes. Untick any
@@ -125,9 +127,8 @@ them in one go.
   bottom). A plain bulk-edit can't do this, since applying one value to
   every selected book is the opposite of what you want when numbering
   an entire series — set a starting number and a step (fractional steps
-  work too), preview before applying. Right-click the selection for a
-  quicker version that just asks for a starting value and counts up by
-  one per row.
+  work too), preview before applying. The table's right-click menu
+  (Organize > Number Series…) opens the same dialog.
 - **Polish Book** — applies Calibre's `ebook-polish` cleanups: smarten
   punctuation, subset/embed fonts, compress images, remove unused CSS,
   add/remove soft hyphens, insert/remove a book jacket page, upgrade
@@ -198,7 +199,7 @@ them in one go.
   model.
 - **Delete Files** — sends files to the Recycle Bin (recoverable, not a
   permanent delete), with a confirmation prompt listing what's about to
-  go.
+  go; the status bar confirms how many went.
 - **Refresh List** — re-scans the folders your loaded books live in for
   new files, then reloads everything fresh from disk (discarding any
   unsaved in-memory edits, with confirmation first). Always tells you
@@ -251,12 +252,22 @@ them in one go.
 - Load individual files, or one or more folders of `.epub` files (the
   folder picker supports Ctrl/Shift-click to select several folders at
   once, since Windows' native one can't — it's Qt's own file dialog for
-  that reason, not the native folder browser; asks once, for all of
-  them, whether to include subfolders); remembers the last folder you
-  used across all "open a file/folder" dialogs, including the
-  cover-image picker. Load Folder replaces the current list rather than
-  adding to it (with the usual unsaved-changes confirmation first) —
-  Load Files and drag-and-drop still add to whatever's already loaded.
+  that reason, not the native folder browser); remembers the last folder
+  you used across all "open a file/folder" dialogs, including the
+  cover-image picker. **File > Include Subfolders** (a tick-mark item
+  right under Open Folder, shared by the whole Redactor family) decides
+  whether Open Folder, drag-and-drop of a folder and Refresh List also
+  look in subfolders; it is remembered. File > Open Folder replaces the
+  current list rather than adding to it (with the usual unsaved-changes
+  confirmation first), and a folder with nothing to open leaves the
+  current list alone — File > Open Files and drag-and-drop still add to
+  whatever's already loaded.
+- **Other e-book formats in an opened folder** — Open Folder loads only
+  `.epub`, but when the folder (and, with Include Subfolders, its
+  subfolders) also holds books Calibre can convert (MOBI, AZW3, FB2,
+  DOCX, ...), it says how many and of which kinds and offers to open
+  **Import and Convert** with them already listed; converted books join
+  the list.
 - Remembers exactly which books were loaded when you last closed the
   app, and reopens with the same set loaded automatically — a book
   that's since moved or been deleted is skipped quietly rather than
@@ -345,7 +356,7 @@ them in one go.
   and common formats; picking one appends it to the field without
   replacing anything you've already typed, and won't add a duplicate.
   The field stays free text at all times.
-- **Import > Suggest Genres…** proposes genres for the selected books
+- **Metadata > Suggest Genres…** proposes genres for the selected books
   from their folder path (".../Fantasy/Epic/...", or a bracketed
   "[Sci-Fi]" tag in the filename), their description ("a psychological
   thriller"), catalog lines on their first pages (Library of Congress
@@ -547,7 +558,7 @@ stops with exit code 1 and says so.
 
 `epubredactor redact [PATH...] [--recipe FILE] [--enable STEP] [--disable STEP] [--threshold N] [--trash-dir FOLDER] [--list-steps]`
 
-Runs the Redact recipe on the books, the same steps as Operations > Redact: repair, clean up, tags from the path
+Runs the Redact recipe on the books, the same steps as Edit > Redact: repair, clean up, tags from the path
 and filename, lookups on Open Library, ISFDB and Google Books, cover, rename, move into folders. Each changed book
 is saved in place and its original goes to the Recycle Bin (or `--trash-dir`). Guesses below the confidence
 threshold are listed under "needs review" and not applied. There is no `--dry-run`: use `info` and `validate`
@@ -969,27 +980,73 @@ CREDITS.md (Help > Credits).
 
 ## Notes on the menu bar
 
+The menus follow the Redactor family's shared skeleton (redactor_common's
+standard menus and labels), so the same command sits in the same place
+with the same key in every app:
+
+- **File** — Open Files…, Open Folder…, Include Subfolders, Import and
+  Convert… | Save As…, Save All | Rename File…, Undo Last Rename,
+  Rename / Export / Move… | Read Book… | Export Settings…, Import
+  Settings… | Remove from List, Clear List, Delete Files… | Exit
+- **Edit** — Undo, Redo | Apply to N Selected | Redact, Edit Redact
+  Recipe… | Search and Replace…, Change Case…, Filter List
+- **View** — Show Metadata Panel | Zoom In, Zoom Out, Reset Zoom | Text
+  Wrapping (Wrap / Truncate / Clip) | Refresh List, Command Palette…
+- **Metadata** — Parse Filename…, Scan File Content… | Look Up (Google
+  Books, Open Library, Open Library (Local Database), ISFDB (Local
+  Database), Calibre) | Suggest Genres…, Convert Author Sort…, Number
+  Series… | Cover (Find Better Covers…, Generate Cover from Metadata…,
+  Regenerate Junk Covers…, Flag / Unflag Cover as Junk)
+- **Repair** — Validate and Fix…, Rebuild Manifest…, Deduplicate
+  Manifest IDs…, Repair Navigation…, Find Duplicates… | Generate Table
+  of Contents…, Detect Missing Spaces…, Remove Running Headers and Page
+  Numbers…, Strip HTML from Description…, Clean Up Authors… | Polish
+  Book…, Compress Images… | Set Blank Language to Default…
+- **Send** — Send to Kobo (USB)…, Send to eReader (Wireless)…, Open in
+  Sigil… (asks first above 5 books, at most 25 at a time: each book
+  opens its own Sigil window)
+- **Tools** — Preferences… | Open Library Database…, ISFDB Database… |
+  Columns…, Genres…, Languages… | Enable Performance Logging, Open
+  Performance Log…
+- **Help** — Changelog…, Credits… | About The ƎPUB Redactor
+
+The right-click menu on the table repeats the per-book commands (Rename
+File, Look Up, Read Book, Organize > Rename / Export / Move and Number
+Series — the same dialog, with its preview, as the Metadata menu's —
+Cover, Redact, Validate and Fix, Open in Sigil, Send to, Remove from
+List, Delete Files).
+
 Keyboard shortcuts:
 
 | Action | Shortcut |
 |---|---|
-| Load Files | Ctrl+O |
-| Load Folder | Ctrl+Shift+O |
-| Save Files | Ctrl+S |
-| Save As Copy | F4 |
-| Rename Files (Rename/Export by Pattern) | F2 |
-| Import Metadata from Filename | F3 |
-| Remove Files (from the list only) | Delete |
-| Delete Files (to Recycle Bin) | F8 |
-| Refresh List | F5 or Ctrl+R |
-| Undo | Ctrl+Z |
-| Exit | Alt+F4 (native Windows close, not a custom binding) |
+| File > Open Files | Ctrl+O |
+| File > Open Folder | Ctrl+Shift+O |
+| File > Save As | Ctrl+Shift+S |
+| File > Save All | Ctrl+Shift+A (Ctrl+S still works for one more release) |
+| File > Rename File | F2 |
+| File > Rename / Export / Move | Ctrl+E |
+| File > Remove from List | Delete |
+| File > Delete Files (to the Recycle Bin) | Shift+Delete (F8 still works for one more release) |
+| Edit > Undo / Redo | Ctrl+Z / Ctrl+Y |
+| Edit > Apply to N Selected | Ctrl+Enter |
+| Edit > Redact | Ctrl+Shift+E |
+| Edit > Search and Replace | Ctrl+H |
+| Edit > Filter List | Ctrl+F |
+| View > Zoom In / Zoom Out / Reset Zoom | Ctrl++ / Ctrl+- / Ctrl+0 |
+| View > Refresh List | F5 or Ctrl+R |
+| View > Command Palette | Ctrl+K |
+| Metadata > Parse Filename | Ctrl+I |
+| Tools > Preferences | Ctrl+, |
+| Exit | Alt+F4 (the native Windows close) |
 
-A couple of deliberate departures from your first-draft suggestions,
-to avoid colliding with strong existing Windows conventions: Load Files
-uses Ctrl+O instead of F1 (which is near-universally "Help"), Save uses
-only Ctrl+S (F3 is near-universally "Find Next"), and Remove Files uses
-the Delete key instead of Ctrl+X (which is near-universally "Cut").
+No shortcut uses Ctrl+Alt: on Norwegian and other European keyboards
+AltGr is Ctrl+Alt, so such a shortcut would fire while typing characters
+like @ or {. F1 is left free for help.
+
+When an action cannot do anything (F2 with no book or several books
+selected, Clear List on an empty list, and so on) the status bar at the
+bottom says why, rather than nothing happening.
 
 ## Notes on the Calibre lookup
 
@@ -1200,7 +1257,7 @@ Column **widths** are remembered across restarts, and only ever
 auto-fit to content once — the very first time you load books with
 nothing saved yet. After that, resizing a column (by dragging its edge)
 sticks, both for the rest of the session and the next time you open the
-app. Column **visibility** (Settings → Add/Remove Columns, or a column
+app. Column **visibility** (Tools > Columns, or a column
 header's own quick-hide) is remembered the same way.
 
 ## Project layout

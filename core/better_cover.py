@@ -2,7 +2,7 @@
 core/better_cover.py
 
 Looks up a book's cover by ISBN on Open Library's covers service, for
-Operations > Find Better Covers... (gui/better_cover_dialog.py): a
+Metadata > Cover > Find Better Covers... (gui/better_cover_dialog.py): a
 low-resolution or missing cover can be replaced by the larger image
 Open Library has for the same ISBN.
 

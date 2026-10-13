@@ -101,12 +101,26 @@ def test_declining_the_question_does_nothing(tmp_path, monkeypatch):
 def test_a_renaming_run_updates_the_row_paths(tmp_path, monkeypatch):
     a = make_epub(str(tmp_path / "orig.epub"))
     window, env, trash, shown = _window(tmp_path, monkeypatch, a)
-    app_settings.save_pattern_used("%title%")  # a saved pattern turns the Rename step on
+    app_settings.save_pattern_used("%title%")
+    # The Rename step is off by default (a saved pattern alone no longer turns it on): tick it in the recipe.
+    recipe = window._redact_recipe()
+    recipe.enabled["rename"] = True
+    app_settings.save_redact_recipe(mw.recipe_to_setting(recipe))
     monkeypatch.setattr(QMessageBox, "question", staticmethod(lambda *args, **kw: YES))
     window.redact_books()
     assert [os.path.basename(b.path) for b in window.books] == ["Test Book.epub"]
     assert os.path.exists(tmp_path / "Test Book.epub") and not os.path.exists(a)
     assert window.table.item(0, mw.FILENAME_COL).text() == "Test Book.epub"
+
+
+def test_a_saved_pattern_alone_does_not_rename_on_redact(tmp_path, monkeypatch):
+    a = make_epub(str(tmp_path / "orig.epub"))
+    window, env, trash, shown = _window(tmp_path, monkeypatch, a)
+    app_settings.save_pattern_used("%title%")
+    monkeypatch.setattr(QMessageBox, "question", staticmethod(lambda *args, **kw: YES))
+    window.redact_books()
+    assert [os.path.basename(b.path) for b in window.books] == ["orig.epub"]
+    assert os.path.exists(a) and not os.path.exists(tmp_path / "Test Book.epub")
 
 
 def test_the_real_env_carries_the_app_settings(tmp_path, monkeypatch):

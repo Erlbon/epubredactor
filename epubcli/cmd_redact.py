@@ -1,12 +1,12 @@
 """
 epubcli/cmd_redact.py
 
-  redact PATH...   run the Redact recipe on the EPUB files: the same steps as Operations > Redact in the app
+  redact PATH...   run the Redact recipe on the EPUB files: the same steps as Edit > Redact in the app
                    (repair, clean up, tags from the path and filename, lookups on Open Library / ISFDB /
                    Google Books, cover, rename, move), saved in place with each original in the Recycle Bin
                    (or moved to --trash-dir).
 
-The recipe is the one saved in the app (Operations > Edit Redact Recipe) unless --recipe FILE names a JSON
+The recipe is the one saved in the app (Edit > Edit Redact Recipe) unless --recipe FILE names a JSON
 recipe; --enable / --disable / --threshold adjust it for this run only. The offline Open Library and ISFDB
 databases and the library root come from the app's settings. A cover that needs drawing (the "regenerate a
 junk cover" part of the cover step) needs the window's renderer and is skipped from the command line. Running

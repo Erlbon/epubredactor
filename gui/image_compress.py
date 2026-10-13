@@ -1,8 +1,8 @@
 """
 gui/image_compress.py
 
-The actual re-encoding step behind Operations -> Compress Images
-(Lossy) -- needs Qt's own image codecs (QImage), which is why it lives
+The actual re-encoding step behind Repair > Compress Images
+(lossy) -- needs Qt's own image codecs (QImage), which is why it lives
 here rather than in core/ (see core/cover_generator.py vs
 gui/cover_render.py for the same "no Qt in core/" split already used
 for covers).

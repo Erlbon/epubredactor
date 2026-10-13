@@ -1178,7 +1178,7 @@ class PathTagsStep(Step):
     label = "Fill empty fields from the folder path"
     description = (
         "Fills EMPTY fields from the folders the file sits in, read against the library root chosen in "
-        "File > Rename Files (Pattern) > Move into folders (the reverse of Move into folders). Needs a library "
+        "File > Rename / Export / Move (Move into folders; this step is its reverse). Needs a library "
         "root and a file under it. Applied at or above the confidence threshold, else listed for review."
     )
 
@@ -1202,7 +1202,7 @@ class PathTagsStep(Step):
             return StepResult.nothing(note="the folder pattern needs a / between folder and file name parts")
         if not env.library_root or not os.path.isdir(env.library_root):
             return StepResult.nothing(
-                note="no library root is set (choose one in File > Rename Files (Pattern) > Move into folders)"
+                note="no library root is set (choose one in File > Rename / Export / Move, Move into folders)"
             )
         if not _is_under(ctx.live.path, env.library_root):
             return StepResult.nothing(note="not under the library root, so its folders were not read")
@@ -1251,19 +1251,26 @@ def _same(a: str, b: str) -> bool:
 class RenameStep(Step):
     key = "rename"
     label = "Rename by pattern"
-    description = "Renames the finished file by the pattern below (File > Rename Files (Pattern)). Undo with File > Undo Last Rename."
+    description = (
+        "Renames the finished file by the pattern below (the same patterns as File > Rename / Export / "
+        "Move). Off by default: tick it here in Edit > Edit Redact Recipe to turn it on. Undo with "
+        "File > Undo Last Rename."
+    )
     position = "last"
+    default_enabled = False
 
     def __init__(self, pattern: str = "", default_enabled: bool | None = None, history=None, sample=None):
-        # Off unless the user has used a rename pattern before; while the
-        # recipe's pattern is empty it follows the most recent one.
+        # Off by default, like Move into folders: having used a rename
+        # pattern once is no request to rename every Redacted book. A saved
+        # recipe keeps whatever it saved. While the recipe's pattern is
+        # empty it follows the most recent one.
         self.options = (
             _pattern_spec(
                 "%title%, %authors%, %series% ...", lambda: pattern, "the last Rename/Export pattern",
                 history, sample, as_path=False,
             ),
         )
-        super().__init__(default_enabled=bool(pattern) if default_enabled is None else default_enabled)
+        super().__init__(default_enabled=False if default_enabled is None else default_enabled)
 
     def run(self, ctx: EpubCtx) -> StepResult:
         pattern = _effective_pattern(self, ctx)
@@ -1292,8 +1299,9 @@ class MoveIntoFoldersStep(Step):
     key = "move_into_folders"
     label = "Move into folders"
     description = (
-        "Moves the finished file into a folder tree under the library root chosen in File > Rename Files "
-        "(Pattern) > Move into folders. The pattern may contain / to make sub-folders. Off by default."
+        "Moves the finished file into a folder tree under the library root chosen in File > Rename / "
+        "Export / Move (Move into folders). The pattern may contain / to make sub-folders. Off by default: "
+        "tick it here in Edit > Edit Redact Recipe to turn it on."
     )
     position = "last"
     default_enabled = False
@@ -1318,7 +1326,7 @@ class MoveIntoFoldersStep(Step):
             return StepResult.nothing(note="no move pattern is set")
         if not env.library_root or not os.path.isdir(env.library_root):
             return StepResult.nothing(
-                note="no library root is set (choose one in File > Rename Files (Pattern) > Move into folders)"
+                note="no library root is set (choose one in File > Rename / Export / Move, Move into folders)"
             )
         if not ctx.ensure_saved():
             return StepResult.nothing()
@@ -1354,7 +1362,7 @@ def build_catalogue(
 ) -> list[Step]:
     """The steps the recipe editor offers, in default order.
     `rename_pattern` (the most recent saved one) is the Rename step's
-    fallback and turns it on. `path_pattern` (the most recent saved
+    fallback pattern (the step itself stays off by default). `path_pattern` (the most recent saved
     pattern with a / in it) is the folder-path steps' fallback while the
     recipe's pattern is empty. `history` (pattern history, newest first)
     and `sample` (first loaded book's placeholder values) feed the editor's

@@ -15,6 +15,7 @@ Calibre install once, and both features use it.
 from __future__ import annotations
 
 import os
+import threading
 
 from PyQt6.QtWidgets import (
     QDialog,
@@ -28,8 +29,9 @@ from PyQt6.QtWidgets import (
     QVBoxLayout,
 )
 
-from core.calibre_tools import find_tool
+from core.calibre_tools import cancellable_run, find_tool
 from core.ebook_convert import EbookConvertError, SUPPORTED_SOURCE_EXTENSIONS, convert_to_epub
+from redactor_common.gui.background_call import call_in_background
 from redactor_common.gui.progress import run_with_progress
 from core.rename_pattern import unique_path
 from gui import app_settings
@@ -161,21 +163,27 @@ class EbookConvertDialog(QDialog):
         succeeded: list[str] = []
         errors: list[str] = []
         taken: set[str] = set()
+        # Each conversion is one long ebook-convert process: it runs off the
+        # GUI thread (the window keeps painting) and Cancel kills it.
+        cancel = threading.Event()
+        run_fn = cancellable_run(cancel)
 
         def _step(source: str, _index: int) -> None:
             directory = os.path.dirname(source)
             stem = os.path.splitext(os.path.basename(source))[0]
             try:
                 output_path = unique_path(directory, stem, ".epub", taken)
-                convert_to_epub(self._tool_path, source, output_path)
+                call_in_background(convert_to_epub, self._tool_path, source, output_path, run_fn=run_fn)
                 succeeded.append(output_path)
                 taken.add(os.path.normcase(os.path.abspath(output_path)))
             except (EbookConvertError, OSError) as exc:
-                errors.append(f"{os.path.basename(source)}: {exc}")
+                if not cancel.is_set():
+                    errors.append(f"{os.path.basename(source)}: {exc}")
 
         run_with_progress(
             self, self._source_paths, _step, "Converting to EPUB…", threshold=1,
             label_for=lambda source: f"Converting: {os.path.basename(source)}",
+            on_cancel=cancel.set,
         )
         self._converted_paths = succeeded
 

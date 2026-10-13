@@ -315,7 +315,7 @@ class EpubBook:
         self._encrypted_paths: set[str] = set()
 
         # archive_path -> new bytes, staged by stage_image_replacement()
-        # (see Operations -> Compress Images (Lossy)), applied on the next
+        # (see Repair > Compress Images), applied on the next
         # save() the same way cover_changed is.
         self._image_replacements: dict[str, bytes] = {}
 
@@ -776,7 +776,7 @@ class EpubBook:
             issues.append(ValidationIssue(
                 "MANIFEST_FILE_MISSING", SEVERITY_ERROR,
                 f"{len(missing_hrefs)} file(s) referenced in the manifest are missing from "
-                f"the archive: {preview}. Use Operations \u2192 Rebuild Manifest to review and "
+                f"the archive: {preview}. Use Repair > Rebuild Manifest to review and "
                 f"remove the broken references (not offered here as a one-click fix, since it "
                 f"can affect reading-order content if the missing file is a spine document).",
                 fixable=False,
@@ -1340,7 +1340,7 @@ class EpubBook:
         return sorted(paths)
 
     # ------------------------------------------------------------------
-    # Lossy image compression (see Operations -> Compress Images (Lossy)):
+    # Lossy image compression (see Repair > Compress Images):
     # re-encoding is real image work (needs Qt's QImage), which lives in
     # gui/image_compress.py -- this app's own "core/ has no Qt" split
     # (see core/cover_generator.py vs gui/cover_render.py for the same

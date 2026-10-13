@@ -1,7 +1,7 @@
 """
 gui/better_cover_dialog.py
 
-Operations > Find Better Covers...: the review step. For each book where
+Metadata > Cover > Find Better Covers...: the review step. For each book where
 Open Library has a LARGER cover for its ISBN (core/better_cover.py) --
 or the book has none -- the current and the found cover side by side
 with their sizes, ticked by default. The main window applies the ticked
@@ -26,8 +26,10 @@ from PyQt6.QtWidgets import (
 )
 
 from gui.cover_quality import image_size
+from redactor_common.gui.progress import run_with_progress
 
 THUMB = QSize(90, 135)
+THUMBNAIL_PROGRESS_THRESHOLD = 20
 
 
 def _thumbnail_item(data, caption: str) -> QTableWidgetItem:
@@ -72,7 +74,8 @@ class BetterCoverDialog(QDialog):
         self.table.horizontalHeader().setSectionResizeMode(0, QHeaderView.ResizeMode.Stretch)
         self.table.setColumnWidth(1, 200)
         self.table.setColumnWidth(2, 200)
-        for row, (book, data) in enumerate(found):
+        def _add_row(pair, row: int) -> None:
+            book, data = pair
             title = getattr(book.metadata, "title", "") or os.path.basename(book.path)
             name = QTableWidgetItem(title)
             name.setToolTip(book.path)
@@ -81,6 +84,13 @@ class BetterCoverDialog(QDialog):
             self.table.setItem(row, 0, name)
             self.table.setItem(row, 1, _thumbnail_item(book.cover_bytes, _size_text(book.cover_bytes)))
             self.table.setItem(row, 2, _thumbnail_item(data, _size_text(data)))
+
+        # Two image decodes and scales per row: hundreds of rows take a while.
+        # The dialog isn't shown yet, so the progress hangs off the main window.
+        run_with_progress(
+            parent if parent is not None else self, found, _add_row, "Preparing cover previews…",
+            threshold=THUMBNAIL_PROGRESS_THRESHOLD, cancellable=False, update_every=5,
+        )
         layout.addWidget(self.table)
 
         buttons = QDialogButtonBox(QDialogButtonBox.StandardButton.Cancel)

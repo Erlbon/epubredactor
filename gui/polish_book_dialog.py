@@ -21,6 +21,7 @@ originals untouched and adds the copies to the working list instead.
 from __future__ import annotations
 
 import os
+import threading
 import webbrowser
 
 from PyQt6.QtWidgets import (
@@ -38,10 +39,11 @@ from PyQt6.QtWidgets import (
     QVBoxLayout,
 )
 
-from core.calibre_tools import DOWNLOAD_URL, find_tool
+from core.calibre_tools import DOWNLOAD_URL, cancellable_run, find_tool
 from core.ebook_polish import EbookPolishError, PolishOptions, polish_book
 from core.epub_metadata import EpubBook
 from core.rename_pattern import unique_path
+from redactor_common.gui.background_call import call_in_background
 from redactor_common.gui.progress import run_with_progress
 from gui import app_settings
 
@@ -229,26 +231,32 @@ class PolishBookDialog(QDialog):
         succeeded_export_paths: list[str] = []
         errors: list[str] = []
         taken: set[str] = set()
+        export = self.export_radio.isChecked()
+        # Each book is one long ebook-polish process: it runs off the GUI
+        # thread (the window keeps painting) and Cancel kills it.
+        cancel = threading.Event()
+        run_fn = cancellable_run(cancel)
 
         def _step(book: EpubBook, _index: int) -> None:
             tmp_path = None
             try:
-                if self.export_radio.isChecked():
+                if export:
                     stem = os.path.splitext(os.path.basename(book.path))[0]
                     ext = os.path.splitext(book.path)[1] or ".epub"
                     output_path = unique_path(self.output_folder, stem, ext, taken)
-                    polish_book(self._tool_path, book.path, output_path, options)
+                    call_in_background(polish_book, self._tool_path, book.path, output_path, options, run_fn=run_fn)
                     succeeded_export_paths.append(output_path)
                     taken.add(os.path.normcase(os.path.abspath(output_path)))
                 else:
                     root, ext = os.path.splitext(book.path)
                     tmp_path = f"{root}.polish_tmp{ext}"
-                    polish_book(self._tool_path, book.path, tmp_path, options)
+                    call_in_background(polish_book, self._tool_path, book.path, tmp_path, options, run_fn=run_fn)
                     os.replace(tmp_path, book.path)
                     tmp_path = None  # renamed away, nothing left to clean up
                     succeeded_in_place.append(book)
             except (EbookPolishError, OSError) as exc:
-                errors.append(f"{os.path.basename(book.path)}: {exc}")
+                if not cancel.is_set():
+                    errors.append(f"{os.path.basename(book.path)}: {exc}")
                 if tmp_path and os.path.exists(tmp_path):
                     try:
                         os.remove(tmp_path)
@@ -258,6 +266,7 @@ class PolishBookDialog(QDialog):
         run_with_progress(
             self, self.eligible_books, _step, "Polishing\u2026", threshold=1,
             label_for=lambda book: f"Polishing: {os.path.basename(book.path)}",
+            on_cancel=cancel.set,
         )
         self._polished_in_place = succeeded_in_place
         self._exported_paths = succeeded_export_paths
