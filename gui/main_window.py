@@ -3168,10 +3168,9 @@ class MainWindow(QMainWindow):
             app_settings.save_redact_recipe(recipe_to_setting(dialog.recipe()))
 
     def _redact_env(self) -> RedactEnv:
-        """What one run's steps share (see core/redact_steps.py). Lookups
-        run off the main thread so the progress dialog stays alive."""
-        from redactor_common.gui.background_call import call_in_background
-
+        """What one run's steps share (see core/redact_steps.py). redactor_common's run_redact runs every book on a
+        worker thread, so the lookups are plain direct calls (`net` stays at its default): the call_in_background
+        helper only works ON the GUI thread."""
         return RedactEnv(
             rename_log=_rename_log(),
             library_root=app_settings.load_library_root(),
@@ -3180,7 +3179,6 @@ class MainWindow(QMainWindow):
             junk_hashes=self._junk_cover_hashes,
             make_cover=generate_cover_image,
             image_size=cover_quality.image_size,
-            net=call_in_background,
             openlibrary_local=app_settings.load_open_library_database(),
             isfdb_local=app_settings.load_isfdb_database(),
         )

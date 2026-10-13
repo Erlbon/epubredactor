@@ -1,5 +1,10 @@
 # Changelog
 
+## 2026-10-13#05 -- Redact no longer freezes the window on a slow book
+
+- Redact now runs each book on a worker thread (redactor_common 2026-10-13-06): the window keeps painting and Cancel stays clickable while a big save, a Calibre call or a lookup is running. Before, the window could freeze for the whole length of one slow book and the Cancel click was only seen between books. The lookups are plain direct calls now (they used to be handed to the GUI thread one by one).
+- Requires redactor_common 2026-10-13-06.
+
 All notable changes to The ƎPUB Redactor, by version. Trimmed to new
 functionality and real fixes — cosmetic/UX-only adjustments aren't
 listed here.

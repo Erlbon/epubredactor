@@ -49,3 +49,34 @@ def test_include_subfolders_setting_defaults_on_and_is_remembered(monkeypatch, t
     assert app_settings.load_include_subfolders() is False
     app_settings.save_include_subfolders(True)
     assert app_settings.load_include_subfolders() is True
+
+
+def test_redact_steps_may_draw_covers_on_a_worker_thread():
+    """redactor_common's run_redact now runs each book on a worker thread: the cover renderer and the image
+    sizer the Redact env hands the steps (Qt painting onto a QImage) must work off the GUI thread."""
+    import threading
+
+    from gui import cover_quality
+    from gui.cover_render import generate_cover_image
+
+    out = {}
+
+    def work():
+        try:
+            data = generate_cover_image("A Long Title For A Test Book", "Some Author", "The Series", "3")
+            out["size"] = cover_quality.image_size(data)
+        except BaseException as exc:  # noqa: BLE001
+            out["error"] = repr(exc)
+
+    worker = threading.Thread(target=work)
+    worker.start()
+    worker.join(30)
+    assert "error" not in out and out["size"] == (1200, 1800)
+
+
+def test_the_gui_redact_env_has_no_gui_thread_net_hook():
+    import inspect
+
+    from gui.main_window import MainWindow
+
+    assert "net=" not in inspect.getsource(MainWindow._redact_env)  # the steps run on a worker thread: direct calls

@@ -130,7 +130,7 @@ def test_the_real_env_carries_the_app_settings(tmp_path, monkeypatch):
     app_settings.save_rename_zero_pad(True, 3)
     env = window._redact_env()
     assert env.library_root == str(tmp_path) and env.ascii_only is True and env.zero_pad == (True, 3)
-    assert env.net is call_in_background and env.make_cover is mw.generate_cover_image
+    assert env.net is not call_in_background and env.make_cover is mw.generate_cover_image  # direct: run_redact is threaded now
     assert env.junk_hashes is window._junk_cover_hashes
 
 
