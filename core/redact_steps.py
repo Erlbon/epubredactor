@@ -70,6 +70,7 @@ from redactor_common.core.trash import move_to_trash
 
 from core.author_clean import clean_authors
 from core.better_cover import IsbnCoverError, IsbnCoverLimitError, fetch_cover_by_id, fetch_cover_by_isbn
+from core import history
 from core.content_scan import ContentScanResult, scan_book
 from core.description_html import has_html_markup, strip_html
 from core.epub_metadata import EpubBook, EpubError
@@ -394,10 +395,21 @@ class EpubCtx:
             raise _SaveProblem("failed", f"couldn't read the original again ({exc})") from exc
         temp = _unused_sibling(original)
         self._temp = temp
+        # One History journal entry per book (core/history.py; thread-safe,
+        # Redact runs here on a worker thread): announced before the original
+        # is touched, finished once the swap succeeded or failed.
+        entry = history.begin(
+            original, history.KIND_REDACT, work.baseline, history.fields_text(work),
+            cover_changed=bool(work.cover_changed or work.cover_removed),
+        )
         try:
-            _retry_transient(lambda: work.save(temp), OSError)
+            _retry_transient(lambda: work.save(temp, journal_kind=None), OSError)
         except (EpubError, OSError) as exc:
+            history.finish(entry, False, f"couldn't write the new file ({exc})")
             raise _SaveProblem("failed", f"couldn't write the new file ({exc})") from exc
+        except BaseException as exc:
+            history.finish(entry, False, str(exc) or type(exc).__name__)
+            raise
         try:
             done = _retry_transient(
                 lambda: commit_in_place(
@@ -407,7 +419,13 @@ class EpubCtx:
                 CommitError, only_if=lambda exc: any(m in str(exc) for m in _TRANSIENT_COMMIT_MESSAGES),
             )
         except CommitError as exc:
+            history.finish(entry, False, str(exc))
             raise _SaveProblem("failed", str(exc)) from exc
+        except BaseException as exc:
+            history.finish(entry, False, str(exc) or type(exc).__name__)
+            raise
+        history.finish(entry, True)
+        work.baseline = history.fields_text(work)
         self._temp = None
         self._stat = _stat_of(original)
         work.dirty = False

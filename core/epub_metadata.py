@@ -58,6 +58,7 @@ from lxml import etree
 from redactor_common.core.os_utils import replace_with_retry
 from redactor_common.core.scan_stamp import ScanStamp, make_stamp, parse_stamp
 
+from core import history
 from core.epub_fingerprint import entries_fingerprint, zip_fingerprint
 from core.validation_issue import (
     STATUS_INVALID,
@@ -362,6 +363,10 @@ class EpubBook:
     scan_stamp: Optional[ScanStamp] = None
     stamp_stale: Optional[bool] = None
     _stamp_follows_save: bool = False
+    # The text fields (core/history.fields_text) as they are in the file on
+    # disk: set on load and after every successful in-place save. None =
+    # unknown (a load failure, a test double), and then nothing is journaled.
+    baseline: Optional[dict] = None
 
     # ------------------------------------------------------------------
     # Loading
@@ -374,6 +379,11 @@ class EpubBook:
                 opf_data = zf.read(self.opf_path)
                 self._opf_tree = etree.fromstring(opf_data, parser=_xml_parser()).getroottree()
                 self.metadata = self._read_metadata()
+                # What the file holds now: the "old" side of the next save's journal
+        # entry. Taken even while the history is off: it is a cheap copy of
+        # strings already read, and turning the history on mid-session then
+        # records the very next save correctly.
+                self.baseline = history.fields_text(self.metadata)
                 self._load_cover(zf)
                 self._validate(zf)
                 self._read_stamp(zf)
@@ -1762,7 +1772,34 @@ class EpubBook:
     # Saving
     # ------------------------------------------------------------------
 
-    def save(self, output_path: Optional[str] = None) -> None:
+    def _journal_begin(self, target: str, in_place: bool, kind: Optional[str]) -> Optional[str]:
+        """Announces this save in the History journal (core/history.py):
+        the fields that differ from what the target file holds now. An
+        in-place save compares with the baseline; a copy that overwrites
+        an existing file compares with that file; a brand-new copy has
+        nothing to undo and records nothing."""
+        if kind is None or not history.history_enabled():
+            return None  # opt-in: off by default
+        current = history.fields_text(self.metadata)
+        if in_place:
+            return history.begin(
+                target, kind, self.baseline, current,
+                cover_changed=bool(self.cover_changed or self.cover_removed),
+            )
+        if not os.path.isfile(target):
+            return None
+        try:
+            existing = EpubBook(target)
+        except Exception:  # noqa: BLE001 - an unreadable target has no old values to keep
+            return None
+        if existing.load_error:
+            return None
+        return history.begin(
+            target, kind, existing.baseline, current,
+            cover_changed=existing.cover_bytes != self.cover_bytes,
+        )
+
+    def save(self, output_path: Optional[str] = None, *, journal_kind: Optional[str] = history.KIND_SAVE) -> None:
         """Write the updated metadata (and cover, if changed) back into an
         EPUB file.
 
@@ -1770,14 +1807,45 @@ class EpubBook:
         temp file + atomic replace, so a crash mid-write can't corrupt
         the original). Otherwise writes a new file at output_path,
         leaving the source untouched.
+
+        Every changed text field is recorded in the History journal as
+        `journal_kind` (None: not journaled -- Restore, whose dialog records
+        it, and Redact's temp-file write, which Redact records itself).
         """
         if self.load_error:
             raise EpubError(f"Cannot save, file failed to load: {self.load_error}")
 
         new_opf_bytes, file_ops = self._rebuild_opf()
         target = output_path or self.path
+        in_place = output_path is None or output_path == self.path
         tmp_fd_path = target + ".tmp_write"
+        entry = self._journal_begin(target, in_place, journal_kind)
+        try:
+            self._write_archive(target, tmp_fd_path, new_opf_bytes, file_ops)
+        except BaseException as exc:
+            history.finish(entry, False, str(exc) or type(exc).__name__)
+            raise
+        history.finish(entry, True)
+        # Only treat this as "saved" (clear dirty, adopt new path) when we
+        # actually overwrote this book's own file. Saving to a *different*
+        # path is a copy -- the original book is still exactly as dirty
+        # (or not) as it was before, and still lives at its original path.
+        if in_place:
+            self.path = target
+            self.dirty = False
+            self.cover_changed = False
+            self.cover_removed = False
+            self._orphan_files_to_remove = set()
+            self._image_replacements = {}
+            self._toc_files = {}
+            self._toc_in_tree = False
+            self._stamp_follows_save = False
+            self.baseline = history.fields_text(self.metadata)
+            self._refresh_stamp_staleness()
 
+    def _write_archive(self, target: str, tmp_fd_path: str, new_opf_bytes: bytes, file_ops: dict) -> None:
+        """The zip rewrite behind save(): a temp file beside `target`, then
+        an atomic replace."""
         try:
             with zipfile.ZipFile(self.path, "r") as src:
                 names = src.namelist()
@@ -1833,18 +1901,3 @@ class EpubBook:
                     os.remove(tmp_fd_path)
                 except OSError:
                     pass
-        # Only treat this as "saved" (clear dirty, adopt new path) when we
-        # actually overwrote this book's own file. Saving to a *different*
-        # path is a copy -- the original book is still exactly as dirty
-        # (or not) as it was before, and still lives at its original path.
-        if output_path is None or output_path == self.path:
-            self.path = target
-            self.dirty = False
-            self.cover_changed = False
-            self.cover_removed = False
-            self._orphan_files_to_remove = set()
-            self._image_replacements = {}
-            self._toc_files = {}
-            self._toc_in_tree = False
-            self._stamp_follows_save = False
-            self._refresh_stamp_staleness()

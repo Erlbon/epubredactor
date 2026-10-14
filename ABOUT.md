@@ -21,4 +21,8 @@ This program is coded using Claude AI. You might hate AI, but in the hands of an
 I've included the program code, the changelogs, and just about everything except the prompts, but if you are very curious, those too can be provided for further examination. 
 If you feel like getting your pitchfork ready, just don't use it. It's that simple. On the other side of the coin, small changes are very quick to implement if there is something that would improve your workflow. 
 
+### History of tag changes (opt-in)
+
+Tools > History can undo a Save or a Redact later, even after the program was closed, by writing a field's old text back. It is opt-in and off by default: nothing is recorded until you switch on "Keep a history of tag changes" under Tools > Preferences > History. It keeps the old and new text of changed metadata fields (never covers) for the last 90 days, at most 50,000 changes, in `epubredactor_journal.jsonl` next to the settings file. The command line follows the same setting: when it is off, `set`, `validate --fix` and `redact` record nothing. You can switch it off again, or delete the file from the same Preferences page.
+
 Pubocyno, August 2026

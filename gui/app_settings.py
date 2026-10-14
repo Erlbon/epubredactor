@@ -601,6 +601,23 @@ def save_perf_logging_enabled(enabled: bool) -> None:
     _settings().setValue(_PERF_LOGGING_ENABLED_KEY, bool(enabled))
 
 
+# ------------------------------------------------------------------
+# History (Tools > History, core/history.py) -- OPT-IN, off by default.
+# core/history.py reads the same key Qt-free (the command line obeys it).
+# ------------------------------------------------------------------
+
+HISTORY_ENABLED_KEY = "history/enabled"
+
+
+def load_history_enabled() -> bool:
+    from core.history import history_enabled
+    return history_enabled()
+
+
+def save_history_enabled(enabled: bool) -> None:
+    write_settings({HISTORY_ENABLED_KEY: bool(enabled)})
+
+
 _ASCII_FILENAMES_KEY = "rename/ascii_only"
 
 

@@ -45,6 +45,23 @@ def _isolated_settings_and_perf_flag(monkeypatch, tmp_path):
 
 
 @pytest.fixture(autouse=True)
+def _isolated_history_journal(monkeypatch, tmp_path, tmp_path_factory):
+    """The History journal (core/history.py) lives next to the settings and
+    is switched on by a key in them: tests read the test settings ini (as
+    gui/app_settings does above, so history is OFF unless a test turns it
+    on) and get a journal in a folder of their own, outside tmp_path so
+    tests that list tmp_path never see it."""
+    from core import history
+    from redactor_common.core.journal import Journal
+
+    monkeypatch.setattr(history, "_settings_ini_path", lambda: str(tmp_path / "settings.ini"))
+    folder = tmp_path_factory.mktemp("journal")
+    history.set_journal(Journal(str(folder / "history_journal.jsonl")))
+    yield
+    history.set_journal(None)
+
+
+@pytest.fixture(autouse=True)
 def _isolated_rename_log(monkeypatch, tmp_path):
     """File > Undo Last Rename's log (redactor_common's RenameLog) lives
     next to the settings -- the project folder when running from source.

@@ -32,7 +32,7 @@ def _dialog():
 
 def test_pages_and_no_auto_number_setting():
     dialog = _dialog()
-    assert dialog.page_titles() == ["Filenames", "Language", "Tools and Paths"]
+    assert dialog.page_titles() == ["Filenames", "Language", "Tools and Paths", "History"]
     keys = set(defaults(preferences.build_sections()))
     # this app has no Auto-Numbering (no such key or feature anywhere), so no padding setting for it
     assert KEY_AUTO_NUMBER_PADDING not in keys
@@ -60,6 +60,9 @@ def test_existing_ini_keys_are_the_ones_used():
     assert preferences.INI_KEYS[KEY_DEFAULT_LANGUAGE] == "language/blank_default_code"
     assert preferences.INI_KEYS[preferences.KEY_ISFDB_DB] == "isfdb/database"
     assert preferences.INI_KEYS[preferences.KEY_ISFDB_BACKUP] == "isfdb/backup"
+    # the key core/history.py reads Qt-free (the command line obeys it too)
+    from core import history
+    assert preferences.INI_KEYS[preferences.KEY_HISTORY_ENABLED] == history.ENABLED_KEY == "history/enabled"
 
 
 def test_dialog_shows_what_the_app_has_stored(tmp_path):

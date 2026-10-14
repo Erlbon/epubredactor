@@ -297,8 +297,8 @@ def test_a_new_error_in_the_written_file_is_caught_by_verification(tmp_path, env
     original = open(path, "rb").read()
     real_save = EpubBook.save
 
-    def corrupting_save(self, output_path=None):
-        real_save(self, output_path)
+    def corrupting_save(self, output_path=None, **kwargs):
+        real_save(self, output_path, **kwargs)
         with zipfile.ZipFile(output_path) as zf:  # drop a chapter the OPF still lists
             keep = {n: zf.read(n) for n in zf.namelist() if n != "OEBPS/ch1.xhtml"}
         with zipfile.ZipFile(output_path, "w") as zf:

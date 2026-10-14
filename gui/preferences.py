@@ -9,6 +9,7 @@ redactor_common with this app's pages.
   Language    shared: the blank-language default (with its on/off switch)
   Tools and Paths   Calibre folder, Sigil program, Open Library database and dumps,
                     ISFDB database and backup
+  History     the opt-in History journal (off by default) + Delete History...
 
 Text wrapping and performance logging are NOT here: they live in the menus
 (View > Text Wrapping, Tools > Enable Performance Logging), where the
@@ -33,8 +34,10 @@ from redactor_common.core.preferences import (
     filenames_section,
     language_section,
 )
+from PyQt6.QtWidgets import QHBoxLayout, QMessageBox, QPushButton
 from redactor_common.gui.preferences_dialog import PreferencesDialog
 
+from core import history
 from gui import app_settings
 
 # App-specific setting names.
@@ -46,6 +49,7 @@ KEY_OPENLIBRARY_AUTHORS = "openlibrary_authors_dump"
 KEY_OPENLIBRARY_WORKS = "openlibrary_works_dump"
 KEY_ISFDB_DB = "isfdb_database"
 KEY_ISFDB_BACKUP = "isfdb_backup"
+KEY_HISTORY_ENABLED = "history_enabled"
 
 # setting name -> the ini key it has always been stored under.
 INI_KEYS = {
@@ -62,7 +66,20 @@ INI_KEYS = {
     KEY_OPENLIBRARY_WORKS: "openlibrary/works_dump",
     KEY_ISFDB_DB: "isfdb/database",
     KEY_ISFDB_BACKUP: "isfdb/backup",
+    KEY_HISTORY_ENABLED: app_settings.HISTORY_ENABLED_KEY,
 }
+
+HISTORY_LABEL = "Keep a history of tag changes (lets you undo a Save or Redact later)"
+
+
+def history_help() -> str:
+    return (
+        "Off by default. When on, every metadata change this program saves into a book (Save, Redact, the "
+        "command line) is recorded with the old and new text of each changed field, so Tools > History can "
+        "write the old values back. Covers are never stored. It keeps the last 90 days, at most 50,000 "
+        f"changes, in {history.journal_path()}. You can switch it off again at any time; what is already "
+        "recorded stays until you delete it."
+    )
 
 
 def build_sections() -> list[PrefSection]:
@@ -118,7 +135,48 @@ def build_sections() -> list[PrefSection]:
             overrides={KEY_DEFAULT_LANGUAGE: {"choices": languages}},
         ),
         tools,
+        PrefSection(
+            "history", "History",
+            (PrefSpec(KEY_HISTORY_ENABLED, HISTORY_LABEL, "bool", False, help=history_help()),),
+            "An undo for saved changes, kept between sessions (Tools > History).",
+        ),
     ]
+
+
+def add_delete_history_button(dialog: PreferencesDialog) -> QPushButton:
+    """"Delete History..." under the History checkbox: asks, then removes the journal file (Recycle Bin).
+    It acts at once (a file, not a setting), so OK / Cancel do not apply to it."""
+    checkbox = dialog.control(KEY_HISTORY_ENABLED)
+    container = checkbox.parentWidget()
+    button = QPushButton("&Delete History...")
+    button.setToolTip("Removes the recorded history file (to the Recycle Bin). Asks first.")
+
+    def _delete() -> None:
+        if not history.journal_exists():
+            QMessageBox.information(dialog, "Delete History", "There is no recorded history to delete.")
+            return
+        answer = QMessageBox.question(
+            dialog, "Delete History",
+            f"Delete the recorded history?\n\n{history.journal_path()}\n\nThe file goes to the Recycle Bin; "
+            "Tools > History will be empty, and older changes can no longer be restored from there.",
+            QMessageBox.StandardButton.Yes | QMessageBox.StandardButton.Cancel,
+        )
+        if answer != QMessageBox.StandardButton.Yes:
+            return
+        problem = history.delete_journal()
+        if problem:
+            QMessageBox.warning(dialog, "Delete History", f"Not deleted: {problem}")
+        else:
+            QMessageBox.information(dialog, "Delete History", "The history was deleted.")
+
+    button.clicked.connect(_delete)
+    row = QHBoxLayout()
+    row.setContentsMargins(22, 2, 0, 0)
+    row.addWidget(button)
+    row.addStretch(1)
+    container.layout().addLayout(row)
+    dialog.delete_history_button = button
+    return button
 
 
 def make_backend() -> CallbackBackend:
@@ -132,4 +190,6 @@ def make_backend() -> CallbackBackend:
 
 
 def make_dialog(parent=None) -> PreferencesDialog:
-    return PreferencesDialog(build_sections(), make_backend(), parent)
+    dialog = PreferencesDialog(build_sections(), make_backend(), parent)
+    add_delete_history_button(dialog)
+    return dialog

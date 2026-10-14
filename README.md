@@ -405,6 +405,26 @@ them in one go.
   those are already deliberate, explicitly-confirmed actions, and undoing
   a completed rename or overwrite would mean touching the filesystem
   again in ways that could surprise you.
+- **History** (Tools > History…) — undoes a Save after the fact, even
+  after the app was closed. **Opt-in, off by default**: nothing is
+  recorded until you tick "Keep a history of tag changes" under Tools >
+  Preferences > History (or answer Yes when Tools > History asks); the
+  command line obeys the same setting. That page also has "Delete
+  History…", which sends the journal file to the Recycle Bin. When it
+  is on, every tag change written into a file (Save
+  All, Save As over an existing file, the command line, Redact, a
+  metadata change made by Polish Book, and Restore itself) is recorded
+  with the old and new text of each changed field. Pick an entry and
+  click "Restore Old Values…" to write the old values back (the restore
+  is recorded too, so it can be undone in turn); a restored book that
+  is loaded in the list is re-read from disk. Covers are **not** kept
+  (only "cover changed" is noted), and a field longer than 20,000
+  characters (a huge description) is noted but cannot be restored.
+  Replaced or converted files are in the Recycle Bin instead. The
+  journal is `epubredactor_journal.jsonl` next to the settings file
+  (beside the exe, or the project folder when running from source),
+  keeps the newest 50,000 changes up to 90 days old, and a problem
+  writing it never stops a save (the status bar says so once).
 
 ## Command line
 
@@ -1006,8 +1026,8 @@ with the same key in every app:
   Sigil… (asks first above 5 books, at most 25 at a time: each book
   opens its own Sigil window)
 - **Tools** — Preferences… | Open Library Database…, ISFDB Database… |
-  Columns…, Genres…, Languages… | Enable Performance Logging, Open
-  Performance Log…
+  Columns…, Genres…, Languages… | History… | Enable Performance Logging,
+  Open Performance Log…
 - **Help** — Changelog…, Credits… | About The ƎPUB Redactor
 
 The right-click menu on the table repeats the per-book commands (Rename

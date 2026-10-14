@@ -1,5 +1,13 @@
 # Changelog
 
+## 2026-10-14#04 -- Tools > History: undo a Save after the app was closed (opt-in)
+
+- **Opt-in, off by default.** Nothing is recorded, and no file is created, until you tick "Keep a history of tag changes (lets you undo a Save or Redact later)" under Tools > Preferences > History. That page says what is kept and where, and has "Delete History…" (asks first, sends the file to the Recycle Bin). Tools > History with the history off asks whether to turn it on; if it is off but older history exists, the dialog opens titled "History (recording is off)". The command line obeys the same setting.
+- **New: Tools > History…** When the history is on, every tag change written into a file is recorded in an operations journal with the old and new text of each changed field: Save All, Save As over an existing file, Rename (its save of unsaved edits), the command line (`set`, `validate --fix`), Redact (one entry per book), a metadata change made by Polish Book, and Restore itself. Pick an entry and "Restore Old Values…" writes the old values back through the normal save path and reads the file back to check; restored books that are loaded in the list are re-read from disk.
+- Covers are not kept (only "cover changed" is noted), and a field longer than 20,000 characters (a huge description) is noted as too long and is never restored. Replaced or converted files are still covered by the Recycle Bin.
+- The journal is `epubredactor_journal.jsonl` next to the settings file; it keeps the newest 50,000 changes up to 90 days old. A save with no real field change records nothing, a failed save is recorded as failed, and a problem writing the journal never stops a save (the status bar, or stderr on the command line, says so once).
+- Requires redactor_common 2026-10-14-03.
+
 ## 2026-10-14#03 -- Three slow spots on a huge selection
 
 - **Undo / Redo:** capturing or restoring the state of thousands of selected books now shows a progress dialog once it passes 300 books (a small undo never flashes one); before, the window froze while every book was copied.

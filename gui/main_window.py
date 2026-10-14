@@ -62,6 +62,8 @@ from PyQt6.QtWidgets import (
 )
 
 from core.epub_metadata import EpubBook, EpubError
+from core import history
+from redactor_common.gui.history_dialog import HistoryDialog
 from core.fields import FIELDS, NUMERIC_FIELD_KEYS
 from core.genres import add_genres
 from core import perf_log
@@ -789,6 +791,7 @@ class MainWindow(QMainWindow):
             columns=self.open_column_settings_dialog,
             genres=self.open_genre_settings_dialog,
             languages=self.open_language_settings_dialog,
+            history=self.open_history_dialog,
         ) + [
             Separator(),
             MenuAction(
@@ -3056,7 +3059,15 @@ class MainWindow(QMainWindow):
         )
         return errors
 
+    def _show_journal_notice(self) -> None:
+        """A History journal write that failed (once per run) goes to the
+        status bar; the save itself went on regardless."""
+        notice = history.take_notice()
+        if notice:
+            self.status.showMessage(notice, 15000)
+
     def _report_save_result(self, attempted: int, errors: list[tuple[str, str]], in_place: bool) -> None:
+        self._show_journal_notice()
         if not errors:
             QMessageBox.information(self, "Saved", f"Successfully saved {attempted} file(s).")
             return
@@ -3187,6 +3198,7 @@ class MainWindow(QMainWindow):
 
         self._rebuild_table()
         self._refresh_status()
+        self._show_journal_notice()
 
         total = len(planned)
         if not errors:
@@ -3325,6 +3337,7 @@ class MainWindow(QMainWindow):
         self.undo_act.setEnabled(False)
         self.redo_act.setEnabled(False)
         self._reload_redacted(env.touched)
+        self._show_journal_notice()
         if report is not None:
             RedactResultsDialog(
                 report, self, title="Redact results",
@@ -4139,8 +4152,17 @@ class MainWindow(QMainWindow):
             # real file change. Undo entries may reference the
             # now-superseded book objects, so the stack is cleared too.
             fresh: dict[int, EpubBook] = {}
+
+            def _reload_polished(old: EpubBook, _i: int) -> None:
+                new = EpubBook(old.path)
+                fresh[id(old)] = new
+                # Calibre rewrote the file itself: if that changed a metadata
+                # field, the History journal records it (old = the file before).
+                if new.baseline is not None:
+                    history.record(old.path, history.KIND_SAVE, old.baseline, new.baseline, note="Calibre Polish")
+
             run_with_progress(
-                self, polished_in_place, lambda old, _i: fresh.__setitem__(id(old), EpubBook(old.path)),
+                self, polished_in_place, _reload_polished,
                 "Reloading…", threshold=LOAD_PROGRESS_THRESHOLD, cancellable=False,
                 label_for=lambda old: f"Loading: {os.path.basename(old.path)}",
             )
@@ -4159,6 +4181,69 @@ class MainWindow(QMainWindow):
             if exported_paths:
                 msg += f", exported {len(exported_paths)} polished copy/copies"
             QMessageBox.information(self, "Polished", msg + ".")
+
+    # ------------------------------------------------------------------
+    # Tools > History (the operations journal, core/history.py)
+    # ------------------------------------------------------------------
+
+    def open_history_dialog(self) -> None:
+        # Opt-in (off by default): nothing is recorded until the user turns it on.
+        title = "History"
+        if not history.history_enabled():
+            if not history.journal_exists():
+                answer = QMessageBox.question(
+                    self, "History",
+                    "History is off. Turn it on? From then on, metadata changes this program saves are "
+                    "recorded here. Nothing has been recorded so far.",
+                    QMessageBox.StandardButton.Yes | QMessageBox.StandardButton.No,
+                )
+                if answer != QMessageBox.StandardButton.Yes:
+                    return
+                app_settings.save_history_enabled(True)
+            else:
+                title = "History (recording is off)"
+        restored: list[str] = []
+
+        def _apply_restore(path: str, values: dict) -> str:
+            # Runs on the dialog's worker thread: no widgets here, only the
+            # file write and a note of the path for the refresh below.
+            problem = history.apply_restore(path, values)
+            if not problem:
+                restored.append(path)
+            return problem
+
+        HistoryDialog(history.get_journal(), _apply_restore, self, title).exec()
+        self._reload_restored(restored)
+
+    def _reload_restored(self, paths: list[str]) -> None:
+        """Re-reads every loaded book whose file a History restore rewrote,
+        so its row shows what is on disk now. Unsaved edits on such a book
+        are replaced by the file's restored values (the status bar says so)."""
+        wanted = {os.path.normcase(os.path.abspath(p)) for p in paths}
+        stale = [b for b in self.books if os.path.normcase(os.path.abspath(b.path)) in wanted]
+        if not stale:
+            return
+        had_edits = sum(1 for b in stale if b.dirty and not b.stamp_only_dirty)
+        fresh: dict[int, EpubBook] = {}
+        run_with_progress(
+            self, stale, lambda old, _i: fresh.__setitem__(id(old), EpubBook(old.path)),
+            "Reloading…", threshold=LOAD_PROGRESS_THRESHOLD, cancellable=False,
+            label_for=lambda old: f"Loading: {os.path.basename(old.path)}",
+        )
+        selected = self._currently_selected_books()
+        self.books = [fresh.get(id(b), b) for b in self.books]
+        # Undo entries may reference the replaced book objects (as after Polish).
+        self.undo_manager = UndoManager(max_entries=UNDO_MAX_ENTRIES)
+        self.undo_act.setEnabled(False)
+        self.redo_act.setEnabled(False)
+        self._rebuild_table()
+        self._select_books([fresh.get(id(b), b) for b in selected])
+        self._refresh_status()
+        self._on_selection_changed()
+        message = f"History: reloaded {len(stale)} restored book(s) from disk."
+        if had_edits:
+            message += f" {had_edits} of them had unsaved edits, now replaced by the restored file."
+        self.status.showMessage(message, 10000)
 
     # ------------------------------------------------------------------
     # Send to Kobo (USB) / Send to eReader (Wireless)
