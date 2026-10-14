@@ -377,7 +377,7 @@ def test_build_options_round_trip_in_settings():
 
 
 def test_dialog_shows_status_builds_and_saves(dumps, tmp_path, monkeypatch):
-    import gui.open_library_settings_dialog as module
+    import redactor_common.gui.local_db_settings_dialog as module  # the shared build tail runs the build
     from gui.open_library_settings_dialog import OpenLibrarySettingsDialog
 
     dest = str(tmp_path / "dialog.db")
@@ -411,7 +411,7 @@ def test_dialog_shows_status_builds_and_saves(dumps, tmp_path, monkeypatch):
 
 
 def test_dialog_reports_a_failed_build_and_a_cancel(dumps, tmp_path, monkeypatch):
-    import gui.open_library_settings_dialog as module
+    import redactor_common.gui.local_db_settings_dialog as module  # the shared build tail runs the build
     from gui.open_library_settings_dialog import OpenLibrarySettingsDialog
 
     dest = str(tmp_path / "failed.db")

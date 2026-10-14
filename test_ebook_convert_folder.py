@@ -1,13 +1,15 @@
-"""Open Folder tells about e-books in other formats that Calibre can convert (core.ebook_convert.find_convertible_in_folder)
-and hands them to the Import and Convert dialog (titled "Import to EPUB")."""
+"""Open Folder tells about e-books in other formats that Calibre can convert (gui.main_window.find_convertible_books,
+over redactor_common's find_by_extension) and hands them to the Import and Convert dialog (titled "Import to EPUB")
+through redactor_common's convert offer."""
 
 import os
 import sys
 
 from PyQt6.QtWidgets import QApplication
 
-from core.ebook_convert import find_convertible_in_folder
+import gui.main_window as mw
 from gui.ebook_convert_dialog import EbookConvertDialog
+from gui.main_window import find_convertible_books, find_epubs
 
 _app = QApplication.instance() or QApplication(sys.argv)
 
@@ -19,16 +21,66 @@ def _tree(root):
         path.write_text("x")
 
 
+def _rel(paths, root):
+    return [os.path.relpath(p, root).replace(os.sep, "/") for p in paths]
+
+
 def test_finds_book_formats_in_subfolders_and_skips_notes_pages_and_comics(tmp_path):
     _tree(tmp_path)
-    found = [os.path.relpath(p, tmp_path).replace(os.sep, "/") for p in find_convertible_in_folder(str(tmp_path))]
+    found = _rel(find_convertible_books([str(tmp_path)]), tmp_path)
     assert found == ["b.mobi", "sub/c.AZW3", "sub/deep/d.fb2"]  # not .epub, .txt, .html, .cbz, .docx, .jpg
 
 
 def test_non_recursive_lists_only_the_folder_itself(tmp_path):
     _tree(tmp_path)
-    assert [os.path.basename(p) for p in find_convertible_in_folder(str(tmp_path), recursive=False)] == ["b.mobi"]
-    assert find_convertible_in_folder(str(tmp_path / "missing")) == []
+    assert [os.path.basename(p) for p in find_convertible_books([str(tmp_path)], recursive=False)] == ["b.mobi"]
+    assert find_convertible_books([str(tmp_path / "missing")]) == []
+
+
+def test_epub_scans_skip_the_apps_own_leftovers(tmp_path):
+    """redactor_common's temp-name registry: a Redact backup or a hidden scratch copy left by a killed run never
+    shows up as a book in Open Folder / a drop / Refresh List; a file named directly is taken as meant."""
+    _tree(tmp_path)
+    for name in ("Dune.redact-orig.epub", ".Dune.redact-0123abcd.epub", ".epubredactor-scratch.epub", "sub/b.redact-orig.mobi",
+                 "My.Partial.Cut.epub"):
+        (tmp_path / name).write_text("x")
+    assert _rel(find_epubs([str(tmp_path)]), tmp_path) == ["a.epub", "My.Partial.Cut.epub"]
+    assert "sub/b.redact-orig.mobi" not in _rel(find_convertible_books([str(tmp_path)]), tmp_path)
+    named = str(tmp_path / "Dune.redact-orig.epub")
+    assert find_epubs([named]) == [named]
+
+
+def test_open_folder_offer_uses_the_shared_dialog_with_the_old_wording(tmp_path, monkeypatch):
+    seen = {}
+
+    def fake_offer(parent, found, loaded_count, kind_label, target_label, remember_key=None, remember=None, **kw):
+        seen.update(found=found, loaded=loaded_count, kind=kind_label, target=target_label, key=remember_key,
+                    remember=remember, **kw)
+        return "no"  # declined: the Import and Convert dialog is not opened
+
+    monkeypatch.setattr(mw, "offer_conversion", fake_offer)
+    window = mw.MainWindow()
+    window._offer_import_of_other_formats([str(tmp_path / "b.mobi")], [], [str(tmp_path)])
+    assert seen["converter"] == "Calibre" and seen["title"] == "Other E-book Formats Found"
+    assert seen["question"] == "Open File > Import and Convert with them listed?"
+    assert (seen["kind"], seen["target"], seen["yes_text"], seen["no_text"]) == ("EPUB", "EPUB", "Yes", "No")
+    assert seen["key"] == str(tmp_path) and seen["remember"] is not None
+    window._offer_import_of_other_formats([str(tmp_path / "b.mobi")], [], [str(tmp_path), str(tmp_path / "sub")])
+    assert seen["key"] is None and seen["remember"] is None  # "Don't ask again" only when one folder was opened
+
+
+def test_dont_ask_again_folders_are_kept_in_the_settings(tmp_path):
+    from redactor_common.gui.convert_offer import offer_text
+    from gui import app_settings
+
+    remember = mw._declined_convert_folders()
+    assert remember.is_declined(str(tmp_path)) is False
+    remember.decline(str(tmp_path))
+    assert mw._declined_convert_folders().is_declined(str(tmp_path))
+    assert len(app_settings.load_convert_offer_declined_folders()) == 1
+    text = offer_text(["a.mobi", "b.fb2"], 0, "EPUB", "EPUB", "file", "Calibre", "Open File > Import and Convert with them listed?")
+    assert text == ("No EPUB files found, but 2 file(s) in other formats (FB2, MOBI) that Calibre can convert to EPUB.\n\n"
+                    "Open File > Import and Convert with them listed?")
 
 
 def test_import_dialog_takes_the_listed_files_once(tmp_path):

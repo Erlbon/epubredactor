@@ -31,9 +31,7 @@ from PyQt6.QtWidgets import (
     QPushButton,
     QVBoxLayout,
 )
-from redactor_common.core.dump_import import DumpImportError
-from redactor_common.core.local_db import LocalDatabaseError, forget_cached
-from redactor_common.gui.dump_import_runner import run_dump_import
+from redactor_common.core.local_db import LocalDatabaseError
 from redactor_common.gui.local_db_settings_dialog import LocalDatabaseSettingsDialog
 
 from core.openlibrary_import import (
@@ -77,9 +75,13 @@ class OpenLibrarySettingsDialog(LocalDatabaseSettingsDialog):
             build=lambda dialog: self._build_database(),
             build_label="Build Database…",
             parent=parent,
+            # The shared build tail: the default path is the placeholder, Browse's start and the build's
+            # destination; Browse is a Save dialog (the file may not exist yet); a status line under the path.
+            default_path=app_settings.default_open_library_database_path,
+            browse_for_destination=True,
+            show_status=True,
         )
         self.setMinimumWidth(620)
-        self.path_edit.setPlaceholderText(app_settings.default_open_library_database_path())
         options = app_settings.load_open_library_build_options()
         editions, authors = app_settings.load_open_library_sources()
 
@@ -110,14 +112,7 @@ class OpenLibrarySettingsDialog(LocalDatabaseSettingsDialog):
         self.unknown_language.setChecked(options.include_unknown_language)
         layout.addWidget(self.unknown_language)
         self._sync_language_boxes()
-
-        self.status_label = QLabel()
-        self.status_label.setWordWrap(True)
-        # Between the path row and the Check File / Build row.
-        self.layout().insertWidget(2, box)
-        self.layout().insertWidget(2, self.status_label)
-        self.path_edit.textChanged.connect(self._refresh_status)
-        self._refresh_status()
+        self.add_section(box)  # under the status line, above the Check File / Build row
 
     # -- widgets -------------------------------------------------------------------------
 
@@ -149,27 +144,6 @@ class OpenLibrarySettingsDialog(LocalDatabaseSettingsDialog):
             language_box.setEnabled(not everything)
         self.unknown_language.setEnabled(not everything)
 
-    def _browse(self) -> None:
-        """The database may not exist yet, so this is a Save dialog that doesn't
-        ask to overwrite (picking an existing file just selects it)."""
-        path, _ = QFileDialog.getSaveFileName(
-            self, "Choose where the database is (or will be) stored",
-            self.path_edit.text().strip() or app_settings.default_open_library_database_path(),
-            self._file_filter, options=QFileDialog.Option.DontConfirmOverwrite,
-        )
-        if path:
-            self.path_edit.setText(path)
-
-    def _refresh_status(self) -> None:
-        path = self.path_edit.text().strip()
-        if not path:
-            self.status_label.setText("No database yet.")
-        elif not os.path.isfile(path):
-            self.status_label.setText("Not built yet -- the file doesn't exist.")
-        else:
-            ok, message = self.check_result()
-            self.status_label.setText(message if ok else f"Problem: {message}")
-
     # -- options / build -----------------------------------------------------------------
 
     def build_options(self) -> BuildOptions:
@@ -198,32 +172,14 @@ class OpenLibrarySettingsDialog(LocalDatabaseSettingsDialog):
         if not options.all_languages and not options.languages and not options.include_unknown_language:
             QMessageBox.information(self, "Build Database", "Tick at least one language, or All languages.")
             return None
-        dest = self.path_edit.text().strip() or app_settings.default_open_library_database_path()
-        replacing = (
-            "\n\nThe existing database is replaced only when the new one is complete." if os.path.exists(dest) else ""
+        # redactor_common's build tail: asks (adding "replaced only when the new one is complete" when the file
+        # exists), saves the sources first so they are remembered even if the build is cancelled, releases a
+        # cached open handle, builds on a worker thread behind a cancellable progress dialog, reports the result.
+        return self.run_build(
+            "Build Open Library Database", "Reading the Open Library dumps…",
+            lambda dest, progress, cancelled: build_openlibrary_database(
+                editions, dest, authors, options, progress, cancelled, works
+            ),
+            confirm="Build {name} from the dump(s)?\n\nIt reads the whole dump, which can take tens of minutes, "
+                    f"and needs a few GB of free disk space. Keeping: {options.describe()}.",
         )
-        answer = QMessageBox.question(
-            self, "Build Database",
-            f"Build {os.path.basename(dest)} from the dump(s)?\n\nIt reads the whole dump, which can take tens of "
-            f"minutes, and needs a few GB of free disk space. Keeping: {options.describe()}.{replacing}",
-        )
-        if answer != QMessageBox.StandardButton.Yes:
-            return None
-        self._save_all(dest)  # remember the sources even if the build is cancelled
-        forget_cached(dest)  # a lookup may still hold the old build open
-        try:
-            summary = run_dump_import(
-                self, "Build Open Library Database", "Reading the Open Library dumps…",
-                lambda progress, cancelled: build_openlibrary_database(
-                    editions, dest, authors, options, progress, cancelled, works
-                ),
-            )
-        except DumpImportError as exc:
-            QMessageBox.warning(self, "Build Open Library Database", str(exc))
-            return None
-        if summary is None:
-            return None
-        QMessageBox.information(self, "Build Open Library Database", summary.describe())
-        self.path_edit.setText(dest)
-        self._refresh_status()
-        return dest

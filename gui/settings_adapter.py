@@ -26,6 +26,7 @@ from core.version import APP_VERSION
 from gui import app_settings
 from redactor_common.core import managed_list, pattern_history
 from redactor_common.core import settings_bundle as sb
+from redactor_common.core import settings_coerce as sc
 
 HISTORY_SECTION_LABEL = (
     "History on/off (Tools > History; importing this section can turn recording of tag changes on or off)"
@@ -54,41 +55,23 @@ _MACHINE_SECTIONS = [
 ]
 
 
+# The value checks are redactor_common's core/settings_coerce (shared by all four apps' adapters).
+
 def _text(settings, key: str, default: str = "") -> str:
-    return str(settings.value(key, default, type=str) or "")
-
-
-def _json_list(settings, key: str) -> list:
-    """A list stored as JSON text; [] when missing or corrupt."""
-    try:
-        data = json.loads(_text(settings, key))
-    except (ValueError, TypeError):
-        return []
-    return data if isinstance(data, list) else []
+    return sc.raw_text(settings.value(key), default)
 
 
 def _str_list(value: Any) -> list[str] | None:
     """A list of non-blank strings (blanks dropped), or None if `value` isn't a list of strings."""
-    if not isinstance(value, list) or not all(isinstance(v, str) for v in value):
-        return None
-    return [v for v in value if v.strip()]
+    return sc.coerce_str_list(value, drop_blank=True)
 
 
 def _pair_list(value: Any) -> list[list[str]] | None:
     """[[code, name], ...] with both parts non-blank strings, or None if malformed."""
-    if not isinstance(value, list):
-        return None
-    pairs = []
-    for item in value:
-        if not (isinstance(item, (list, tuple)) and len(item) == 2
-                and all(isinstance(p, str) and p.strip() for p in item)):
-            return None
-        pairs.append([item[0], item[1]])
-    return pairs
+    return sc.coerce_pairs(value, require_nonblank=True, as_lists=True)
 
 
-def _flag(value: Any) -> bool | None:
-    return value if isinstance(value, bool) else None
+_flag = sc.coerce_bool
 
 
 class EpubSettingsAdapter(sb.SettingsAdapter):
@@ -117,12 +100,13 @@ class EpubSettingsAdapter(sb.SettingsAdapter):
         if key == "patterns":
             return {"history": pattern_history.decode_history(_text(s, "rename/pattern_history"))}
         if key == "field_defaults":
+            zero_pad_enabled, zero_pad_width = app_settings.load_rename_zero_pad()
             return {
-                "blank_language_enabled": bool(s.value("language/blank_default_enabled", True, type=bool)),
+                "blank_language_enabled": app_settings.load_blank_language_default_enabled(),
                 "blank_language_code": app_settings.load_blank_language_default_code(),
-                "ascii_filenames": bool(s.value("rename/ascii_only", False, type=bool)),
-                "zero_pad_enabled": bool(s.value("rename/zero_pad_enabled", False, type=bool)),
-                "zero_pad_width": int(s.value("rename/zero_pad_width", 2, type=int)),
+                "ascii_filenames": app_settings.load_ascii_filenames(),
+                "zero_pad_enabled": zero_pad_enabled,
+                "zero_pad_width": zero_pad_width,
             }
         if key == "columns":
             return {
@@ -245,8 +229,8 @@ class EpubSettingsAdapter(sb.SettingsAdapter):
             app_settings.save_ascii_filenames(values["ascii_filenames"])
         if _flag(values.get("zero_pad_enabled")) is not None:
             s.setValue("rename/zero_pad_enabled", values["zero_pad_enabled"])
-        width = values.get("zero_pad_width")
-        if isinstance(width, int) and not isinstance(width, bool) and 1 <= width <= 10:
+        width = sc.coerce_int(values.get("zero_pad_width"), 1, 10)
+        if width is not None:
             s.setValue("rename/zero_pad_width", width)
 
     def _write_columns(self, s, values: dict[str, Any]) -> None:
@@ -254,11 +238,9 @@ class EpubSettingsAdapter(sb.SettingsAdapter):
         if hidden is not None:
             # The filename column can never be hidden (see open_column_settings_dialog).
             app_settings.save_hidden_column_keys({k for k in hidden if k in self._column_keys and k != "filename"})
-        widths = values.get("widths")
-        if isinstance(widths, dict):
-            clean = {k: w for k, w in widths.items()
-                     if k in self._column_keys and isinstance(w, int) and not isinstance(w, bool) and w > 0}
-            app_settings.save_column_widths_by_key(clean)
+        widths = sc.coerce_width_map(values.get("widths"), allowed_keys=self._column_keys)
+        if widths is not None:
+            app_settings.save_column_widths_by_key(widths)
 
     @staticmethod
     def _write_lists(s, values: dict[str, Any]) -> None:

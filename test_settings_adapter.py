@@ -235,3 +235,20 @@ def test_import_refreshes_the_live_window():
     assert window.table.columnWidth(KEYS.index("status")) == 123
     assert window._text_overflow_mode == "clip"
     assert get_action_registry(window)["text_wrap_mode_clip"].isChecked()
+
+
+def test_export_reads_a_hand_edited_ini_without_crashing(adapter):
+    """The adapter's reads and checks are redactor_common's settings_coerce: a garbled width or switch in the
+    ini falls back to its default (QSettings' type=int used to raise), and an import's bad values are skipped."""
+    raw = app_settings._settings()
+    raw.setValue("rename/zero_pad_width", "two")
+    raw.setValue("rename/ascii_only", "maybe")
+    raw.sync()
+    fd = adapter.read_section("field_defaults")
+    assert fd["zero_pad_width"] == 2 and fd["ascii_filenames"] is False
+    adapter.write_section("field_defaults", {"zero_pad_width": True, "ascii_filenames": 1})
+    assert app_settings.load_rename_zero_pad()[1] == 2 and app_settings.load_ascii_filenames() is False
+    adapter.write_section("lists", {"custom_languages": [["xx", " "]], "custom_genres": ["A", " ", 3]})
+    assert app_settings.load_custom_languages() == [] and app_settings.load_custom_genres() == []
+    adapter.write_section("lists", {"custom_languages": [("xx", "Example")], "custom_genres": ["A", " "]})
+    assert app_settings.load_custom_languages() == [("xx", "Example")] and app_settings.load_custom_genres() == ["A"]

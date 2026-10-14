@@ -381,3 +381,43 @@ def test_zero_pad_choice_is_remembered(monkeypatch, tmp_path):
     assert app_settings.load_rename_zero_pad() == (False, 2)
     app_settings.save_rename_zero_pad(True, 3)
     assert app_settings.load_rename_zero_pad() == (True, 3)
+
+
+def test_settings_go_through_the_shared_store_with_the_same_keys(tmp_path):
+    """gui/app_settings delegates to redactor_common's QSettingsStore: the ini keys are the ones the app always
+    wrote (nobody's saved settings move), and a hand-edited bad value falls back instead of raising."""
+    import configparser
+
+    from PyQt6.QtCore import QSettings
+
+    from gui import app_settings
+
+    app_settings.save_pattern_used("%title%")
+    app_settings.add_custom_genre("Solarpunk")
+    app_settings.add_custom_language("xx", "Example")
+    app_settings.save_last_session_files([str(tmp_path / "a.epub")])
+    app_settings.save_junk_cover_hashes({"b", "a"})
+    app_settings.save_text_overflow_mode("clip")
+    app_settings.save_calibre_install_dir(str(tmp_path))
+    app_settings.save_last_directory(str(tmp_path / "a.epub"))
+    app_settings.save_column_widths_by_key({"title": 120})
+    app_settings.write_settings({})  # sync
+    parser = configparser.ConfigParser(interpolation=None)
+    parser.read(app_settings._settings_ini_path(), encoding="utf-8")
+    keys = {f"{section}/{key}" for section in parser.sections() for key in parser[section]}
+    assert {"rename/pattern_history", "genres/custom", "languages/custom", "files/last_session_files",
+            "covers/junk_hashes", "table/text_overflow_mode", "calibre/install_dir", "files/last_directory",
+            "table/column_widths_by_key"} <= keys, keys
+    assert app_settings.load_pattern_history() == ["%title%"] and "Solarpunk" in app_settings.load_genres()
+    assert ("xx", "Example") in app_settings.load_languages()
+    assert app_settings.load_junk_cover_hashes() == {"a", "b"} and app_settings.load_text_overflow_mode() == "clip"
+    assert app_settings.load_last_directory() == str(tmp_path)
+
+    raw = QSettings(app_settings._settings_ini_path(), QSettings.Format.IniFormat)
+    raw.setValue("rename/zero_pad_width", "abc")
+    raw.setValue("table/text_overflow_mode", "sideways")
+    raw.setValue("files/last_session_files", "not json")
+    raw.sync()
+    assert app_settings.load_rename_zero_pad() == (False, 2)
+    assert app_settings.load_text_overflow_mode() == "wrap"
+    assert app_settings.load_last_session_files() == []

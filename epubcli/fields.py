@@ -13,6 +13,7 @@ import re
 from core.fields import FIELDS
 from core.isbn import is_valid_isbn, normalize_isbn
 from redactor_common.cli import CliError
+from redactor_common.cli.fields import FieldResolver, spelling_variants
 from redactor_common.cli.values import check_text, is_ascii_number
 
 # Field names as the CLI presents them, mapped to the EpubMetadata attribute the app edits.
@@ -31,25 +32,30 @@ _ALIASES = {
     "series#": "series_index", "genre": "genres", "tags": "genres", "tag": "genres", "tags_str": "genres",
     "pub_year": "year", "pub_month": "month", "pub_day": "day", "lang": "language",
 }
-_LOOKUP: dict[str, str] = {name: name for name in CLI_FIELDS}
-_LOOKUP.update(_ALIASES)
-for _key, _label, _multiline in FIELDS:
-    _name = ATTR_TO_CLI.get(_key)
-    if _name:
-        _LOOKUP[_label.lower()] = _name
-
 _NUMBER = re.compile(r"^[0-9]+(\.[0-9]+)?$")
 _LANGUAGE = re.compile(r"^[A-Za-z]{2,3}(-[A-Za-z0-9]{2,8})?$")
 
 DEFAULT_INFO_FIELDS = ["title", "authors", "series", "series_index", "year"]
 
 
+def _spellings() -> dict[str, str]:
+    """Every spelling -> CLI field name: each name, alias and the app's column label, in each of the usual
+    spellings (series_index, series-index, "series index", seriesindex)."""
+    table: dict[str, str] = {}
+    for name in CLI_FIELDS:
+        table.update(dict.fromkeys(spelling_variants(name), name))
+    for alias, name in _ALIASES.items():
+        table.update(dict.fromkeys(spelling_variants(alias), name))
+    for key, label, _multiline in FIELDS:
+        name = ATTR_TO_CLI.get(key)
+        if name:
+            table.update(dict.fromkeys(spelling_variants(label), name))
+    return table
+
+
 def resolve_field(name: str) -> str:
     """The CLI field name for what the user typed. Raises CliError listing the valid names."""
-    key = _LOOKUP.get(name.strip().lower().replace("-", "_").replace(" ", "_")) or _LOOKUP.get(name.strip().lower())
-    if key is None:
-        raise CliError(f"unknown field {name!r}. Fields: {', '.join(FIELD_NAMES)}")
-    return key
+    return RESOLVER.resolve(name)
 
 
 def attr_for(name: str) -> str:
@@ -96,10 +102,12 @@ def check_value(name: str, value: str) -> str:
     return value
 
 
+# redactor_common's resolver over this app's table: case-insensitive, and "series index", "series-index",
+# "series_index" and "seriesindex" all find the field.
+RESOLVER = FieldResolver(_spellings(), FIELD_NAMES, check=check_value)
+
+
 def parse_assignment(text: str) -> tuple[str, str]:
     """"series=Dune" -> (field attribute, checked value). Splits on the first "="."""
-    if "=" not in text:
-        raise CliError(f"expected FIELD=VALUE, got {text!r}")
-    name, _, value = text.partition("=")
-    field = resolve_field(name)
-    return CLI_FIELDS[field], check_value(field, value)
+    field, value = RESOLVER.parse_assignment(text)
+    return CLI_FIELDS[field], value

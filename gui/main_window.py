@@ -144,8 +144,12 @@ from gui.content_scan_dialog import ContentScanDialog
 from gui.genre_suggest_dialog import GenreSuggestDialog
 from gui.cover_generator_dialog import CoverGeneratorDialog
 from gui.cover_render import generate_cover_image
-from core.ebook_convert import find_convertible_in_folder
+from core.ebook_convert import ANNOUNCED_SOURCE_EXTENSIONS
 from gui.ebook_convert_dialog import EbookConvertDialog
+from redactor_common.core.folder_discovery import find_by_extension
+from redactor_common.core.temp_names import is_app_temp_name
+from redactor_common.gui.convert_offer import YES as CONVERT_YES
+from redactor_common.gui.convert_offer import offer_conversion, remembered_folders
 from gui.filename_parse_dialog import FilenameParseDialog
 from gui.google_books_dialog import GoogleBooksDialog
 from gui.image_compress import recompress_jpeg
@@ -261,6 +265,26 @@ def _duplicates_dismissed_path() -> str:
     JsonDismissStore), next to the settings. Deliberately not part of
     Export/Import Settings: it is review history, keyed by file content."""
     return os.path.join(str(base_dir()), "epubredactor_duplicates_dismissed.json")
+
+
+def find_epubs(paths, recursive: bool = True) -> list[str]:
+    """The .epub files among `paths` (files and folders; subfolders too when `recursive`), sorted and
+    de-duplicated: redactor_common's find_by_extension. What a folder search finds is skipped when it is one of
+    the family's own leftovers (a ".redact-orig.epub" backup, a hidden scratch copy...), so those never show up
+    as books; a file named directly is taken as meant. Open Folder, a drop and Refresh List all use this."""
+    return find_by_extension(paths, (".epub",), recursive, skip=is_app_temp_name)
+
+
+def find_convertible_books(paths, recursive: bool = True) -> list[str]:
+    """The e-books among `paths` that Calibre can convert to EPUB and Open Folder announces (MOBI, AZW3, FB2,
+    LIT... see core.ebook_convert.ANNOUNCED_SOURCE_EXTENSIONS), the app's leftovers skipped as in find_epubs()."""
+    return find_by_extension(paths, ANNOUNCED_SOURCE_EXTENSIONS, recursive, skip=is_app_temp_name)
+
+
+def _declined_convert_folders():
+    """Where the convert offer's "Don't ask again for this folder" is kept (the app's settings ini)."""
+    return remembered_folders(app_settings.load_convert_offer_declined_folders,
+                              app_settings.save_convert_offer_declined_folders)
 
 
 def _field_label(key: str) -> str:
@@ -1444,16 +1468,7 @@ class MainWindow(QMainWindow):
         paths = [url.toLocalFile() for url in event.mimeData().urls()]
         recursive = app_settings.load_include_subfolders()
 
-        def scan() -> list[str]:
-            found: list[str] = []
-            for p in paths:
-                if os.path.isdir(p):
-                    found.extend(self._find_epubs_in_folder(p, recursive=recursive))
-                elif p.lower().endswith(".epub"):
-                    found.append(p)
-            return found
-
-        found = run_busy(self, "Looking for EPUB files...", scan)
+        found = run_busy(self, "Looking for EPUB files...", find_epubs, paths, recursive)
         if not found:
             self.status.showMessage("No EPUB files in what was dropped.", 6000)
             return
@@ -1507,12 +1522,7 @@ class MainWindow(QMainWindow):
         recursive = app_settings.load_include_subfolders()
 
         def scan() -> tuple[list[str], list[str]]:
-            epubs: list[str] = []
-            others: list[str] = []
-            for folder in folders:
-                epubs.extend(self._find_epubs_in_folder(folder, recursive=recursive))
-                others.extend(find_convertible_in_folder(folder, recursive=recursive))
-            return epubs, others
+            return find_epubs(folders, recursive), find_convertible_books(folders, recursive)
 
         # Look first, clear after: a folder with nothing to open must not wipe the current list.
         epub_paths, others = run_busy(self, "Looking for e-books...", scan)
@@ -1532,51 +1542,27 @@ class MainWindow(QMainWindow):
             self._rebuild_table()
             self._refresh_status()
         self._load_paths(epub_paths)
-        self._offer_import_of_other_formats(others, epub_paths)
+        self._offer_import_of_other_formats(others, epub_paths, folders)
 
-    def _offer_import_of_other_formats(self, others: list[str], epub_paths: list[str]) -> None:
+    def _offer_import_of_other_formats(self, others: list[str], epub_paths: list[str],
+                                       folders: list[str] | None = None) -> None:
         """Open Folder loads only .epub. Say what else Calibre could convert in those folders (and subfolders),
-        and offer to open Import and Convert with the files already listed."""
-        if not others:
-            return
-        kinds = ", ".join(sorted({os.path.splitext(p)[1].lstrip(".").upper() for p in others}))
-        intro = "No EPUB files found, but" if not epub_paths else "Also found"
-        box = QMessageBox(self)
-        box.setIcon(QMessageBox.Icon.Question)
-        box.setWindowTitle("Other E-book Formats Found")
-        box.setText(
-            f"{intro} {len(others)} file(s) in other formats ({kinds}) that Calibre can convert to EPUB.\n\n"
-            "Open File > Import and Convert with them listed?"
+        and offer to open Import and Convert with the files already listed (redactor_common's convert offer;
+        with one folder opened, the box also has "Don't ask again for this folder")."""
+        one_folder = folders[0] if folders and len(folders) == 1 else None
+        answer = offer_conversion(
+            self, others, len(epub_paths), "EPUB", "EPUB",
+            remember_key=one_folder, remember=_declined_convert_folders() if one_folder else None,
+            noun="file", converter="Calibre", question="Open File > Import and Convert with them listed?",
+            title="Other E-book Formats Found", yes_text="Yes", no_text="No",
         )
-        shown = others[:200]
-        more = f"\n... and {len(others) - len(shown)} more" if len(others) > len(shown) else ""
-        box.setDetailedText("\n".join(shown) + more)
-        box.setStandardButtons(QMessageBox.StandardButton.Yes | QMessageBox.StandardButton.No)
-        if box.exec() != QMessageBox.StandardButton.Yes:
+        if answer != CONVERT_YES:
             return
         dialog = EbookConvertDialog(self, initial_paths=others)
         if dialog.exec() == EbookConvertDialog.DialogCode.Accepted:
             converted = dialog.converted_epub_paths()
             if converted:
                 self._load_paths(converted)
-
-    @staticmethod
-    def _find_epubs_in_folder(folder: str, recursive: bool = True) -> list[str]:
-        found = []
-        if recursive:
-            for root, _dirs, files in os.walk(folder):
-                for f in files:
-                    if f.lower().endswith(".epub"):
-                        found.append(os.path.join(root, f))
-        else:
-            try:
-                for f in os.listdir(folder):
-                    full = os.path.join(folder, f)
-                    if os.path.isfile(full) and f.lower().endswith(".epub"):
-                        found.append(full)
-            except OSError:
-                pass
-        return found
 
     def _load_paths(self, paths: list[str]) -> None:
         # Normalize to the OS's native separator right at this single
@@ -2891,7 +2877,7 @@ class MainWindow(QMainWindow):
         new_paths = [
             os.path.normpath(p) for p in run_busy(
                 self, "Looking for new files...", find_new_files_in_loaded_folders,
-                existing_paths, lambda folder: self._find_epubs_in_folder(folder, recursive=recursive),
+                existing_paths, lambda folder: find_epubs([folder], recursive),
             )
         ]
         present_paths = run_busy(

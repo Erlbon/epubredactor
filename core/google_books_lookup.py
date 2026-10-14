@@ -17,14 +17,13 @@ having real network access.
 from __future__ import annotations
 
 import json
-import socket
 import time
-import urllib.error
 from dataclasses import dataclass
 from urllib.parse import quote
 
 from core.author_sort import space_initials
 from core.isbn import best_isbn13, normalize_isbn
+from core.lookup_fetch import fetch_json_with_hint
 
 from redactor_common.core.lookup_client import fetch_bytes, make_default_fetch
 
@@ -126,9 +125,12 @@ def parse_response(raw: bytes) -> list[GoogleBooksCandidate]:
         data = json.loads(raw)
     except (json.JSONDecodeError, UnicodeDecodeError) as exc:
         raise GoogleBooksLookupError("Received an unreadable response from Google Books.") from exc
+    return _candidates_from(data)
 
+
+def _candidates_from(data) -> list[GoogleBooksCandidate]:
     candidates: list[GoogleBooksCandidate] = []
-    for item in data.get("items", []) or []:
+    for item in (data or {}).get("items", []) or []:
         info = item.get("volumeInfo", {}) or {}
 
         isbn13 = isbn10 = ""
@@ -164,32 +166,21 @@ def build_isbn_query_url(isbn: str, max_results: int = 3) -> str:
     return f"{API_URL}?q={quote('isbn:' + isbn)}&maxResults={max_results}"
 
 
-def _fetch_with_retry(url: str, fetch, sleep_fn) -> bytes:
-    """One GET with the rate-limit policy shared by both searches: an
-    HTTP 429 is retried a couple of times with a short backoff before
-    giving up -- see RATE_LIMIT_RETRY_DELAYS -- since this is usually a
-    transient, short-lived limit, not a real failure."""
-    remaining_delays = list(RATE_LIMIT_RETRY_DELAYS)
-    while True:
-        try:
-            return fetch(url)
-        except urllib.error.HTTPError as exc:
-            if exc.code == 429 and remaining_delays:
-                sleep_fn(remaining_delays.pop(0))
-                continue
-            if exc.code == 429:
-                raise GoogleBooksLookupError(
-                    "Google Books is rate-limiting requests right now (HTTP 429) -- "
-                    "this usually clears up on its own after a minute or two. Try "
-                    "again shortly, or search fewer books at once."
-                ) from exc
-            raise GoogleBooksLookupError(
-                f"Google Books returned an error (HTTP {exc.code}): {exc.reason}"
-            ) from exc
-        except (urllib.error.URLError, socket.timeout, TimeoutError, OSError) as exc:
-            raise GoogleBooksLookupError(
-                f"Could not reach Google Books (check your internet connection): {exc}"
-            ) from exc
+def _fetch_search(url: str, fetch, sleep_fn) -> list[GoogleBooksCandidate]:
+    """One search GET via redactor_common's fetch_json, with the
+    rate-limit policy shared by both searches: an HTTP 429 is retried a
+    couple of times with a short backoff before giving up -- see
+    RATE_LIMIT_RETRY_DELAYS -- since this is usually a transient,
+    short-lived limit, not a real failure."""
+    return _candidates_from(fetch_json_with_hint(
+        url, fetch or _default_fetch, GoogleBooksLookupError, "Google Books",
+        status_messages={429: (
+            "Google Books is rate-limiting requests right now (HTTP 429) -- "
+            "this usually clears up on its own after a minute or two. Try "
+            "again shortly, or search fewer books at once."
+        )},
+        retry_429=RATE_LIMIT_RETRY_DELAYS, sleep=sleep_fn,
+    ))
 
 
 def search_google_books(
@@ -205,7 +196,7 @@ def search_google_books(
     an unparseable response. Returns an empty list (not an error) when
     the search succeeds but simply finds nothing."""
     url = build_query_url(title, authors_str, max_results)
-    return parse_response(_fetch_with_retry(url, fetch or _default_fetch, sleep_fn))
+    return _fetch_search(url, fetch, sleep_fn)
 
 
 def search_google_books_by_isbn(
@@ -215,7 +206,7 @@ def search_google_books_by_isbn(
     Redact recipe, where an ISBN match is trusted far more than a title
     search). Same errors and retry policy as search_google_books()."""
     url = build_isbn_query_url(isbn, max_results)
-    return parse_response(_fetch_with_retry(url, fetch or _default_fetch, sleep_fn))
+    return _fetch_search(url, fetch, sleep_fn)
 
 
 def download_cover_image(candidate: GoogleBooksCandidate, fetch=None) -> bytes:

@@ -261,13 +261,16 @@ them in one go.
   current list rather than adding to it (with the usual unsaved-changes
   confirmation first), and a folder with nothing to open leaves the
   current list alone — File > Open Files and drag-and-drop still add to
-  whatever's already loaded.
+  whatever's already loaded. The app's own leftovers in a folder (a
+  Redact backup such as `Dune.redact-orig.epub`, a hidden scratch copy
+  from a run that was killed) are never listed as books.
 - **Other e-book formats in an opened folder** — Open Folder loads only
   `.epub`, but when the folder (and, with Include Subfolders, its
   subfolders) also holds books Calibre can convert (MOBI, AZW3, FB2,
-  DOCX, ...), it says how many and of which kinds and offers to open
+  ...), it says how many and of which kinds and offers to open
   **Import and Convert** with them already listed; converted books join
-  the list.
+  the list. When one folder was opened, the question has **Don't ask
+  again for this folder**.
 - Remembers exactly which books were loaded when you last closed the
   app, and reopens with the same set loaded automatically — a book
   that's since moved or been deleted is skipped quietly rather than
@@ -501,7 +504,8 @@ values are checked before any book is touched; a bad one stops the command with 
 
 The fields are: title, isbn, authors, author_sort, series, series_index, collection, genres, publisher, year,
 month, day, ddc, language, description. Field names are case-insensitive and the usual spellings work: `author`,
-`Author(s)`, `genre`, `tags`, `Series #`, `series_number`, `pub_year`.
+`Author(s)`, `genre`, `tags`, `Series #`, `series_number`, `pub_year`, and a name may be written with spaces, hyphens,
+underscores or run together (`series_index`, `series-index`, `"Series Index"`, `seriesindex`).
 
 Checks: `isbn` must be a valid ISBN-10 or ISBN-13 (hyphens are removed); `series_index` is a number (`2`, `2.5`);
 `year` is a four-digit year, `month` 1-12, `day` 1-31 (all written with the digits 0-9); `language` is a language
@@ -1303,6 +1307,7 @@ core/genres.py                  - common genre list + quick-pick merge logic
 core/languages.py                - default language list for the quick-pick menu
 core/isbn.py                      - ISBN-10/13 validation, normalization, conversion
 core/google_books_lookup.py           - Google Books metadata + cover lookup, network call injectable for testing
+core/lookup_fetch.py                    - redactor_common's fetch_json with the "check your internet connection" wording (Google Books, Open Library)
 core/calibre_tools.py               - shared Calibre install-folder/tool-path discovery, console-window suppression
 core/sigil_tools.py                     - Sigil detection + launch (Open with Sigil)
 core/calibre_lookup.py               - Calibre fetch-ebook-metadata integration, subprocess call injectable for testing

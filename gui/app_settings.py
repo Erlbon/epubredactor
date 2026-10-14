@@ -9,21 +9,29 @@ project root) -- not the Windows registry (QSettings' default "native"
 format there), since that turned out not to reliably persist across an
 in-place version upgrade, and a plain file is easier to back up, copy
 to a new machine, or inspect directly than registry keys are.
+
+The storage itself is redactor_common's gui/qsettings_store (QSettingsStore
+and its managed-list, pattern-history and column stores, shared with
+cbzredactor): typed reads that never raise on a hand-edited value. This
+file keeps only the app's keys, fallbacks and public load_x()/save_x()
+names, so nobody's saved settings move and no caller changes.
 """
 
 from __future__ import annotations
 
-import json
 import os
 
 from core.app_paths import base_dir
 from core.languages import DEFAULT_LANGUAGES
 from redactor_common.core import managed_list, pattern_history
+from redactor_common.core import settings_coerce as sc
+from redactor_common.gui.qsettings_store import (
+    ColumnSettingsStore, ManagedListStore, PatternHistoryStore, QSettingsStore,
+)
 
 _SETTINGS_FILENAME = "epubredactor_settings.ini"
 _HISTORY_KEY = "rename/pattern_history"
 _MAX_HISTORY = 15
-_LAST_DIR_KEY = "files/last_directory"
 _LAST_SESSION_FILES_KEY = "files/last_session_files"
 _CUSTOM_LANGUAGES_KEY = "languages/custom"
 _HIDDEN_DEFAULT_LANGUAGES_KEY = "languages/hidden_defaults"
@@ -60,22 +68,42 @@ def _settings():
     return QSettings(_settings_ini_path(), QSettings.Format.IniFormat)
 
 
+class _Store(QSettingsStore):
+    """The shared store, opening its QSettings through this module's
+    _settings() (looked up on each call), so a test that points
+    _settings or _settings_ini_path somewhere else moves every load/save."""
+
+    def settings(self):
+        return _settings()
+
+
+_STORE = _Store(lambda: _settings_ini_path())
+_PATTERNS = PatternHistoryStore(_STORE, _HISTORY_KEY, _MAX_HISTORY)
+
+
+def _common_genres():
+    from core.genres import COMMON_GENRES  # imported lazily, as before
+    return COMMON_GENRES
+
+
+_LANGUAGES = ManagedListStore(_STORE, _CUSTOM_LANGUAGES_KEY, _HIDDEN_DEFAULT_LANGUAGES_KEY, DEFAULT_LANGUAGES, pairs=True)
+_GENRES = ManagedListStore(_STORE, _CUSTOM_GENRES_KEY, _HIDDEN_DEFAULT_GENRES_KEY, _common_genres)
+
+
 def load_pattern_history() -> list[str]:
     """Most-recently-used pattern first."""
-    return pattern_history.decode_history(_settings().value(_HISTORY_KEY, "", type=str))
+    return _PATTERNS.load()
 
 
 def save_pattern_used(pattern: str) -> None:
     """Record that `pattern` was actually used (e.g. the user clicked
     Apply in the rename dialog with it). Moves it to the front of the
     history if already present, dedupes, and trims to _MAX_HISTORY."""
-    history = _dedupe_and_trim(load_pattern_history(), pattern)
-    _settings().setValue(_HISTORY_KEY, pattern_history.encode_history(history))
+    _PATTERNS.record(pattern)
 
 
 def load_last_pattern(default: str) -> str:
-    history = load_pattern_history()
-    return history[0] if history else default
+    return _PATTERNS.last(default)
 
 
 # ------------------------------------------------------------------
@@ -86,25 +114,39 @@ def load_last_directory() -> str:
     """Returns "" if nothing's been remembered yet, or the remembered
     directory no longer exists (e.g. a removable drive that's unplugged)
     -- callers should treat "" as "let Qt use its own default"."""
-    path = _settings().value(_LAST_DIR_KEY, "", type=str)
-    return path if path and os.path.isdir(path) else ""
+    return _STORE.last_directory()
 
 
 def load_include_subfolders() -> bool:
     """File > Include Subfolders: ON unless the user turned it off (how Open Folder always behaved)."""
-    return _settings().value("include_subfolders", True, type=bool)
+    return _STORE.include_subfolders()
 
 
 def save_include_subfolders(on: bool) -> None:
-    _settings().setValue("include_subfolders", bool(on))
+    _STORE.set_include_subfolders(on)
 
 
 def save_last_directory(path: str) -> None:
     """Remember the directory containing `path` (a file or folder that
     was just added) as the starting point for the next file dialog."""
-    directory = path if os.path.isdir(path) else os.path.dirname(path)
-    if directory and os.path.isdir(directory):
-        _settings().setValue(_LAST_DIR_KEY, directory)
+    _STORE.remember_directory(path)
+
+
+# ------------------------------------------------------------------
+# Open Folder's "Don't ask again for this folder" on the offer to convert
+# other e-book formats (redactor_common's gui/convert_offer): the folders
+# the user ticked it for.
+# ------------------------------------------------------------------
+
+_CONVERT_OFFER_DECLINED_KEY = "convert_offer/declined_folders"
+
+
+def load_convert_offer_declined_folders() -> list[str]:
+    return _STORE.str_list(_CONVERT_OFFER_DECLINED_KEY, drop_blank=True)
+
+
+def save_convert_offer_declined_folders(folders: list[str]) -> None:
+    _STORE.set_str_list(_CONVERT_OFFER_DECLINED_KEY, folders)
 
 
 # ------------------------------------------------------------------
@@ -114,19 +156,10 @@ def save_last_directory(path: str) -> None:
 # dialogs open, not what's actually loaded.
 # ------------------------------------------------------------------
 
-def _parse_session_files(raw: str) -> list[str]:
-    """Pure logic: parse the stored JSON into a list of paths, dropping
-    anything malformed rather than failing outright. Split out for
-    testability."""
-    if not raw:
-        return []
-    try:
-        data = json.loads(raw)
-    except (json.JSONDecodeError, TypeError, ValueError):
-        return []
-    if not isinstance(data, list):
-        return []
-    return [p for p in data if isinstance(p, str) and p.strip()]
+def _parse_session_files(raw) -> list[str]:
+    """The stored JSON as a list of paths, dropping anything malformed
+    (non-strings, blanks) rather than failing outright."""
+    return sc.parse_str_list(raw, drop_blank=True)
 
 
 def load_last_session_files() -> list[str]:
@@ -135,8 +168,7 @@ def load_last_session_files() -> list[str]:
     Callers should still check each path actually exists before trying
     to load it (a file can easily have moved or been deleted between
     sessions)."""
-    raw = _settings().value(_LAST_SESSION_FILES_KEY, "", type=str)
-    return _parse_session_files(raw)
+    return _STORE.str_list(_LAST_SESSION_FILES_KEY, drop_blank=True)
 
 
 def save_last_session_files(paths: list[str]) -> None:
@@ -144,7 +176,7 @@ def save_last_session_files(paths: list[str]) -> None:
     empty list if nothing was loaded -- if the last session ended
     empty, the next one should start empty too, not silently resurrect
     an older, no-longer-current session."""
-    _settings().setValue(_LAST_SESSION_FILES_KEY, json.dumps(list(paths)))
+    _STORE.set_str_list(_LAST_SESSION_FILES_KEY, paths)
 
 
 # ------------------------------------------------------------------
@@ -152,8 +184,8 @@ def save_last_session_files(paths: list[str]) -> None:
 # excluded from the merged list, not deleted, and restorable) plus any
 # custom entries added via the field's "+" picker or Settings ->
 # Add/Remove Genres/Languages. The merge/hide/add/remove rules are
-# redactor_common.core.managed_list (promoted from here, shared with cbz
-# and mp3); only the storage keys live in this file.
+# redactor_common.core.managed_list, the storage its ManagedListStore;
+# only the keys live in this file.
 # ------------------------------------------------------------------
 
 _merge_languages = managed_list.merge_pairs
@@ -162,85 +194,74 @@ _merge_genres = managed_list.merge_names
 _exclude_hidden_genres = managed_list.exclude_hidden_names
 
 
-def _load_names(key: str) -> list[str]:
-    return managed_list.decode_names(_settings().value(key, "", type=str))
-
-
-def _save_names(key: str, names: list[str]) -> None:
-    _settings().setValue(key, managed_list.encode_names(names))
-
-
 def load_hidden_default_language_codes() -> list[str]:
-    return _load_names(_HIDDEN_DEFAULT_LANGUAGES_KEY)
+    return _LANGUAGES.hidden()
 
 
 def hide_default_language(code: str) -> None:
-    _save_names(_HIDDEN_DEFAULT_LANGUAGES_KEY, managed_list.add_code(load_hidden_default_language_codes(), code))
+    _LANGUAGES.hide(code)
 
 
 def restore_default_languages() -> None:
-    _save_names(_HIDDEN_DEFAULT_LANGUAGES_KEY, [])
+    _LANGUAGES.restore_defaults()
 
 
 def load_visible_default_languages() -> list[tuple[str, str]]:
-    return _exclude_hidden_languages(DEFAULT_LANGUAGES, load_hidden_default_language_codes())
+    return _LANGUAGES.visible_defaults()
 
 
 def load_languages() -> list[tuple[str, str]]:
     """Visible (non-hidden) default languages plus any custom ones
     added previously -- what the Language "+" picker shows."""
-    return _merge_languages(load_visible_default_languages(), load_custom_languages())
+    return _LANGUAGES.merged()
 
 
 def add_custom_language(code: str, name: str) -> None:
-    pairs = managed_list.add_pair(load_custom_languages(), code, name)
-    _settings().setValue(_CUSTOM_LANGUAGES_KEY, managed_list.encode_pairs(pairs))
+    _LANGUAGES.add_custom(code, name)
 
 
 def load_custom_languages() -> list[tuple[str, str]]:
-    return managed_list.decode_pairs(_settings().value(_CUSTOM_LANGUAGES_KEY, "", type=str))
+    return _LANGUAGES.custom()
 
 
 def remove_custom_language(code: str) -> None:
-    pairs = managed_list.remove_pair(load_custom_languages(), code)
-    _settings().setValue(_CUSTOM_LANGUAGES_KEY, managed_list.encode_pairs(pairs))
+    _LANGUAGES.remove_custom(code)
 
 
 def load_hidden_default_genres() -> list[str]:
-    return _load_names(_HIDDEN_DEFAULT_GENRES_KEY)
+    return _GENRES.hidden()
 
 
 def hide_default_genre(genre: str) -> None:
-    _save_names(_HIDDEN_DEFAULT_GENRES_KEY, managed_list.add_name(load_hidden_default_genres(), genre))
+    _GENRES.hide(genre)
 
 
 def restore_default_genres() -> None:
-    _save_names(_HIDDEN_DEFAULT_GENRES_KEY, [])
+    _GENRES.restore_defaults()
 
 
 def load_visible_default_genres() -> list[str]:
     """Built-in defaults (COMMON_GENRES) minus any the user has hidden --
     used both by load_genres() and by the Add/Remove Genres dialog."""
-    from core.genres import COMMON_GENRES
-    return _exclude_hidden_genres(COMMON_GENRES, load_hidden_default_genres())
+    return _GENRES.visible_defaults()
 
 
 def load_genres() -> list[str]:
     """Visible (non-hidden) default genres plus any custom ones added
     previously."""
-    return _merge_genres(load_visible_default_genres(), load_custom_genres())
+    return _GENRES.merged()
 
 
 def load_custom_genres() -> list[str]:
-    return _load_names(_CUSTOM_GENRES_KEY)
+    return _GENRES.custom()
 
 
 def add_custom_genre(genre: str) -> None:
-    _save_names(_CUSTOM_GENRES_KEY, managed_list.add_name(load_custom_genres(), genre))
+    _GENRES.add_custom(genre)
 
 
 def remove_custom_genre(genre: str) -> None:
-    _save_names(_CUSTOM_GENRES_KEY, managed_list.remove_name(load_custom_genres(), genre))
+    _GENRES.remove_custom(genre)
 
 
 # ------------------------------------------------------------------
@@ -251,13 +272,11 @@ def remove_custom_genre(genre: str) -> None:
 def load_calibre_install_dir() -> str:
     """Returns "" if never configured, or if the remembered folder no
     longer exists (e.g. Calibre was moved/reinstalled elsewhere)."""
-    path = _settings().value(_CALIBRE_INSTALL_DIR_KEY, "", type=str)
-    return path if path and os.path.isdir(path) else ""
+    return _STORE.existing_path(_CALIBRE_INSTALL_DIR_KEY, "dir")
 
 
 def save_calibre_install_dir(path: str) -> None:
-    if path and os.path.isdir(path):
-        _settings().setValue(_CALIBRE_INSTALL_DIR_KEY, path)
+    _STORE.set_existing_path(_CALIBRE_INSTALL_DIR_KEY, path, "dir")
 
 
 # ------------------------------------------------------------------
@@ -269,13 +288,11 @@ def save_calibre_install_dir(path: str) -> None:
 def load_sigil_path() -> str:
     """Returns "" if never configured, or if the remembered path no
     longer exists (e.g. Sigil was moved/reinstalled elsewhere)."""
-    path = _settings().value(_SIGIL_PATH_KEY, "", type=str)
-    return path if path and os.path.isfile(path) else ""
+    return _STORE.existing_path(_SIGIL_PATH_KEY, "file")
 
 
 def save_sigil_path(path: str) -> None:
-    if path and os.path.isfile(path):
-        _settings().setValue(_SIGIL_PATH_KEY, path)
+    _STORE.set_existing_path(_SIGIL_PATH_KEY, path, "file")
 
 
 # ------------------------------------------------------------------
@@ -315,167 +332,88 @@ def load_ereader_servers() -> list[str]:
     """Configured server URLs, defaulting to the starting suggestions
     (send.djazz.se, bookdrop.cc) if the user hasn't added/removed
     anything yet."""
-    raw = _settings().value(_EREADER_SERVERS_KEY, "", type=str)
-    if not raw:
-        return list(DEFAULT_EREADER_SERVERS)
-    try:
-        servers = [s for s in json.loads(raw) if isinstance(s, str) and s.strip()]
-    except (json.JSONDecodeError, TypeError, ValueError):
-        servers = []
-    return servers or list(DEFAULT_EREADER_SERVERS)
+    return _STORE.str_list(_EREADER_SERVERS_KEY, drop_blank=True) or list(DEFAULT_EREADER_SERVERS)
 
 
 def add_ereader_server(url: str) -> None:
-    servers = _add_server(load_ereader_servers(), url)
-    _settings().setValue(_EREADER_SERVERS_KEY, json.dumps(servers))
+    _STORE.set_str_list(_EREADER_SERVERS_KEY, _add_server(load_ereader_servers(), url))
 
 
 def remove_ereader_server(url: str) -> None:
-    servers = _remove_server(load_ereader_servers(), url)
-    _settings().setValue(_EREADER_SERVERS_KEY, json.dumps(servers))
+    _STORE.set_str_list(_EREADER_SERVERS_KEY, _remove_server(load_ereader_servers(), url))
 
 
 # ------------------------------------------------------------------
-# Table column widths -- keyed by logical column index (Path=0,
-# Filename=1, Status=2, then each core.fields.FIELDS entry in its fixed
-# order), which stays stable across sessions regardless of how columns
-# have been visually reordered or hidden.
-# ------------------------------------------------------------------
-
-def _parse_column_widths(raw: str) -> dict[int, int]:
-    """Pure logic: parse+validate the stored JSON into {logical_index:
-    width}, dropping anything malformed rather than failing outright.
-    Split out for testability."""
-    if not raw:
-        return {}
-    try:
-        data = json.loads(raw)
-    except (json.JSONDecodeError, TypeError, ValueError):
-        return {}
-    if not isinstance(data, dict):
-        return {}
-    result = {}
-    for key, value in data.items():
-        try:
-            col = int(key)
-            width = int(value)
-        except (TypeError, ValueError):
-            continue
-        if width > 0:
-            result[col] = width
-    return result
-
-
-def load_column_widths() -> dict[int, int]:
-    """Empty dict if never saved -- callers should fall back to their
-    own sensible default (e.g. auto-fit-to-content) in that case."""
-    raw = _settings().value(_COLUMN_WIDTHS_KEY, "", type=str)
-    return _parse_column_widths(raw)
-
-
-def save_column_widths(widths: dict[int, int]) -> None:
-    _settings().setValue(_COLUMN_WIDTHS_KEY, json.dumps({str(k): v for k, v in widths.items()}))
-
-
-# ------------------------------------------------------------------
-# Table column visibility -- which columns are hidden (Settings ->
-# Add/Remove Columns, or the column header's own "Hide" quick action),
-# keyed by the same stable logical column index as column widths above.
-# ------------------------------------------------------------------
-
-def _parse_hidden_columns(raw: str) -> set[int]:
-    """Pure logic: parse+validate the stored JSON into a set of hidden
-    logical column indices, dropping anything malformed rather than
-    failing outright. Split out for testability."""
-    if not raw:
-        return set()
-    try:
-        data = json.loads(raw)
-    except (json.JSONDecodeError, TypeError, ValueError):
-        return set()
-    if not isinstance(data, list):
-        return set()
-    result = set()
-    for value in data:
-        try:
-            col = int(value)
-        except (TypeError, ValueError):
-            continue
-        if col >= 0:
-            result.add(col)
-    return result
-
-
-def load_hidden_columns() -> set[int]:
-    """Empty set if never saved (or nothing is hidden) -- every column
-    shows by default in that case."""
-    raw = _settings().value(_HIDDEN_COLUMNS_KEY, "", type=str)
-    return _parse_hidden_columns(raw)
-
-
-def save_hidden_columns(hidden: set[int]) -> None:
-    _settings().setValue(_HIDDEN_COLUMNS_KEY, json.dumps(sorted(hidden)))
-
-
-# ------------------------------------------------------------------
-# Column widths/visibility by FIELD KEY (2026-09-23) -- the index-based
-# values above break silently if a column is ever inserted in code (a
-# saved "hide column 7" would then hide a different column). Same scheme
-# as redactor_common.core.table_settings and the other apps. The first
-# load after upgrading migrates the old index-based values once, through
-# the caller's current column_keys list (valid: the layout hasn't changed
-# since they were saved), and writes them back in the new form.
+# Table column widths and hidden columns. The old form is keyed by
+# logical column index (Path=0, Filename=1, Status=2, then each
+# core.fields.FIELDS entry in its fixed order); since 2026-09-23 they are
+# kept by FIELD KEY, because the index-based values break silently if a
+# column is ever inserted in code (a saved "hide column 7" would then
+# hide a different column). The first load after upgrading migrates the
+# old index-based values once, through the caller's current column_keys
+# list, and writes them back in the new form (redactor_common's
+# ColumnSettingsStore does exactly this for its legacy keys).
 # ------------------------------------------------------------------
 
 _HIDDEN_COLUMN_KEYS_KEY = "table/hidden_column_keys"
 _COLUMN_WIDTHS_BY_KEY_KEY = "table/column_widths_by_key"
 
+_COLUMNS = ColumnSettingsStore(
+    _STORE, _COLUMN_WIDTHS_BY_KEY_KEY, _HIDDEN_COLUMN_KEYS_KEY,
+    legacy_widths_key=_COLUMN_WIDTHS_KEY, legacy_hidden_key=_HIDDEN_COLUMNS_KEY,
+)
+
+
+def _parse_column_widths(raw) -> dict[int, int]:
+    """The old index-keyed widths: {logical_index: width}, malformed
+    entries and non-positive widths dropped."""
+    return sc.parse_width_map(raw, int_keys=True)
+
+
+def load_column_widths() -> dict[int, int]:
+    """Empty dict if never saved -- callers should fall back to their
+    own sensible default (e.g. auto-fit-to-content) in that case."""
+    return _STORE.width_map(_COLUMN_WIDTHS_KEY, int_keys=True)
+
+
+def save_column_widths(widths: dict[int, int]) -> None:
+    _STORE.set_width_map(_COLUMN_WIDTHS_KEY, widths)
+
+
+def _parse_hidden_columns(raw) -> set[int]:
+    """The old index-based hidden columns: a set of logical indices,
+    malformed and negative entries dropped."""
+    return sc.parse_int_set(raw)
+
+
+def load_hidden_columns() -> set[int]:
+    """Empty set if never saved (or nothing is hidden) -- every column
+    shows by default in that case."""
+    return _STORE.int_set(_HIDDEN_COLUMNS_KEY)
+
+
+def save_hidden_columns(hidden: set[int]) -> None:
+    _STORE.set_int_set(_HIDDEN_COLUMNS_KEY, hidden)
+
 
 def load_hidden_column_keys(column_keys: list[str]) -> set[str]:
-    settings = _settings()
-    if settings.contains(_HIDDEN_COLUMN_KEYS_KEY):
-        return set(managed_list.decode_names(settings.value(_HIDDEN_COLUMN_KEYS_KEY, "", type=str)))
-    migrated = {column_keys[i] for i in load_hidden_columns() if 0 <= i < len(column_keys)}
-    save_hidden_column_keys(migrated)
-    return migrated
+    return _COLUMNS.hidden(column_keys)
 
 
 def save_hidden_column_keys(hidden: set[str]) -> None:
-    _settings().setValue(_HIDDEN_COLUMN_KEYS_KEY, managed_list.encode_names(sorted(hidden)))
+    _COLUMNS.save_hidden(hidden)
 
 
-def _parse_column_widths_by_key(raw: str) -> dict[str, int]:
-    if not raw:
-        return {}
-    try:
-        data = json.loads(raw)
-    except (json.JSONDecodeError, TypeError, ValueError):
-        return {}
-    if not isinstance(data, dict):
-        return {}
-    result = {}
-    for key, value in data.items():
-        try:
-            width = int(value)
-        except (TypeError, ValueError):
-            continue
-        if isinstance(key, str) and width > 0:
-            result[key] = width
-    return result
+def _parse_column_widths_by_key(raw) -> dict[str, int]:
+    return sc.parse_width_map(raw)
 
 
 def load_column_widths_by_key(column_keys: list[str]) -> dict[str, int]:
-    settings = _settings()
-    if settings.contains(_COLUMN_WIDTHS_BY_KEY_KEY):
-        return _parse_column_widths_by_key(settings.value(_COLUMN_WIDTHS_BY_KEY_KEY, "", type=str))
-    migrated = {column_keys[i]: w for i, w in load_column_widths().items() if 0 <= i < len(column_keys)}
-    if migrated:
-        save_column_widths_by_key(migrated)
-    return migrated
+    return _COLUMNS.widths(column_keys)
 
 
 def save_column_widths_by_key(widths: dict[str, int]) -> None:
-    _settings().setValue(_COLUMN_WIDTHS_BY_KEY_KEY, json.dumps(widths))
+    _COLUMNS.save_widths(widths)
 
 
 # ------------------------------------------------------------------
@@ -490,28 +428,18 @@ def save_column_widths_by_key(widths: dict[str, int]) -> None:
 # image, same category of thing as a column width or a custom genre.
 # ------------------------------------------------------------------
 
-def _parse_junk_cover_hashes(raw: str) -> set[str]:
-    """Pure logic: parse+validate the stored JSON into a set of cover
-    hashes, dropping anything malformed rather than failing outright.
-    Split out for testability, same pattern as _parse_hidden_columns."""
-    if not raw:
-        return set()
-    try:
-        data = json.loads(raw)
-    except (json.JSONDecodeError, TypeError, ValueError):
-        return set()
-    if not isinstance(data, list):
-        return set()
-    return {h for h in data if isinstance(h, str) and h}
+def _parse_junk_cover_hashes(raw) -> set[str]:
+    """The stored JSON as a set of cover hashes, dropping anything
+    malformed (non-strings, blanks) rather than failing outright."""
+    return {h for h in sc.parse_str_list(raw) if h}
 
 
 def load_junk_cover_hashes() -> set[str]:
-    raw = _settings().value(_JUNK_COVER_HASHES_KEY, "", type=str)
-    return _parse_junk_cover_hashes(raw)
+    return _STORE.string_set(_JUNK_COVER_HASHES_KEY)
 
 
 def save_junk_cover_hashes(hashes: set[str]) -> None:
-    _settings().setValue(_JUNK_COVER_HASHES_KEY, json.dumps(sorted(hashes)))
+    _STORE.set_string_set(_JUNK_COVER_HASHES_KEY, hashes)
 
 
 # ------------------------------------------------------------------
@@ -540,13 +468,11 @@ DEFAULT_TEXT_OVERFLOW_MODE = "wrap"
 
 
 def load_text_overflow_mode() -> str:
-    mode = _settings().value(_TEXT_OVERFLOW_MODE_KEY, DEFAULT_TEXT_OVERFLOW_MODE, type=str)
-    return mode if mode in TEXT_OVERFLOW_MODES else DEFAULT_TEXT_OVERFLOW_MODE
+    return _STORE.choice(_TEXT_OVERFLOW_MODE_KEY, TEXT_OVERFLOW_MODES, DEFAULT_TEXT_OVERFLOW_MODE)
 
 
 def save_text_overflow_mode(mode: str) -> None:
-    if mode in TEXT_OVERFLOW_MODES:
-        _settings().setValue(_TEXT_OVERFLOW_MODE_KEY, mode)
+    _STORE.set_choice(_TEXT_OVERFLOW_MODE_KEY, mode, TEXT_OVERFLOW_MODES)
 
 
 # ------------------------------------------------------------------
@@ -567,22 +493,22 @@ DEFAULT_BLANK_LANGUAGE_CODE = "en"
 
 
 def load_blank_language_default_enabled() -> bool:
-    return _settings().value(_BLANK_LANGUAGE_DEFAULT_ENABLED_KEY, True, type=bool)
+    return _STORE.bool_value(_BLANK_LANGUAGE_DEFAULT_ENABLED_KEY, True)
 
 
 def save_blank_language_default_enabled(enabled: bool) -> None:
-    _settings().setValue(_BLANK_LANGUAGE_DEFAULT_ENABLED_KEY, bool(enabled))
+    _STORE.set_bool(_BLANK_LANGUAGE_DEFAULT_ENABLED_KEY, enabled)
 
 
 def load_blank_language_default_code() -> str:
-    code = _settings().value(_BLANK_LANGUAGE_DEFAULT_CODE_KEY, DEFAULT_BLANK_LANGUAGE_CODE, type=str)
+    code = _STORE.text(_BLANK_LANGUAGE_DEFAULT_CODE_KEY, DEFAULT_BLANK_LANGUAGE_CODE)
     return code.strip() or DEFAULT_BLANK_LANGUAGE_CODE
 
 
 def save_blank_language_default_code(code: str) -> None:
     code = code.strip()
     if code:
-        _settings().setValue(_BLANK_LANGUAGE_DEFAULT_CODE_KEY, code)
+        _STORE.set(_BLANK_LANGUAGE_DEFAULT_CODE_KEY, code)
 
 
 # ------------------------------------------------------------------
@@ -594,11 +520,11 @@ def save_blank_language_default_code(code: str) -> None:
 # ------------------------------------------------------------------
 
 def load_perf_logging_enabled() -> bool:
-    return _settings().value(_PERF_LOGGING_ENABLED_KEY, False, type=bool)
+    return _STORE.bool_value(_PERF_LOGGING_ENABLED_KEY, False)
 
 
 def save_perf_logging_enabled(enabled: bool) -> None:
-    _settings().setValue(_PERF_LOGGING_ENABLED_KEY, bool(enabled))
+    _STORE.set_bool(_PERF_LOGGING_ENABLED_KEY, enabled)
 
 
 # ------------------------------------------------------------------
@@ -618,37 +544,24 @@ def save_history_enabled(enabled: bool) -> None:
     write_settings({HISTORY_ENABLED_KEY: bool(enabled)})
 
 
-_ASCII_FILENAMES_KEY = "rename/ascii_only"
-
-
 def load_ascii_filenames() -> bool:
     """Rename/Export by Pattern's "ASCII-safe filenames" checkbox,
     remembered between runs (redactor_common's RenamePatternDialog)."""
-    return bool(_settings().value(_ASCII_FILENAMES_KEY, False, type=bool))
+    return _STORE.ascii_filenames()
 
 
 def save_ascii_filenames(enabled: bool) -> None:
-    _settings().setValue(_ASCII_FILENAMES_KEY, bool(enabled))
-
-
-_ZERO_PAD_ENABLED_KEY = "rename/zero_pad_enabled"
-_ZERO_PAD_WIDTH_KEY = "rename/zero_pad_width"
+    _STORE.set_ascii_filenames(enabled)
 
 
 def load_rename_zero_pad() -> tuple[bool, int]:
     """File > Rename / Export / Move's zero-pad checkbox and width, remembered
     between runs (redactor_common's RenamePatternDialog)."""
-    settings = _settings()
-    return (
-        bool(settings.value(_ZERO_PAD_ENABLED_KEY, False, type=bool)),
-        int(settings.value(_ZERO_PAD_WIDTH_KEY, 2, type=int)),
-    )
+    return _STORE.rename_zero_pad()
 
 
 def save_rename_zero_pad(enabled: bool, width: int) -> None:
-    settings = _settings()
-    settings.setValue(_ZERO_PAD_ENABLED_KEY, bool(enabled))
-    settings.setValue(_ZERO_PAD_WIDTH_KEY, int(width))
+    _STORE.set_rename_zero_pad(enabled, width)
 
 
 # ------------------------------------------------------------------
@@ -661,11 +574,11 @@ _REDACT_RECIPE_KEY = "redact/recipe"
 
 def load_redact_recipe() -> str:
     """The saved recipe JSON, or "" (= every step at its default)."""
-    return str(_settings().value(_REDACT_RECIPE_KEY, "", type=str) or "")
+    return _STORE.text(_REDACT_RECIPE_KEY)
 
 
 def save_redact_recipe(text: str) -> None:
-    _settings().setValue(_REDACT_RECIPE_KEY, text)
+    _STORE.set(_REDACT_RECIPE_KEY, text)
 
 
 # ------------------------------------------------------------------
@@ -677,11 +590,11 @@ _LIBRARY_ROOT_KEY = "move/library_root"
 
 
 def load_library_root() -> str:
-    return str(_settings().value(_LIBRARY_ROOT_KEY, "", type=str) or "")
+    return _STORE.text(_LIBRARY_ROOT_KEY)
 
 
 def save_library_root(path: str) -> None:
-    _settings().setValue(_LIBRARY_ROOT_KEY, path)
+    _STORE.set(_LIBRARY_ROOT_KEY, path)
 
 
 # ------------------------------------------------------------------
@@ -702,11 +615,11 @@ _OPEN_LIBRARY_UNKNOWN_LANGUAGE_KEY = "openlibrary/include_unknown_language"
 
 def load_open_library_database() -> str:
     """Path to the built Open Library lookup database, or ""."""
-    return str(_settings().value(_OPEN_LIBRARY_DB_KEY, "", type=str) or "")
+    return _STORE.text(_OPEN_LIBRARY_DB_KEY)
 
 
 def save_open_library_database(path: str) -> None:
-    _settings().setValue(_OPEN_LIBRARY_DB_KEY, path or "")
+    _STORE.set(_OPEN_LIBRARY_DB_KEY, path or "")
 
 
 def default_open_library_database_path() -> str:
@@ -716,49 +629,45 @@ def default_open_library_database_path() -> str:
 
 def load_open_library_sources() -> tuple[str, str]:
     """(editions dump, authors dump) paths last used for a build, "" if none."""
-    s = _settings()
-    return (str(s.value(_OPEN_LIBRARY_EDITIONS_KEY, "", type=str) or ""),
-            str(s.value(_OPEN_LIBRARY_AUTHORS_KEY, "", type=str) or ""))
+    return _STORE.text(_OPEN_LIBRARY_EDITIONS_KEY), _STORE.text(_OPEN_LIBRARY_AUTHORS_KEY)
 
 
 def save_open_library_sources(editions: str, authors: str) -> None:
-    s = _settings()
-    s.setValue(_OPEN_LIBRARY_EDITIONS_KEY, editions or "")
-    s.setValue(_OPEN_LIBRARY_AUTHORS_KEY, authors or "")
+    _STORE.write_many({_OPEN_LIBRARY_EDITIONS_KEY: editions or "", _OPEN_LIBRARY_AUTHORS_KEY: authors or ""})
 
 
 def load_open_library_works_dump() -> str:
     """The optional works dump (authors for editions that have none), "" = not used."""
-    return str(_settings().value(_OPEN_LIBRARY_WORKS_KEY, "", type=str) or "")
+    return _STORE.text(_OPEN_LIBRARY_WORKS_KEY)
 
 
 def save_open_library_works_dump(path: str) -> None:
-    _settings().setValue(_OPEN_LIBRARY_WORKS_KEY, path or "")
+    _STORE.set(_OPEN_LIBRARY_WORKS_KEY, path or "")
 
 
 def load_open_library_build_options():
     """The saved BuildOptions (the user's library languages by default)."""
     from core.openlibrary_import import DEFAULT_LANGUAGE_IDS, LANGUAGE_CHOICES, BuildOptions
 
-    s = _settings()
     known = {lang_id for lang_id, _label, _codes in LANGUAGE_CHOICES}
-    raw = s.value(_OPEN_LIBRARY_LANGUAGES_KEY, None)
+    raw = _STORE.raw(_OPEN_LIBRARY_LANGUAGES_KEY)
     if raw is None:
         chosen = DEFAULT_LANGUAGE_IDS
     else:
         chosen = tuple(p for p in str(raw).split(",") if p in known)
     return BuildOptions(
         languages=chosen,
-        all_languages=bool(s.value(_OPEN_LIBRARY_ALL_LANGUAGES_KEY, False, type=bool)),
-        include_unknown_language=bool(s.value(_OPEN_LIBRARY_UNKNOWN_LANGUAGE_KEY, True, type=bool)),
+        all_languages=_STORE.bool_value(_OPEN_LIBRARY_ALL_LANGUAGES_KEY, False),
+        include_unknown_language=_STORE.bool_value(_OPEN_LIBRARY_UNKNOWN_LANGUAGE_KEY, True),
     )
 
 
 def save_open_library_build_options(options) -> None:
-    s = _settings()
-    s.setValue(_OPEN_LIBRARY_LANGUAGES_KEY, ",".join(options.languages))
-    s.setValue(_OPEN_LIBRARY_ALL_LANGUAGES_KEY, bool(options.all_languages))
-    s.setValue(_OPEN_LIBRARY_UNKNOWN_LANGUAGE_KEY, bool(options.include_unknown_language))
+    _STORE.write_many({
+        _OPEN_LIBRARY_LANGUAGES_KEY: ",".join(options.languages),
+        _OPEN_LIBRARY_ALL_LANGUAGES_KEY: bool(options.all_languages),
+        _OPEN_LIBRARY_UNKNOWN_LANGUAGE_KEY: bool(options.include_unknown_language),
+    })
 
 
 # ------------------------------------------------------------------
@@ -773,11 +682,11 @@ _ISFDB_BACKUP_KEY = "isfdb/backup"
 
 def load_isfdb_database() -> str:
     """Path to the built ISFDB lookup database, or ""."""
-    return str(_settings().value(_ISFDB_DB_KEY, "", type=str) or "")
+    return _STORE.text(_ISFDB_DB_KEY)
 
 
 def save_isfdb_database(path: str) -> None:
-    _settings().setValue(_ISFDB_DB_KEY, path or "")
+    _STORE.set(_ISFDB_DB_KEY, path or "")
 
 
 def default_isfdb_database_path() -> str:
@@ -787,11 +696,11 @@ def default_isfdb_database_path() -> str:
 
 def load_isfdb_backup() -> str:
     """The ISFDB backup (.sql/.zip) last used for a build, "" if none."""
-    return str(_settings().value(_ISFDB_BACKUP_KEY, "", type=str) or "")
+    return _STORE.text(_ISFDB_BACKUP_KEY)
 
 
 def save_isfdb_backup(path: str) -> None:
-    _settings().setValue(_ISFDB_BACKUP_KEY, path or "")
+    _STORE.set(_ISFDB_BACKUP_KEY, path or "")
 
 
 # ------------------------------------------------------------------
@@ -803,12 +712,9 @@ def save_isfdb_backup(path: str) -> None:
 def raw_setting(key: str):
     """The stored value for an ini key, as QSettings returns it (a string
     from an ini), or None when nothing is stored."""
-    return _settings().value(key)
+    return _STORE.raw(key)
 
 
 def write_settings(values: dict) -> None:
     """Stores several ini keys in one go (QSettings writes the file once)."""
-    settings = _settings()
-    for key, value in values.items():
-        settings.setValue(key, value)
-    settings.sync()
+    _STORE.write_many(values)

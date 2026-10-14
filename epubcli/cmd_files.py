@@ -48,6 +48,13 @@ def _values_for(book: EpubBook, zero_pad: int) -> dict[str, str]:
     return values
 
 
+def _history_follows(old_path: str, new_path: str) -> None:
+    """rename_items/move_items' on_moved hook: a book that really changed path takes its History entries
+    along (when History is on). Not called for a copy, a dry run, a failure, or a cross-volume move whose
+    original could not be binned."""
+    history.on_files_moved([(old_path, new_path)])
+
+
 # --- rename -------------------------------------------------------------------------
 
 
@@ -67,12 +74,12 @@ def run_rename(args: argparse.Namespace, out: Output) -> int:
     zero_pad = _zero_pad(args)
     books = load_books(collect(args.paths, out, recurse=not args.no_recurse), out)
     def renamed(book: EpubBook, new_path: str) -> None:
-        history.on_files_moved([(book.path, new_path)])  # its History entries follow it (when history is on)
         book.path = new_path
 
     failed = commands.rename_items(
         books, pattern=pattern, values_for=lambda b: _values_for(b, zero_pad), path_of=lambda b: b.path,
         skip_reason=skip_reason, out=out, dry_run=args.dry_run, ascii_only=_ascii(args), on_renamed=renamed,
+        on_moved=_history_follows,
     )
     return commands.finish_run(out, failed, files=len(books), dry_run=args.dry_run, pattern=pattern)
 
@@ -94,33 +101,14 @@ def add_move_parser(sub) -> None:
     parser.set_defaults(handler=run_move)
 
 
-class _MovesFollowHistory:
-    """Output wrapper for move: redactor_common's move_items has no per-file callback, so each finished row
-    is looked at as it is recorded. A "moved" row whose original is gone moves that book's History entries
-    to the new path (a cross-volume copy whose original could not be binned keeps them where they are)."""
-
-    def __init__(self, out: Output):
-        self._out = out
-
-    def __getattr__(self, name):
-        return getattr(self._out, name)
-
-    def record(self, row) -> None:
-        if isinstance(row, dict) and row.get("status") == "moved" and row.get("new_path"):
-            old = row.get("path") or ""
-            if old and not os.path.lexists(old):
-                history.on_files_moved([(old, row["new_path"])])
-        self._out.record(row)
-
-
 def run_move(args: argparse.Namespace, out: Output) -> int:
     root = args.root or app_settings.load_library_root()
     zero_pad = _zero_pad(args)
     books = load_books(collect(args.paths, out, recurse=not args.no_recurse), out)
     failed = commands.move_items(
         books, root=root, pattern=args.pattern, values_for=lambda b: _values_for(b, zero_pad),
-        path_of=lambda b: b.path, skip_reason=skip_reason, out=_MovesFollowHistory(out), dry_run=args.dry_run,
-        copy=args.copy, ascii_only=_ascii(args),
+        path_of=lambda b: b.path, skip_reason=skip_reason, out=out, dry_run=args.dry_run,
+        copy=args.copy, ascii_only=_ascii(args), on_moved=_history_follows,
     )
     return commands.finish_run(out, failed, files=len(books), dry_run=args.dry_run, root=root)
 

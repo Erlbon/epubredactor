@@ -190,8 +190,22 @@ def test_search_open_library_non_429_http_error_not_retried():
         assert False, "should have raised"
     except OpenLibraryLookupError as exc:
         assert "500" in str(exc)
+        assert str(exc) == "Open Library returned an error (HTTP 500): Internal Server Error", str(exc)
     assert calls["count"] == 1, "a non-429 HTTP error should fail immediately, not retry"
     print("PASS: a non-429 HTTP error is reported immediately without retrying")
+
+
+def test_search_open_library_unreachable_keeps_connection_hint():
+    """The fetch goes through redactor_common's fetch_json now; the
+    "check your internet connection" wording stays."""
+    def offline(url):
+        raise urllib.error.URLError("no route to host")
+
+    try:
+        search_open_library("Some Book", fetch=offline, sleep_fn=lambda s: None)
+        assert False, "should have raised"
+    except OpenLibraryLookupError as exc:
+        assert str(exc).startswith("Could not reach Open Library (check your internet connection):"), str(exc)
 
 
 def test_display_label():

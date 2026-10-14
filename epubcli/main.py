@@ -21,40 +21,22 @@ and the ones that change files take --dry-run. Exit codes: 0 done, 1 some files 
 
 from __future__ import annotations
 
-import argparse
-from typing import Sequence
-
 from core.version import APP_VERSION
-from redactor_common.cli import make_output
+from redactor_common.cli.main_factory import make_main
 
 from epubcli import COMMANDS, cmd_files, cmd_headers, cmd_redact, cmd_tags, cmd_validate
 
 PROG = "epubredactor"
 
-
-def build_parser() -> argparse.ArgumentParser:
-    parser = argparse.ArgumentParser(
-        prog=PROG, description="The EPUB Redactor on the command line: inspect, edit, rename, convert, validate and redact EPUB books.",
-    )
-    parser.add_argument("--version", action="version", version=f"{PROG} {APP_VERSION}")
-    sub = parser.add_subparsers(dest="command", metavar="COMMAND")
-    sub.required = True
-    cmd_tags.add_info_parser(sub)
-    cmd_tags.add_set_parser(sub)
-    cmd_files.add_rename_parser(sub)
-    cmd_files.add_move_parser(sub)
-    cmd_files.add_convert_parser(sub)
-    cmd_redact.add_redact_parser(sub)
-    cmd_validate.add_validate_parser(sub)
-    cmd_headers.add_headers_parser(sub)
-    assert tuple(sub.choices) == COMMANDS, "epubcli.COMMANDS must list the subcommands"
-    return parser
-
-
-def main(argv: Sequence[str] | None = None) -> int:
-    args = build_parser().parse_args(argv)
-    out = make_output(args)
-    try:
-        return args.handler(args, out)
-    finally:
-        out.close()
+# redactor_common's make_main: the parser (--version, one subcommand per adder, checked against COMMANDS)
+# and main(argv), which runs the chosen handler with an Output and always closes it.
+build_parser, main = make_main(
+    PROG, APP_VERSION,
+    "The EPUB Redactor on the command line: inspect, edit, rename, convert, validate and redact EPUB books.",
+    [
+        cmd_tags.add_info_parser, cmd_tags.add_set_parser, cmd_files.add_rename_parser,
+        cmd_files.add_move_parser, cmd_files.add_convert_parser, cmd_redact.add_redact_parser,
+        cmd_validate.add_validate_parser, cmd_headers.add_headers_parser,
+    ],
+    commands=COMMANDS,
+)

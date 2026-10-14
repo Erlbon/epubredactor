@@ -18,7 +18,6 @@ status line (what the file was built from).
 
 from __future__ import annotations
 
-import os
 from typing import Optional
 
 from PyQt6.QtWidgets import (
@@ -31,9 +30,7 @@ from PyQt6.QtWidgets import (
     QPushButton,
     QVBoxLayout,
 )
-from redactor_common.core.dump_import import DumpImportError
-from redactor_common.core.local_db import LocalDatabaseError, forget_cached
-from redactor_common.gui.dump_import_runner import run_dump_import
+from redactor_common.core.local_db import LocalDatabaseError
 from redactor_common.gui.local_db_settings_dialog import LocalDatabaseSettingsDialog
 
 from core.isfdb_import import build_isfdb_database, describe_database
@@ -67,9 +64,13 @@ class IsfdbSettingsDialog(LocalDatabaseSettingsDialog):
             build=lambda dialog: self._build_database(),
             build_label="Build Database…",
             parent=parent,
+            # The shared build tail: the default path is the placeholder, Browse's start and the build's
+            # destination; Browse is a Save dialog (the file may not exist yet); a status line under the path.
+            default_path=app_settings.default_isfdb_database_path,
+            browse_for_destination=True,
+            show_status=True,
         )
         self.setMinimumWidth(620)
-        self.path_edit.setPlaceholderText(app_settings.default_isfdb_database_path())
 
         box = QGroupBox("Build from the ISFDB backup")
         layout = QVBoxLayout(box)
@@ -82,14 +83,7 @@ class IsfdbSettingsDialog(LocalDatabaseSettingsDialog):
         row.addWidget(self.backup_edit, 1)
         row.addWidget(browse)
         layout.addLayout(row)
-
-        self.status_label = QLabel()
-        self.status_label.setWordWrap(True)
-        # Between the path row and the Check File / Build row.
-        self.layout().insertWidget(2, box)
-        self.layout().insertWidget(2, self.status_label)
-        self.path_edit.textChanged.connect(self._refresh_status)
-        self._refresh_status()
+        self.add_section(box)  # under the status line, above the Check File / Build row
 
     # -- widgets -------------------------------------------------------------------------
 
@@ -98,27 +92,6 @@ class IsfdbSettingsDialog(LocalDatabaseSettingsDialog):
         path, _ = QFileDialog.getOpenFileName(self, "Choose the ISFDB MySQL backup", start, BACKUP_FILTER)
         if path:
             self.backup_edit.setText(path)
-
-    def _browse(self) -> None:
-        """The database may not exist yet, so this is a Save dialog that doesn't
-        ask to overwrite (picking an existing file just selects it)."""
-        path, _ = QFileDialog.getSaveFileName(
-            self, "Choose where the database is (or will be) stored",
-            self.path_edit.text().strip() or app_settings.default_isfdb_database_path(),
-            self._file_filter, options=QFileDialog.Option.DontConfirmOverwrite,
-        )
-        if path:
-            self.path_edit.setText(path)
-
-    def _refresh_status(self) -> None:
-        path = self.path_edit.text().strip()
-        if not path:
-            self.status_label.setText("No database yet.")
-        elif not os.path.isfile(path):
-            self.status_label.setText("Not built yet -- the file doesn't exist.")
-        else:
-            ok, message = self.check_result()
-            self.status_label.setText(message if ok else f"Problem: {message}")
 
     # -- build ---------------------------------------------------------------------------
 
@@ -133,30 +106,12 @@ class IsfdbSettingsDialog(LocalDatabaseSettingsDialog):
         if not backup:
             QMessageBox.information(self, "Build Database", "Choose the ISFDB MySQL backup first.")
             return None
-        dest = self.path_edit.text().strip() or app_settings.default_isfdb_database_path()
-        replacing = (
-            "\n\nThe existing database is replaced only when the new one is complete." if os.path.exists(dest) else ""
+        # redactor_common's build tail: asks (adding "replaced only when the new one is complete" when the file
+        # exists), saves the backup path first so it is remembered even if the build is cancelled, releases a
+        # cached open handle, builds on a worker thread behind a cancellable progress dialog, reports the result.
+        return self.run_build(
+            "Build ISFDB Database", "Reading the ISFDB backup…",
+            lambda dest, progress, cancelled: build_isfdb_database(backup, dest, progress, cancelled),
+            confirm="Build {name} from the ISFDB backup?\n\nIt reads the whole backup, which takes a few minutes, "
+                    "and needs a few hundred MB of free disk space.",
         )
-        answer = QMessageBox.question(
-            self, "Build Database",
-            f"Build {os.path.basename(dest)} from the ISFDB backup?\n\nIt reads the whole backup, which takes a few "
-            f"minutes, and needs a few hundred MB of free disk space.{replacing}",
-        )
-        if answer != QMessageBox.StandardButton.Yes:
-            return None
-        self._save_all(dest)  # remember the backup even if the build is cancelled
-        forget_cached(dest)  # a lookup may still hold the old build open
-        try:
-            summary = run_dump_import(
-                self, "Build ISFDB Database", "Reading the ISFDB backup…",
-                lambda progress, cancelled: build_isfdb_database(backup, dest, progress, cancelled),
-            )
-        except DumpImportError as exc:
-            QMessageBox.warning(self, "Build ISFDB Database", str(exc))
-            return None
-        if summary is None:
-            return None
-        QMessageBox.information(self, "Build ISFDB Database", summary.describe())
-        self.path_edit.setText(dest)
-        self._refresh_status()
-        return dest

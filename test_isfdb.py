@@ -586,10 +586,41 @@ def test_the_settings_dialog_opens_and_shows_the_state_of_the_database(built, tm
     app_settings.save_isfdb_database("")
     dialog = IsfdbSettingsDialog()
     assert dialog.status_label.text() == "No database yet."
+    # redactor_common's status line: refreshed once typing pauses (debounced), the check off the GUI thread.
     dialog.path_edit.setText(str(tmp_path / "nope.db"))
+    dialog.refresh_status()
     assert "Not built yet" in dialog.status_label.text()
     dialog.path_edit.setText(dest)
+    dialog.refresh_status()
     assert "5 books" in dialog.status_label.text() and "2025-12-27" in dialog.status_label.text()
+    assert dialog.path_edit.placeholderText() == app_settings.default_isfdb_database_path()
+    dialog.close()
+
+
+def test_the_isfdb_build_goes_through_the_shared_build_tail(built, tmp_path, monkeypatch):
+    """Build Database... asks with the ISFDB wording, saves the backup path first, and builds via
+    redactor_common's run_build (worker thread + cancellable progress dialog)."""
+    import redactor_common.gui.local_db_settings_dialog as shared
+    from PyQt6.QtWidgets import QMessageBox
+
+    from gui.isfdb_settings_dialog import IsfdbSettingsDialog
+
+    _dest, _, _ = built
+    backup = str(tmp_path / "backup-MySQL-55-2025-12-27.zip")
+    target = str(tmp_path / "again.db")
+    app_settings.save_isfdb_database(target)
+    dialog = IsfdbSettingsDialog()
+    dialog.backup_edit.setText(backup)
+    asked = []
+    monkeypatch.setattr(QMessageBox, "question", staticmethod(lambda p, t, text, *a: asked.append(text) or QMessageBox.StandardButton.No))
+    dialog.build_button.click()
+    assert asked[0].startswith("Build again.db from the ISFDB backup?\n\nIt reads the whole backup")
+    assert app_settings.load_isfdb_backup() == ""  # said No: nothing saved, nothing built
+    monkeypatch.setattr(QMessageBox, "question", staticmethod(lambda *a, **k: QMessageBox.StandardButton.Yes))
+    monkeypatch.setattr(shared, "run_dump_import", lambda parent, title, label, work: work(lambda f: None, lambda: False))
+    dialog.build_button.click()
+    assert app_settings.load_isfdb_backup() == backup and dialog.path_edit.text() == target
+    assert "5 books" in dialog.status_label.text()
     dialog.close()
 
 

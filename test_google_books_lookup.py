@@ -201,6 +201,26 @@ def test_search_google_books_429_exhausted_gives_clear_message():
     print("PASS: a persistent 429 gives a clear rate-limit message, not a misleading connectivity one")
 
 
+def test_search_google_books_unreachable_keeps_connection_hint():
+    """redactor_common's fetch_json does the fetch now; the "check your
+    internet connection" wording for an unreachable service is kept, and
+    a garbled body still gets the unreadable-response message."""
+    def offline(url):
+        raise urllib.error.URLError("no route to host")
+
+    try:
+        search_google_books("Some Book", fetch=offline, sleep_fn=lambda s: None)
+        assert False, "should have raised"
+    except GoogleBooksLookupError as exc:
+        assert str(exc).startswith("Could not reach Google Books (check your internet connection):"), str(exc)
+        assert "no route to host" in str(exc)
+    try:
+        search_google_books("Some Book", fetch=lambda url: b"{{{", sleep_fn=lambda s: None)
+        assert False, "should have raised"
+    except GoogleBooksLookupError as exc:
+        assert str(exc) == "Received an unreadable response from Google Books."
+
+
 def test_search_google_books_non_429_http_error_not_retried():
     calls = {"count": 0}
 

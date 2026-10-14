@@ -99,6 +99,21 @@ def test_set_refuses_bad_input_before_touching_anything(book, argv, message):
     assert open(book, "rb").read() == before
 
 
+@pytest.mark.parametrize("typed, field", [
+    ("series_index", "series_index"), ("Series Index", "series_index"), ("series-index", "series_index"),
+    ("seriesindex", "series_index"), ("Series #", "series_index"), ("Author(s)", "authors"),
+    ("author-sort", "author_sort"), ("Author Sort", "author_sort"), ("PUB YEAR", "year"), ("tags", "genres"),
+])
+def test_field_names_match_in_any_usual_spelling(typed, field):
+    """redactor_common's FieldResolver: hyphen, space, underscore and squeezed spellings all find the field."""
+    from epubcli.fields import RESOLVER, parse_assignment, resolve_field
+    assert resolve_field(typed) == field
+    assert parse_assignment("Series Index= 2 ") == ("series_index", "2")
+    assert parse_assignment("author-sort=Herbert, Frank") == ("author_sort_str", "Herbert, Frank")
+    with pytest.raises(CliError, match="unknown field 'serie'. Fields: title, isbn, authors"):
+        RESOLVER.resolve("serie")
+
+
 def test_set_accepts_an_isbn_with_hyphens_and_normalises_it(book, capsys):
     run(capsys, "set", book, "-s", "isbn=978-0-441-17271-9")
     assert EpubBook(book).metadata.isbn == "9780441172719"

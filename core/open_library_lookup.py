@@ -24,12 +24,12 @@ from __future__ import annotations
 
 import json
 import time
-import urllib.error
 from dataclasses import dataclass
 from urllib.parse import quote
 
 from core.author_sort import space_initials
 from core.isbn import normalize_isbn
+from core.lookup_fetch import fetch_json_with_hint
 from redactor_common.core.lookup_client import fetch_bytes, make_default_fetch
 
 SEARCH_URL = "https://openlibrary.org/search.json"
@@ -123,9 +123,12 @@ def parse_search_response(raw: bytes) -> list[OpenLibraryCandidate]:
         data = json.loads(raw)
     except (json.JSONDecodeError, UnicodeDecodeError) as exc:
         raise OpenLibraryLookupError("Received an unreadable response from Open Library.") from exc
+    return _candidates_from(data)
 
+
+def _candidates_from(data) -> list[OpenLibraryCandidate]:
     candidates: list[OpenLibraryCandidate] = []
-    for doc in data.get("docs", []) or []:
+    for doc in (data or {}).get("docs", []) or []:
         authors = doc.get("author_name") or []
         publishers = doc.get("publisher") or []
         isbns = doc.get("isbn") or []
@@ -149,31 +152,20 @@ def build_isbn_search_url(isbn: str, max_results: int = 3) -> str:
     return f"{SEARCH_URL}?isbn={quote(isbn)}&limit={max_results}"
 
 
-def _fetch_with_retry(url: str, fetch, sleep_fn) -> bytes:
-    """One GET with the rate-limit policy shared by both searches: an
-    HTTP 429 is retried a couple of times with a short backoff before
-    giving up -- see RATE_LIMIT_RETRY_DELAYS."""
-    remaining_delays = list(RATE_LIMIT_RETRY_DELAYS)
-    while True:
-        try:
-            return fetch(url)
-        except urllib.error.HTTPError as exc:
-            if exc.code == 429 and remaining_delays:
-                sleep_fn(remaining_delays.pop(0))
-                continue
-            if exc.code == 429:
-                raise OpenLibraryLookupError(
-                    "Open Library is rate-limiting requests right now (HTTP 429) -- "
-                    "this usually clears up on its own after a minute or two. Try "
-                    "again shortly, or search fewer books at once."
-                ) from exc
-            raise OpenLibraryLookupError(
-                f"Open Library returned an error (HTTP {exc.code}): {exc.reason}"
-            ) from exc
-        except (urllib.error.URLError, OSError) as exc:
-            raise OpenLibraryLookupError(
-                f"Could not reach Open Library (check your internet connection): {exc}"
-            ) from exc
+def _fetch_search(url: str, fetch, sleep_fn) -> list[OpenLibraryCandidate]:
+    """One search GET via redactor_common's fetch_json, with the
+    rate-limit policy shared by both searches: an HTTP 429 is retried a
+    couple of times with a short backoff before giving up -- see
+    RATE_LIMIT_RETRY_DELAYS."""
+    return _candidates_from(fetch_json_with_hint(
+        url, fetch or _default_fetch, OpenLibraryLookupError, "Open Library",
+        status_messages={429: (
+            "Open Library is rate-limiting requests right now (HTTP 429) -- "
+            "this usually clears up on its own after a minute or two. Try "
+            "again shortly, or search fewer books at once."
+        )},
+        retry_429=RATE_LIMIT_RETRY_DELAYS, sleep=sleep_fn,
+    ))
 
 
 def search_open_library(
@@ -184,7 +176,7 @@ def search_open_library(
     empty list (not an error) when the search succeeds but finds
     nothing."""
     url = build_search_url(title, author, max_results)
-    return parse_search_response(_fetch_with_retry(url, fetch or _default_fetch, sleep_fn))
+    return _fetch_search(url, fetch, sleep_fn)
 
 
 def search_open_library_by_isbn(
@@ -193,7 +185,7 @@ def search_open_library_by_isbn(
     """Works Open Library lists for exactly this ISBN (used by the Redact
     recipe). Same errors and retry policy as search_open_library()."""
     url = build_isbn_search_url(isbn, max_results)
-    return parse_search_response(_fetch_with_retry(url, fetch or _default_fetch, sleep_fn))
+    return _fetch_search(url, fetch, sleep_fn)
 
 
 def download_cover_image(candidate: OpenLibraryCandidate, fetch=None) -> bytes:

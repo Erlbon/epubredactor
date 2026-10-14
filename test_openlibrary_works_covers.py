@@ -161,7 +161,7 @@ def test_progress_with_three_sources_is_monotonic(dumps, tmp_path):
 
 
 def test_the_dialog_has_an_optional_works_picker(dumps, tmp_path, monkeypatch):
-    import gui.open_library_settings_dialog as module
+    import redactor_common.gui.local_db_settings_dialog as module  # the shared build tail runs the build
     from PyQt6.QtWidgets import QMessageBox
     from gui.open_library_settings_dialog import OpenLibrarySettingsDialog
 

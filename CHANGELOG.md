@@ -1,5 +1,17 @@
 # Changelog
 
+## 2026-10-14#06 -- Shared code from redactor_common replaces the app's own copies
+
+Behind the scenes: code this app kept its own copy of now comes from redactor_common, shared by the whole Redactor family. Keys, texts and defaults are unchanged; the visible differences are listed first.
+
+- **Open Folder, drops and Refresh List no longer list the app's own leftovers as books**: a Redact backup (`Dune.redact-orig.epub`) or a hidden scratch copy left behind by a run that was killed is skipped. A file you open by name is still opened.
+- **The "Other E-book Formats Found" question** after Open Folder (same text, Yes / No) now has **"Don't ask again for this folder"** when one folder was opened. Ticked folders are kept in the settings file (`convert_offer/declined_folders`).
+- **Command line field names** accept any usual spelling: `series_index`, `series-index`, `"Series Index"`, `seriesindex` and `"Series #"` all mean the same field.
+- **A hand-edited settings file can no longer crash a dialog**: a value such as `zero_pad_width=abc` falls back to the default instead of raising (Export Settings read it with a type check that raised).
+- **Open Library / ISFDB Database dialogs**: the status line is checked off the GUI thread and refreshed once typing pauses.
+- Removed (now redactor_common): the Google Books and Open Library rate-limit retry loops (`lookup_client.fetch_json` with `retry_429`; the "check your internet connection" wording is kept), the CLI field resolver and the CLI `main()` body (`cli.fields.FieldResolver`, `cli.main_factory.make_main`), the two folder walkers and the convert question (`core.folder_discovery.find_by_extension`, `gui.convert_offer.offer_conversion`, with `core.temp_names.is_app_temp_name` as the skip), the CLI move's History output wrapper (the `on_moved` hook of `rename_items` / `move_items`), the QSettings plumbing of `gui/app_settings.py` (`gui.qsettings_store`: QSettingsStore, ManagedListStore, PatternHistoryStore, ColumnSettingsStore, including the one-time column index-to-key migration), the Export / Import Settings value checks (`core.settings_coerce`), and the database dialogs' Browse / status / build tail (`gui.local_db_settings_dialog`).
+- Requires redactor_common 2026-10-14-05.
+
 ## 2026-10-14#05 -- History follows renamed and moved books; History setting in Export / Import Settings
 
 - **A book's History follows it when the file is renamed or moved.** File > Rename File, Rename / Export / Move, Search/Replace on filenames, Undo Last Rename, Redact's rename and move steps, and the command line's `rename`, `move` and `redact` now tell the History journal where the file went, so Tools > History still finds it and can restore it there. A Redact entry is recorded at the path the book was saved at and then follows its rename / move. Nothing is written while History is off; a copy (`move --copy`, or a cross-volume move whose original could not be binned) leaves the entries with the original.
