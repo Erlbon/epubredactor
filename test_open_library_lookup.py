@@ -208,6 +208,24 @@ def test_search_open_library_unreachable_keeps_connection_hint():
         assert str(exc).startswith("Could not reach Open Library (check your internet connection):"), str(exc)
 
 
+def test_unreachable_wording_comes_from_the_shared_fetch_json_not_a_local_wrapper():
+    """redactor_common's fetch_json words the "could not reach" case itself (unreachable_message), so the
+    local core/lookup_fetch.py wrapper is gone; the full message and the chained cause are unchanged."""
+    import importlib.util
+
+    assert importlib.util.find_spec("core.lookup_fetch") is None
+
+    def offline(url):
+        raise urllib.error.URLError("no route to host")
+
+    try:
+        search_open_library("Some Book", fetch=offline, sleep_fn=lambda s: None)
+        assert False, "should have raised"
+    except OpenLibraryLookupError as exc:
+        assert str(exc) == "Could not reach Open Library (check your internet connection): <urlopen error no route to host>"
+        assert isinstance(exc.__cause__, urllib.error.URLError)
+
+
 def test_display_label():
     c = parse_search_response(json.dumps(SAMPLE_RESPONSE).encode())[0]
     label = c.display_label()

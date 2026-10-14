@@ -23,9 +23,7 @@ from urllib.parse import quote
 
 from core.author_sort import space_initials
 from core.isbn import best_isbn13, normalize_isbn
-from core.lookup_fetch import fetch_json_with_hint
-
-from redactor_common.core.lookup_client import fetch_bytes, make_default_fetch
+from redactor_common.core.lookup_client import fetch_bytes, fetch_json, make_default_fetch
 
 API_URL = "https://www.googleapis.com/books/v1/volumes"
 DEFAULT_TIMEOUT = 8.0
@@ -172,8 +170,9 @@ def _fetch_search(url: str, fetch, sleep_fn) -> list[GoogleBooksCandidate]:
     couple of times with a short backoff before giving up -- see
     RATE_LIMIT_RETRY_DELAYS -- since this is usually a transient,
     short-lived limit, not a real failure."""
-    return _candidates_from(fetch_json_with_hint(
+    return _candidates_from(fetch_json(
         url, fetch or _default_fetch, GoogleBooksLookupError, "Google Books",
+        unreachable_message="Could not reach Google Books (check your internet connection): {detail}",
         status_messages={429: (
             "Google Books is rate-limiting requests right now (HTTP 429) -- "
             "this usually clears up on its own after a minute or two. Try "

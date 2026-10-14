@@ -54,6 +54,19 @@ def test_info_reports_an_unreadable_book_and_exits_1(tmp_path, capsys):
     assert code == 1 and document["failed"] == 1 and document["results"][0]["status"]
 
 
+def test_folder_and_wildcard_skip_the_apps_own_leftovers_but_a_named_one_is_kept(book, tmp_path, capsys):
+    """A Redact backup or hidden scratch copy left beside the books never becomes work when a folder or a
+    wildcard is expanded; naming it on the command line still processes it."""
+    for name in ("dune.redact-orig.epub", ".epubredactor-scratch.epub"):
+        shutil.copy(book, tmp_path / name)
+    _code, document = run_json(capsys, "info", str(tmp_path))
+    assert document["files"] == 1
+    _code, document = run_json(capsys, "info", str(tmp_path / "*.epub"))
+    assert document["files"] == 1
+    _code, document = run_json(capsys, "info", str(tmp_path / "dune.redact-orig.epub"))
+    assert document["files"] == 1 and document["failed"] == 0
+
+
 def test_info_with_nothing_found_is_a_usage_error(tmp_path):
     with pytest.raises(CliError, match="no EPUB files"):
         main(["info", str(tmp_path / "nope.epub")])

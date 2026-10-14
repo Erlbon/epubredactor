@@ -66,7 +66,27 @@ def test_open_folder_offer_uses_the_shared_dialog_with_the_old_wording(tmp_path,
     assert (seen["kind"], seen["target"], seen["yes_text"], seen["no_text"]) == ("EPUB", "EPUB", "Yes", "No")
     assert seen["key"] == str(tmp_path) and seen["remember"] is not None
     window._offer_import_of_other_formats([str(tmp_path / "b.mobi")], [], [str(tmp_path), str(tmp_path / "sub")])
-    assert seen["key"] is None and seen["remember"] is None  # "Don't ask again" only when one folder was opened
+    assert seen["key"] == [str(tmp_path), str(tmp_path / "sub")]  # "Don't ask again for these folders"
+    assert seen["remember"] is not None
+    window._offer_import_of_other_formats([str(tmp_path / "b.mobi")], [], [])
+    assert seen["key"] is None and seen["remember"] is None
+
+
+def test_several_declined_folders_skip_the_offer_with_the_real_store(tmp_path, monkeypatch):
+    """Multi-folder Open Folder through the real shared offer and the app's declined-folders store: once
+    every opened folder was declined, the box is not shown again."""
+    declined = set()
+    store = (lambda key: key in declined, declined.add)
+    monkeypatch.setattr(mw, "_declined_convert_folders", lambda: store)
+    shown = []
+    monkeypatch.setattr(mw.QMessageBox, "exec", lambda self: shown.append(self) or 0, raising=False)
+    folders = [str(tmp_path / "a"), str(tmp_path / "b")]
+    from redactor_common.gui.convert_offer import folder_key
+    for folder in folders:
+        declined.add(folder_key(folder))
+    window = mw.MainWindow()
+    window._offer_import_of_other_formats([str(tmp_path / "a" / "x.mobi")], [], folders)
+    assert shown == []
 
 
 def test_dont_ask_again_folders_are_kept_in_the_settings(tmp_path):

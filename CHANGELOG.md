@@ -1,5 +1,12 @@
 # Changelog
 
+## 2026-10-14#07 -- Small clean-ups after redactor_common 2026-10-14-06
+
+- **"Other E-book Formats Found" after opening several folders at once** now has **"Don't ask again for these folders"** too (before, the checkbox only appeared when exactly one folder was opened). The question is skipped once every one of the opened folders was declined; the folders are kept in the same settings key (`convert_offer/declined_folders`).
+- **Command line**: a folder or wildcard no longer picks up the app's own leftovers (a Redact backup such as `Dune.redact-orig.epub`, a hidden scratch copy); a leftover named explicitly is still processed.
+- Removed `core/lookup_fetch.py`: Google Books and Open Library pass their "Could not reach ... (check your internet connection): ..." wording to redactor_common's `fetch_json` (`unreachable_message`). The message is unchanged.
+- Requires redactor_common 2026-10-14-06.
+
 ## 2026-10-14#06 -- Shared code from redactor_common replaces the app's own copies
 
 Behind the scenes: code this app kept its own copy of now comes from redactor_common, shared by the whole Redactor family. Keys, texts and defaults are unchanged; the visible differences are listed first.

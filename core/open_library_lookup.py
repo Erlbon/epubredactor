@@ -29,8 +29,7 @@ from urllib.parse import quote
 
 from core.author_sort import space_initials
 from core.isbn import normalize_isbn
-from core.lookup_fetch import fetch_json_with_hint
-from redactor_common.core.lookup_client import fetch_bytes, make_default_fetch
+from redactor_common.core.lookup_client import fetch_bytes, fetch_json, make_default_fetch
 
 SEARCH_URL = "https://openlibrary.org/search.json"
 COVER_URL_TEMPLATE = "https://covers.openlibrary.org/b/id/{cover_id}-L.jpg"
@@ -157,8 +156,9 @@ def _fetch_search(url: str, fetch, sleep_fn) -> list[OpenLibraryCandidate]:
     rate-limit policy shared by both searches: an HTTP 429 is retried a
     couple of times with a short backoff before giving up -- see
     RATE_LIMIT_RETRY_DELAYS."""
-    return _candidates_from(fetch_json_with_hint(
+    return _candidates_from(fetch_json(
         url, fetch or _default_fetch, OpenLibraryLookupError, "Open Library",
+        unreachable_message="Could not reach Open Library (check your internet connection): {detail}",
         status_messages={429: (
             "Open Library is rate-limiting requests right now (HTTP 429) -- "
             "this usually clears up on its own after a minute or two. Try "

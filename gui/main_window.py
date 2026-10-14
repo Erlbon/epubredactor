@@ -1548,11 +1548,14 @@ class MainWindow(QMainWindow):
                                        folders: list[str] | None = None) -> None:
         """Open Folder loads only .epub. Say what else Calibre could convert in those folders (and subfolders),
         and offer to open Import and Convert with the files already listed (redactor_common's convert offer;
-        with one folder opened, the box also has "Don't ask again for this folder")."""
-        one_folder = folders[0] if folders and len(folders) == 1 else None
+        the box also has "Don't ask again for this folder", or "... for these folders" when several were opened:
+        then the offer is skipped only when every one of them was declined before)."""
+        remember_key = None
+        if folders:
+            remember_key = folders[0] if len(folders) == 1 else list(folders)
         answer = offer_conversion(
             self, others, len(epub_paths), "EPUB", "EPUB",
-            remember_key=one_folder, remember=_declined_convert_folders() if one_folder else None,
+            remember_key=remember_key, remember=_declined_convert_folders() if remember_key else None,
             noun="file", converter="Calibre", question="Open File > Import and Convert with them listed?",
             title="Other E-book Formats Found", yes_text="Yes", no_text="No",
         )
