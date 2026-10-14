@@ -1,5 +1,12 @@
 # Changelog
 
+## 2026-10-14#05 -- History follows renamed and moved books; History setting in Export / Import Settings
+
+- **A book's History follows it when the file is renamed or moved.** File > Rename File, Rename / Export / Move, Search/Replace on filenames, Undo Last Rename, Redact's rename and move steps, and the command line's `rename`, `move` and `redact` now tell the History journal where the file went, so Tools > History still finds it and can restore it there. A Redact entry is recorded at the path the book was saved at and then follows its rename / move. Nothing is written while History is off; a copy (`move --copy`, or a cross-volume move whose original could not be binned) leaves the entries with the original.
+- **Preferences > History: "Delete History..."** is now the shared preferences action button (same confirmation; the file still goes to the Recycle Bin).
+- **File > Export / Import Settings** now include the History on/off setting (section "History on/off"). A settings file without it leaves your current setting alone; importing one that has it on turns recording on only if you leave that section ticked in the import preview, and the status bar says what the setting now is.
+- Requires redactor_common 2026-10-14-04.
+
 ## 2026-10-14#04 -- Tools > History: undo a Save after the app was closed (opt-in)
 
 - **Opt-in, off by default.** Nothing is recorded, and no file is created, until you tick "Keep a history of tag changes (lets you undo a Save or Redact later)" under Tools > Preferences > History. That page says what is kept and where, and has "Delete History…" (asks first, sends the file to the Recycle Bin). Tools > History with the history off asks whether to turn it on; if it is off but older history exists, the dialog opens titled "History (recording is off)". The command line obeys the same setting.

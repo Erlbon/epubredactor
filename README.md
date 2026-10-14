@@ -410,7 +410,14 @@ them in one go.
   recorded until you tick "Keep a history of tag changes" under Tools >
   Preferences > History (or answer Yes when Tools > History asks); the
   command line obeys the same setting. That page also has "Delete
-  History…", which sends the journal file to the Recycle Bin. When it
+  History…", which sends the journal file to the Recycle Bin. A book's
+  history follows it when the file is renamed or moved (File > Rename
+  File, Rename / Export / Move, Undo Last Rename, Redact's rename and
+  move steps, and the command line's `rename`, `move` and `redact`).
+  The on/off setting is part of File > Export / Import Settings (the
+  "History on/off" section; a file without it leaves your setting alone,
+  and importing one that has it on turns recording on only if you leave
+  that section ticked). When it
   is on, every tag change written into a file (Save
   All, Save As over an existing file, the command line, Redact, a
   metadata change made by Polish Book, and Restore itself) is recorded

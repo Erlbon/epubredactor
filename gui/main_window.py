@@ -244,10 +244,17 @@ _FIELD_LABELS = {key: label for key, label, _multiline in FIELDS}
 
 
 
+def _make_rename_log(path: str) -> RenameLog:
+    """Every RenameLog this app builds: each recorded rename/move (and an
+    undo of one) also moves the History journal's entries of that file
+    along (core/history.on_files_moved; nothing while history is off)."""
+    return RenameLog(path, on_move=history.on_files_moved)
+
+
 def _rename_log() -> RenameLog:
     """The persistent log behind File > Undo Last Rename (redactor_common's
     core/rename_log.py), next to this app's settings."""
-    return RenameLog(os.path.join(str(base_dir()), "epubredactor_rename_log.json"))
+    return _make_rename_log(os.path.join(str(base_dir()), "epubredactor_rename_log.json"))
 
 def _duplicates_dismissed_path() -> str:
     """Find Duplicates' "Not duplicates" decisions (redactor_common's
@@ -1835,6 +1842,10 @@ class MainWindow(QMainWindow):
             self._on_selection_changed()
         if "field_defaults" in applied:
             self._update_blank_language_default_action_state()
+        if "history" in applied:
+            # core/history reads the ini key on every save, so nothing to reload; just say what changed.
+            state = "on" if history.history_enabled() else "off"
+            self.status.showMessage(f"History is now {state} (from the imported settings).", 8000)
 
     def _redetect_tools(self) -> None:
         """Offered after an import: looks for Calibre and Sigil on THIS

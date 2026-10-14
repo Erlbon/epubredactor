@@ -109,11 +109,15 @@ def test_delete_history_asks_and_removes_the_file(tmp_path, history_on, monkeypa
     binned = []
     monkeypatch.setattr("redactor_common.core.trash.move_to_trash", lambda p: (binned.append(p), os.remove(p)))
     dialog = preferences.make_dialog()
+    # a PrefAction on the History page (redactor_common), not a hand-made button
+    [section] = [s for s in preferences.build_sections() if s.key == "history"]
+    assert [a.label for a in section.actions] == ["&Delete History..."]
+    [button] = [b for b in dialog.action_buttons if b.text() == "&Delete History..."]
     monkeypatch.setattr(QMessageBox, "question", lambda *a, **k: QMessageBox.StandardButton.Cancel)
-    dialog.delete_history_button.click()
+    button.click()
     assert os.path.isfile(journal_file)
     monkeypatch.setattr(QMessageBox, "question", lambda *a, **k: QMessageBox.StandardButton.Yes)
-    dialog.delete_history_button.click()
+    button.click()
     assert not os.path.exists(journal_file) and binned == [journal_file]
     assert history.history_enabled()  # deleting the file does not change the setting
 

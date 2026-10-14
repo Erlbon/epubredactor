@@ -20,7 +20,7 @@ from redactor_common.gui.standard_menus import get_action_registry  # noqa: E402
 _app = QApplication.instance() or QApplication(sys.argv)
 
 KEYS = mw.COLUMN_KEYS
-PORTABLE = {"redact", "patterns", "field_defaults", "columns", "view", "lists", "covers"}
+PORTABLE = {"redact", "patterns", "field_defaults", "columns", "view", "lists", "covers", "history"}
 MACHINE = {"tools", "folders", "ereader"}
 
 
@@ -75,7 +75,9 @@ def test_export_change_import_restores(adapter, tmp_path):
     app_settings.hide_default_genre("Fantasy")
     app_settings.save_junk_cover_hashes({"abc"})
     app_settings.save_ascii_filenames(True)
+    app_settings.save_history_enabled(True)
     text = sb.dump_bundle(sb.build_bundle(adapter, sb.default_selection(adapter)))
+    assert json.loads(text)["sections"]["history"]["items"] == {"enabled": True}
     path = tmp_path / "epubredactor-settings.json"
     path.write_text(text, encoding="utf-8")
 
@@ -89,6 +91,7 @@ def test_export_change_import_restores(adapter, tmp_path):
     app_settings.restore_default_genres()
     app_settings.save_junk_cover_hashes(set())
     app_settings.save_ascii_filenames(False)
+    app_settings.save_history_enabled(False)
 
     bundle = sb.parse_bundle(path.read_text(encoding="utf-8"), "epubredactor")
     result = sb.apply_bundle(adapter, bundle, PORTABLE)
@@ -102,7 +105,39 @@ def test_export_change_import_restores(adapter, tmp_path):
     assert "Fantasy" in app_settings.load_hidden_default_genres()
     assert app_settings.load_junk_cover_hashes() == {"abc"}
     assert app_settings.load_ascii_filenames() is True
+    assert app_settings.load_history_enabled() is True
+    from core import history
+    assert history.history_enabled() is True  # the Qt-free reader the saves use sees it too
     assert sb.diff_bundle(adapter, bundle) == []
+
+
+def test_history_setting_import_without_the_key_or_section_leaves_it(adapter):
+    """History is opt-in: only a file that carries the setting, imported with that section ticked, changes it."""
+    from gui.settings_adapter import HISTORY_SECTION_LABEL
+
+    assert "turn recording" in HISTORY_SECTION_LABEL  # what the import preview shows for the section
+    assert adapter.read_section("history") == {"enabled": False}
+    for sections in ({}, {"history": sb.BundleSection("History", {})},
+                     {"history": sb.BundleSection("History", {"enabled": "yes"})},
+                     {"view": sb.BundleSection("View", {"text_overflow_mode": "clip"})}):
+        bundle = sb.Bundle(app="epubredactor", sections=dict(sections))
+        sb.apply_bundle(adapter, bundle, _everything(adapter))
+        assert app_settings.load_history_enabled() is False
+    app_settings.save_history_enabled(True)
+    sb.apply_bundle(adapter, sb.Bundle(app="epubredactor", sections={}), _everything(adapter))
+    assert app_settings.load_history_enabled() is True  # nor turned off by a file without it
+    off = sb.Bundle(app="epubredactor", sections={"history": sb.BundleSection("History", {"enabled": False})})
+    sb.apply_bundle(adapter, off, PORTABLE - {"history"})  # the section left unticked
+    assert app_settings.load_history_enabled() is True
+    sb.apply_bundle(adapter, off, {"history"})
+    assert app_settings.load_history_enabled() is False
+
+
+def test_import_of_the_history_setting_is_said_in_the_status_bar():
+    window = mw.MainWindow()
+    app_settings.save_history_enabled(True)
+    window._on_settings_imported(sb.ApplyResult(applied=["history"]))
+    assert "History is now on" in window.status.currentMessage()
 
 
 def test_machine_specific_is_excluded_by_default(adapter, tmp_path):

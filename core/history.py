@@ -40,7 +40,8 @@ from core.fields import FIELDS
 
 __all__ = [
     "KIND_REDACT", "KIND_RESTORE", "KIND_SAVE", "apply_restore", "begin", "delete_journal", "fields_text",
-    "finish", "get_journal", "history_enabled", "journal_exists", "journal_path", "set_journal", "take_notice",
+    "finish", "get_journal", "history_enabled", "journal_exists", "journal_path", "on_files_moved", "set_journal",
+    "take_notice",
 ]
 
 SETTINGS_FILENAME = "epubredactor_settings.ini"  # the same file gui/app_settings.py writes through QSettings
@@ -208,6 +209,21 @@ def record(path: str, kind: str, old: Mapping[str, str] | None, new: Mapping[str
     entry_id = begin(path, kind, old, new, **kwargs)
     finish(entry_id)
     return entry_id
+
+
+def on_files_moved(pairs) -> None:
+    """The rename/move hook: earlier journal entries of each file follow it to its new path, so Tools > History
+    still finds (and can restore) a book after File > Rename File, Rename / Export / Move, Undo Last Rename, the
+    Redact rename/move steps and the command line's rename / move / redact. Handed to every RenameLog this app
+    builds as on_move=, and called directly by the command line. Does nothing while the history is off; a
+    journal problem never breaks the rename that already happened."""
+    pairs = [(str(old), str(new)) for old, new in pairs if old and new]
+    if not pairs or not history_enabled():
+        return
+    try:
+        get_journal().record_moves(pairs)
+    except Exception as exc:  # noqa: BLE001 - see _problem
+        _problem("write", exc)
 
 
 def apply_restore(path: str, values: Mapping[str, str]) -> str:

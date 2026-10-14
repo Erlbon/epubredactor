@@ -10,6 +10,7 @@ redactor_common with this app's pages.
   Tools and Paths   Calibre folder, Sigil program, Open Library database and dumps,
                     ISFDB database and backup
   History     the opt-in History journal (off by default) + Delete History...
+              (a PrefAction: a button that acts at once and holds no value)
 
 Text wrapping and performance logging are NOT here: they live in the menus
 (View > Text Wrapping, Tools > Enable Performance Logging), where the
@@ -29,12 +30,13 @@ from redactor_common.core.preferences import (
     KEY_ZERO_PAD_NUMBERS,
     KEY_ZERO_PAD_WIDTH,
     CallbackBackend,
+    PrefAction,
     PrefSection,
     PrefSpec,
     filenames_section,
     language_section,
 )
-from PyQt6.QtWidgets import QHBoxLayout, QMessageBox, QPushButton
+from PyQt6.QtWidgets import QMessageBox
 from redactor_common.gui.preferences_dialog import PreferencesDialog
 
 from core import history
@@ -139,44 +141,43 @@ def build_sections() -> list[PrefSection]:
             "history", "History",
             (PrefSpec(KEY_HISTORY_ENABLED, HISTORY_LABEL, "bool", False, help=history_help()),),
             "An undo for saved changes, kept between sessions (Tools > History).",
+            actions=(DELETE_HISTORY_ACTION,),
         ),
     ]
 
 
-def add_delete_history_button(dialog: PreferencesDialog) -> QPushButton:
-    """"Delete History..." under the History checkbox: asks, then removes the journal file (Recycle Bin).
-    It acts at once (a file, not a setting), so OK / Cancel do not apply to it."""
-    checkbox = dialog.control(KEY_HISTORY_ENABLED)
-    container = checkbox.parentWidget()
-    button = QPushButton("&Delete History...")
-    button.setToolTip("Removes the recorded history file (to the Recycle Bin). Asks first.")
+DELETE_HISTORY_LABEL = "&Delete History..."
 
-    def _delete() -> None:
-        if not history.journal_exists():
-            QMessageBox.information(dialog, "Delete History", "There is no recorded history to delete.")
-            return
-        answer = QMessageBox.question(
-            dialog, "Delete History",
-            f"Delete the recorded history?\n\n{history.journal_path()}\n\nThe file goes to the Recycle Bin; "
-            "Tools > History will be empty, and older changes can no longer be restored from there.",
-            QMessageBox.StandardButton.Yes | QMessageBox.StandardButton.Cancel,
-        )
-        if answer != QMessageBox.StandardButton.Yes:
-            return
-        problem = history.delete_journal()
-        if problem:
-            QMessageBox.warning(dialog, "Delete History", f"Not deleted: {problem}")
-        else:
-            QMessageBox.information(dialog, "Delete History", "The history was deleted.")
 
-    button.clicked.connect(_delete)
-    row = QHBoxLayout()
-    row.setContentsMargins(22, 2, 0, 0)
-    row.addWidget(button)
-    row.addStretch(1)
-    container.layout().addLayout(row)
-    dialog.delete_history_button = button
-    return button
+def delete_history(parent) -> None:
+    """The History page's "Delete History..." action (a PrefAction): asks, then removes the journal file
+    (Recycle Bin). It acts at once (a file, not a setting), so OK / Cancel do not apply to it."""
+    if not history.journal_exists():
+        QMessageBox.information(parent, "Delete History", "There is no recorded history to delete.")
+        return
+    answer = QMessageBox.question(
+        parent, "Delete History",
+        f"Delete the recorded history?\n\n{history.journal_path()}\n\nThe file goes to the Recycle Bin; "
+        "Tools > History will be empty, and older changes can no longer be restored from there.",
+        QMessageBox.StandardButton.Yes | QMessageBox.StandardButton.Cancel,
+    )
+    if answer != QMessageBox.StandardButton.Yes:
+        return
+    problem = history.delete_journal()
+    if problem:
+        QMessageBox.warning(parent, "Delete History", f"Not deleted: {problem}")
+    else:
+        QMessageBox.information(parent, "Delete History", "The history was deleted.")
+
+
+def _delete_history_action(parent) -> None:
+    delete_history(parent)  # looked up at click time, so a test can replace delete_history
+
+
+DELETE_HISTORY_ACTION = PrefAction(
+    DELETE_HISTORY_LABEL, _delete_history_action,
+    "Removes the recorded history file (to the Recycle Bin). Asks first. The setting above is not changed.",
+)
 
 
 def make_backend() -> CallbackBackend:
@@ -190,6 +191,4 @@ def make_backend() -> CallbackBackend:
 
 
 def make_dialog(parent=None) -> PreferencesDialog:
-    dialog = PreferencesDialog(build_sections(), make_backend(), parent)
-    add_delete_history_button(dialog)
-    return dialog
+    return PreferencesDialog(build_sections(), make_backend(), parent)

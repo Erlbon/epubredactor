@@ -27,6 +27,10 @@ from gui import app_settings
 from redactor_common.core import managed_list, pattern_history
 from redactor_common.core import settings_bundle as sb
 
+HISTORY_SECTION_LABEL = (
+    "History on/off (Tools > History; importing this section can turn recording of tag changes on or off)"
+)
+
 _PORTABLE_SECTIONS = [
     sb.SectionSpec("redact", "Redact recipe"),
     sb.SectionSpec("patterns", "Rename / export / parse pattern history"),
@@ -35,6 +39,10 @@ _PORTABLE_SECTIONS = [
     sb.SectionSpec("view", "View options (text wrapping)"),
     sb.SectionSpec("lists", "Custom and hidden genres and languages"),
     sb.SectionSpec("covers", "Junk cover list"),
+    # The opt-in History switch (Tools > History). Importing a file that has it on turns recording on, which
+    # is only ever the user's choice here: the label says so in the import preview, where the section can be
+    # unticked. A file without the section leaves the current setting alone.
+    sb.SectionSpec("history", HISTORY_SECTION_LABEL),
 ]
 _MACHINE_SECTIONS = [
     sb.SectionSpec("tools", "External tool paths (Calibre, Sigil) - this computer only", portable=False),
@@ -135,6 +143,8 @@ class EpubSettingsAdapter(sb.SettingsAdapter):
             }
         if key == "covers":
             return {"junk_hashes": sorted(app_settings._parse_junk_cover_hashes(_text(s, "covers/junk_hashes")))}
+        if key == "history":
+            return {"enabled": app_settings.load_history_enabled()}  # the ini key history/enabled
         if key == "tools":
             return {"calibre_install_dir": _text(s, "calibre/install_dir"), "sigil_path": _text(s, "sigil/exe_path")}
         if key == "folders":
@@ -179,6 +189,9 @@ class EpubSettingsAdapter(sb.SettingsAdapter):
             hashes = _str_list(values.get("junk_hashes"))
             if hashes is not None:
                 app_settings.save_junk_cover_hashes(set(hashes))
+        elif key == "history":
+            if _flag(values.get("enabled")) is not None:  # a missing or non-bool value leaves the setting alone
+                app_settings.save_history_enabled(values["enabled"])
         elif key == "tools":
             # Both savers ignore a path that doesn't exist on this computer.
             if isinstance(values.get("calibre_install_dir"), str):

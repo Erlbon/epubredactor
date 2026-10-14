@@ -18,6 +18,7 @@ from __future__ import annotations
 import argparse
 import os
 
+from core import history
 from core.redact_steps import (
     EpubCtx, RedactEnv, build_catalogue, recipe_for_run, recipe_from_setting, run_catalogue, save_finalize,
 )
@@ -83,6 +84,10 @@ def run_redact(args: argparse.Namespace, out: Output) -> int:
 
     def after_run() -> list[str]:
         env.flush_log()
+        # No rename log here (no Undo Last Rename from the command line), so the History hook is called
+        # directly: each book's Redact entry was written at the path it was saved at, and follows the
+        # rename / move steps to where the file is now (renames first, the order they happened).
+        history.on_files_moved([*env.renames, *env.moves])
         return env.notes_text().splitlines()
 
     return redact_items(
