@@ -1,5 +1,9 @@
 # Changelog
 
+## 2026-10-14#09 -- A progress box could stay on screen for good
+
+- Fixed: a "Scanning..." (or similar) progress box could stay on screen permanently after its work had finished, when the work took about a third of a second or more. The box is now closed together with its work (redactor_common 2026-10-14-08). Nothing else changes.
+
 ## 2026-10-14#08 -- File > Read Book... is a fuller read-only reader
 
 - **Images are shown** in the chapter text, read one at a time from the EPUB when the chapter needs them (nothing is unpacked). Images over 20 MB or over 40 megapixels are skipped, wide ones are scaled to the window, and paths that point outside the EPUB are ignored. SVG graphics are replaced by a short "[SVG image not shown]" note; an SVG-wrapped cover page shows its picture.
