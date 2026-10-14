@@ -87,9 +87,9 @@ def test_read_book_dialog_lists_and_shows_chapters(tmp_path):
     _app = QApplication.instance() or QApplication(sys.argv)
     book = EpubBook(str(_make(tmp_path)))
     dlg = ReadBookDialog(book)
-    assert dlg.chapter_list.count() == 2
+    assert dlg.chapter_list.count() == 3  # cover + 2 chapters
     assert "The Hobbit" in dlg.text_view.toPlainText()
-    assert not dlg.prev_btn.isEnabled() and dlg.next_btn.isEnabled()
+    assert dlg.prev_btn.isEnabled() and dlg.next_btn.isEnabled()  # cover is before chapter 1
     dlg.next_btn.click()
     assert "Chapter one" in dlg.text_view.toPlainText()
     assert not dlg.next_btn.isEnabled()

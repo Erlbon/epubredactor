@@ -272,6 +272,45 @@ def _find_opf_path(zf: zipfile.ZipFile) -> str:
     return full_path
 
 
+def is_safe_archive_path(path: str) -> bool:
+    """True for a plain relative archive path: no backslashes, drive
+    letters, leading slash or '..' segments."""
+    if not path or "\\" in path or path.startswith("/") or "\x00" in path:
+        return False
+    if re.match(r"^[A-Za-z]:", path):
+        return False
+    return ".." not in path.split("/")
+
+
+def resolve_resource_path(base_path: str, src: str) -> Optional[str]:
+    """Archive path a relative `src`/`href` in the document `base_path`
+    points to, or None for external or data URLs and for anything that
+    would climb out of the archive. Query and fragment are dropped and
+    percent-escapes decoded."""
+    src = (src or "").strip()
+    if not src or re.match(r"^[A-Za-z][A-Za-z0-9+.-]*:", src) or src.startswith("//"):
+        return None
+    src = unquote(re.split(r"[?#]", src, maxsplit=1)[0])
+    if not src or "\\" in src or "\x00" in src:
+        return None
+    if src.startswith("/"):
+        joined = src.lstrip("/")
+    else:
+        joined = posixpath.join(posixpath.dirname(base_path), src)
+    parts: list[str] = []
+    for seg in joined.split("/"):
+        if seg in ("", "."):
+            continue
+        if seg == "..":
+            if not parts:
+                return None
+            parts.pop()
+        else:
+            parts.append(seg)
+    result = "/".join(parts)
+    return result if is_safe_archive_path(result) else None
+
+
 class EpubBook:
     """Represents one EPUB file loaded for metadata editing."""
 
@@ -629,6 +668,25 @@ class EpubBook:
         text = re.sub(r"<(style|script)\b.*?</\1\s*>", "", text, flags=re.I | re.S)
         text = re.sub(r"<link\b[^>]*>", "", text, flags=re.I)
         return text
+
+    def read_resource(self, archive_path: str, max_bytes: int = 20 * 1024 * 1024) -> Optional[bytes]:
+        """Raw bytes of one archive member for a read-only viewer: the
+        on-disk entry only (never staged changes), None if the path is
+        unsafe (absolute, drive letter, '..'), missing, unreadable or
+        larger than max_bytes by its declared size. The declared size is
+        not trusted: the read itself is capped too (zip-bomb guard)."""
+        if not is_safe_archive_path(archive_path):
+            return None
+        try:
+            with zipfile.ZipFile(self.path, "r") as zf:
+                info = zf.getinfo(archive_path)
+                if info.file_size > max_bytes:
+                    return None
+                with zf.open(info) as fh:
+                    data = fh.read(max_bytes + 1)
+        except (KeyError, OSError, zipfile.BadZipFile, RuntimeError):
+            return None
+        return None if len(data) > max_bytes else data
 
     def set_cover(self, image_bytes: bytes, mime: str) -> bool:
         """Stage a new cover image (add, or replace the existing one).

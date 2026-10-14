@@ -1,5 +1,15 @@
 # Changelog
 
+## 2026-10-14#08 -- File > Read Book... is a fuller read-only reader
+
+- **Images are shown** in the chapter text, read one at a time from the EPUB when the chapter needs them (nothing is unpacked). Images over 20 MB or over 40 megapixels are skipped, wide ones are scaled to the window, and paths that point outside the EPUB are ignored. SVG graphics are replaced by a short "[SVG image not shown]" note; an SVG-wrapped cover page shows its picture.
+- **The cover is the first entry** in the chapter list.
+- **Readable default look**: serif font, line spacing, paragraph spacing, centered headings, indented quotes. The book's own CSS is still ignored.
+- **Zoom**: A- / A+ buttons, Ctrl++ / Ctrl+- / Ctrl+0.
+- **Find in the chapter**: Ctrl+F, Enter or F3 for the next hit, Shift+F3 for the previous one.
+- **Navigation**: "Chapter 3 / 21" and the book title are shown; Alt+Left / Alt+Right switch chapter, PageUp / PageDown / Space scroll.
+- The reader never writes to the book. New: `EpubBook.read_resource`, `resolve_resource_path`, `core/reader_html.py`.
+
 ## 2026-10-14#07 -- Small clean-ups after redactor_common 2026-10-14-06
 
 - **"Other E-book Formats Found" after opening several folders at once** now has **"Don't ask again for these folders"** too (before, the checkbox only appeared when exactly one folder was opened). The question is skipped once every one of the opened folders was declined; the folders are kept in the same settings key (`convert_offer/declined_folders`).
