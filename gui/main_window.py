@@ -80,7 +80,9 @@ from redactor_common.core.os_utils import reveal_in_file_manager
 from redactor_common.core.save_errors import describe_save_error
 from redactor_common.core.undo import UndoManager
 from redactor_common.gui.action_factory import make_action
-from redactor_common.gui.folder_options import attach_include_subfolders, include_subfolders_slot
+from redactor_common.gui.folder_options import (
+    add_include_subfolders_checkbox, attach_include_subfolders, include_subfolders_slot,
+)
 from redactor_common.gui.progress import ProgressReporter, run_busy, run_with_progress
 from redactor_common.gui.settings_bundle_dialogs import export_settings, import_settings
 from redactor_common.gui.sortable_table import NumericTableWidgetItem, suspend_sorting
@@ -869,6 +871,7 @@ class MainWindow(QMainWindow):
         # references these as self.<x>_act attributes directly.
         self.load_files_act = actions["open_files"]
         self.load_folder_act = actions["open_folder"]
+        self.include_subfolders_act = actions["include_subfolders"]
         attach_include_subfolders(
             actions["include_subfolders"], load=app_settings.load_include_subfolders, save=app_settings.save_include_subfolders,
         )
@@ -936,6 +939,8 @@ class MainWindow(QMainWindow):
 
         toolbar.addAction(self.load_files_act)
         toolbar.addAction(self.load_folder_act)
+        # Mirrors File > Include Subfolders both ways; the saving stays with that action (one saved setting).
+        self.include_subfolders_box = add_include_subfolders_checkbox(toolbar, self.include_subfolders_act)
         toolbar.addSeparator()
         toolbar.addAction(self.save_act)
         toolbar.addSeparator()

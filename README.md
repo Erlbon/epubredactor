@@ -255,7 +255,9 @@ them in one go.
   that reason, not the native folder browser); remembers the last folder
   you used across all "open a file/folder" dialogs, including the
   cover-image picker. **File > Include Subfolders** (a tick-mark item
-  right under Open Folder, shared by the whole Redactor family) decides
+  right under Open Folder, shared by the whole Redactor family; the same
+  setting is a checkbox on the toolbar next to Open Folder, the two stay
+  in step) decides
   whether Open Folder, drag-and-drop of a folder and Refresh List also
   look in subfolders; it is remembered. File > Open Folder replaces the
   current list rather than adding to it (with the usual unsaved-changes
