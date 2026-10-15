@@ -1,5 +1,9 @@
 # Changelog
 
+## 2026-10-15#02 -- Every table column can be resized by dragging
+
+- Every table column can be resized by dragging, in all dialogs (no column is stretched or fixed any more; the last one still fills the rest). Starting widths come from the contents, as before (redactor_common 2026-10-15-05).
+
 ## 2026-10-15#01 -- Include Subfolders checkbox on the toolbar
 
 - An Include Subfolders checkbox on the toolbar next to Open Folder (the File menu item stays, both stay in step)

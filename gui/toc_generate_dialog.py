@@ -21,7 +21,6 @@ from PyQt6.QtWidgets import (
     QCheckBox,
     QDialog,
     QDialogButtonBox,
-    QHeaderView,
     QLabel,
     QPlainTextEdit,
     QTableWidget,
@@ -32,6 +31,7 @@ from PyQt6.QtWidgets import (
 from core.epub_metadata import EpubBook
 from core.toc_generate import TocEntry, generate_toc_entries, needs_toc
 from redactor_common.gui.progress import run_with_progress
+from redactor_common.gui.table_columns import make_columns_resizable
 
 BOOK_COL, ENTRIES_COL, APPLY_COL = range(3)
 PREVIEW_ENTRIES = 10
@@ -120,8 +120,7 @@ class TocGenerateDialog(QDialog):
             cb.setChecked(True)
             self._checkboxes[book_index] = cb
             self.table.setCellWidget(row, APPLY_COL, cb)
-        self.table.resizeColumnsToContents()
-        self.table.horizontalHeader().setSectionResizeMode(BOOK_COL, QHeaderView.ResizeMode.Stretch)
+        make_columns_resizable(self.table, wide_column=BOOK_COL)
 
         if not rows:
             text = "No books without a table of contents were found in the selection."

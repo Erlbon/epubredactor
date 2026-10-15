@@ -19,7 +19,6 @@ from PyQt6.QtWidgets import (
     QCheckBox,
     QDialog,
     QDialogButtonBox,
-    QHeaderView,
     QLabel,
     QTableWidget,
     QTableWidgetItem,
@@ -29,6 +28,7 @@ from PyQt6.QtWidgets import (
 from core.epub_metadata import EpubBook
 from gui.cover_render import generate_cover_image
 from redactor_common.gui.progress import run_with_progress
+from redactor_common.gui.table_columns import make_columns_resizable
 
 BOOK_COL, PREVIEW_COL, APPLY_COL = range(3)
 THUMB_SIZE = QSize(70, 105)
@@ -68,7 +68,6 @@ class CoverGeneratorDialog(QDialog):
         self.table.setColumnCount(3)
         self.table.setHorizontalHeaderLabels(["Book", "Preview", "Apply"])
         self.table.setEditTriggers(QAbstractItemView.EditTrigger.NoEditTriggers)
-        self.table.horizontalHeader().setSectionResizeMode(BOOK_COL, QHeaderView.ResizeMode.Stretch)
         self.table.setIconSize(THUMB_SIZE)
         layout.addWidget(self.table, 1)
 
@@ -116,7 +115,7 @@ class CoverGeneratorDialog(QDialog):
             label_for=lambda item: f"Generating: {os.path.basename(item[1].path)}",
         )
 
-        self.table.resizeColumnsToContents()
+        make_columns_resizable(self.table, wide_column=BOOK_COL)
 
     @staticmethod
     def _readonly_item(text: str) -> QTableWidgetItem:

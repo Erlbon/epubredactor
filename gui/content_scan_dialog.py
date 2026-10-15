@@ -23,7 +23,6 @@ from PyQt6.QtWidgets import (
     QCheckBox,
     QDialog,
     QDialogButtonBox,
-    QHeaderView,
     QLabel,
     QTableWidget,
     QTableWidgetItem,
@@ -33,6 +32,7 @@ from PyQt6.QtWidgets import (
 from core.content_scan import scan_book
 from core.epub_metadata import EpubBook
 from redactor_common.gui.progress import run_with_progress
+from redactor_common.gui.table_columns import make_columns_resizable
 
 BOOK_COL, FOUND_COL, APPLY_COL = range(3)
 
@@ -66,7 +66,6 @@ class ContentScanDialog(QDialog):
         self.table.setColumnCount(3)
         self.table.setHorizontalHeaderLabels(["Book", "Found", "Apply"])
         self.table.setEditTriggers(QAbstractItemView.EditTrigger.NoEditTriggers)
-        self.table.horizontalHeader().setSectionResizeMode(FOUND_COL, QHeaderView.ResizeMode.Stretch)
         layout.addWidget(self.table, 1)
 
         self.status_label = QLabel("")
@@ -136,7 +135,7 @@ class ContentScanDialog(QDialog):
         )
         if not completed:
             self.table.setRowCount(processed_count)
-        self.table.resizeColumnsToContents()
+        make_columns_resizable(self.table, wide_column=FOUND_COL)
         self.status_label.setText(f"Found something in {found_count} of {len(self.books)} book(s).")
 
     @staticmethod

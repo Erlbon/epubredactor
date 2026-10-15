@@ -22,7 +22,6 @@ from PyQt6.QtWidgets import (
     QCheckBox,
     QDialog,
     QDialogButtonBox,
-    QHeaderView,
     QLabel,
     QPlainTextEdit,
     QTableWidget,
@@ -33,6 +32,7 @@ from PyQt6.QtWidgets import (
 from core.epub_metadata import EpubBook
 from core.page_headers import PageFurniturePlan, find_page_furniture
 from redactor_common.gui.progress import run_with_progress
+from redactor_common.gui.table_columns import make_columns_resizable
 
 BOOK_COL, HEADERS_COL, REMOVED_COL, JOINED_COL, APPLY_COL = range(5)
 
@@ -69,7 +69,6 @@ class PageHeadersDialog(QDialog):
         self.table.setHorizontalHeaderLabels(["Book", "Headers found", "Lines removed", "Sentences rejoined", "Apply"])
         self.table.setEditTriggers(QAbstractItemView.EditTrigger.NoEditTriggers)
         self.table.setSelectionBehavior(QAbstractItemView.SelectionBehavior.SelectRows)
-        self.table.horizontalHeader().setSectionResizeMode(BOOK_COL, QHeaderView.ResizeMode.Stretch)
         self.table.itemSelectionChanged.connect(self._show_examples)
         layout.addWidget(self.table, 1)
 
@@ -116,8 +115,7 @@ class PageHeadersDialog(QDialog):
             cb.setChecked(True)
             self._checkboxes[i] = cb
             self.table.setCellWidget(row, APPLY_COL, cb)
-        self.table.resizeColumnsToContents()
-        self.table.horizontalHeader().setSectionResizeMode(BOOK_COL, QHeaderView.ResizeMode.Stretch)
+        make_columns_resizable(self.table, wide_column=BOOK_COL)
         self.examples.clear()
         if self._rows:
             self.table.selectRow(0)

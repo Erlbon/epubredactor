@@ -30,6 +30,7 @@ from PyQt6.QtWidgets import (
 from core.author_sort import author_sort_to_authors, authors_to_author_sort
 from core.epub_metadata import EpubBook
 from redactor_common.gui.progress import run_with_progress
+from redactor_common.gui.table_columns import make_columns_resizable
 
 BOOK_COL, OLD_COL, NEW_COL, APPLY_COL = range(4)
 
@@ -132,7 +133,7 @@ class AuthorSortDialog(QDialog):
             self.table.setCellWidget(row, APPLY_COL, cb)
             self._new_values[book_index] = new_value
 
-        self.table.resizeColumnsToContents()
+        make_columns_resizable(self.table)
 
         if not rows_to_show:
             self.status_label.setText("No books would be changed.")

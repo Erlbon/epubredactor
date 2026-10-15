@@ -21,7 +21,6 @@ from PyQt6.QtWidgets import (
     QDialog,
     QDialogButtonBox,
     QHBoxLayout,
-    QHeaderView,
     QLabel,
     QSpinBox,
     QTableWidget,
@@ -31,6 +30,7 @@ from PyQt6.QtWidgets import (
 
 from core.epub_metadata import EpubBook
 from redactor_common.gui.progress import run_with_progress
+from redactor_common.gui.table_columns import make_columns_resizable
 
 BOOK_COL, IMAGES_COL, APPLY_COL = range(3)
 
@@ -90,7 +90,6 @@ class CompressImagesDialog(QDialog):
         self.table.setColumnCount(3)
         self.table.setHorizontalHeaderLabels(["Book", "JPEGs found", "Compress"])
         self.table.setEditTriggers(QAbstractItemView.EditTrigger.NoEditTriggers)
-        self.table.horizontalHeader().setSectionResizeMode(IMAGES_COL, QHeaderView.ResizeMode.Stretch)
         layout.addWidget(self.table, 1)
 
         buttons = QDialogButtonBox(
@@ -128,7 +127,7 @@ class CompressImagesDialog(QDialog):
             cb.setChecked(True)
             self._checkboxes[book_index] = cb
             self.table.setCellWidget(row, APPLY_COL, cb)
-        self.table.resizeColumnsToContents()
+        make_columns_resizable(self.table, wide_column=IMAGES_COL)
 
         if not self._images:
             self.info_label.setText("No JPEG images found in the selected book(s).")

@@ -27,6 +27,7 @@ from PyQt6.QtWidgets import (
 
 from core.epub_metadata import EpubBook
 from redactor_common.core.series_numbering import DEFAULT_START, DEFAULT_STEP, generate_series_numbers
+from redactor_common.gui.table_columns import make_columns_resizable
 
 BOOK_COL, CURRENT_COL, NEW_COL = range(3)
 
@@ -34,6 +35,7 @@ BOOK_COL, CURRENT_COL, NEW_COL = range(3)
 class SeriesNumberDialog(QDialog):
     def __init__(self, books: list[EpubBook], parent=None):
         super().__init__(parent)
+        self._sized = False  # starting column widths set once; later preview refreshes keep dragged widths
         self.setWindowTitle("Number Series")
         self.resize(520, 480)
         self.books = books  # already in current table (visual, top-to-bottom) order
@@ -91,7 +93,9 @@ class SeriesNumberDialog(QDialog):
             self.table.setItem(row, BOOK_COL, self._readonly_item(os.path.basename(book.path)))
             self.table.setItem(row, CURRENT_COL, self._readonly_item(book.metadata.series_index or ""))
             self.table.setItem(row, NEW_COL, self._readonly_item(new_val))
-        self.table.resizeColumnsToContents()
+        if not self._sized:
+            make_columns_resizable(self.table)
+            self._sized = True
 
     @staticmethod
     def _readonly_item(text: str) -> QTableWidgetItem:

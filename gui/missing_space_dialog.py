@@ -23,7 +23,6 @@ from PyQt6.QtWidgets import (
     QCheckBox,
     QDialog,
     QDialogButtonBox,
-    QHeaderView,
     QLabel,
     QTableWidget,
     QTableWidgetItem,
@@ -33,6 +32,7 @@ from PyQt6.QtWidgets import (
 from core.epub_metadata import EpubBook
 from core.missing_space import find_missing_spaces, suggest_fix
 from redactor_common.gui.progress import run_with_progress
+from redactor_common.gui.table_columns import make_columns_resizable
 
 SCANNED_FIELDS = [("title", "Title"), ("series", "Series")]
 BOOK_COL, FIELD_COL, CURRENT_COL, SUGGESTED_COL, APPLY_COL = range(5)
@@ -66,8 +66,6 @@ class MissingSpaceDialog(QDialog):
         self.table.setColumnCount(5)
         self.table.setHorizontalHeaderLabels(["Book", "Field", "Current", "Suggested", "Apply"])
         self.table.setEditTriggers(QAbstractItemView.EditTrigger.NoEditTriggers)
-        self.table.horizontalHeader().setSectionResizeMode(CURRENT_COL, QHeaderView.ResizeMode.Stretch)
-        self.table.horizontalHeader().setSectionResizeMode(SUGGESTED_COL, QHeaderView.ResizeMode.Stretch)
         layout.addWidget(self.table, 1)
 
         self.status_label = QLabel("")
@@ -112,7 +110,7 @@ class MissingSpaceDialog(QDialog):
             self._checkboxes[row] = cb
             self._rows[row] = (book, field_key, suggested)
             self.table.setCellWidget(row, APPLY_COL, cb)
-        self.table.resizeColumnsToContents()
+        make_columns_resizable(self.table, wide_column=CURRENT_COL)
 
         if not found_rows:
             self.status_label.setText("No missing spaces found in Title or Series.")

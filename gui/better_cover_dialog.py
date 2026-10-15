@@ -18,7 +18,6 @@ from PyQt6.QtWidgets import (
     QAbstractItemView,
     QDialog,
     QDialogButtonBox,
-    QHeaderView,
     QLabel,
     QTableWidget,
     QTableWidgetItem,
@@ -27,6 +26,7 @@ from PyQt6.QtWidgets import (
 
 from gui.cover_quality import image_size
 from redactor_common.gui.progress import run_with_progress
+from redactor_common.gui.table_columns import make_columns_resizable
 
 THUMB = QSize(90, 135)
 THUMBNAIL_PROGRESS_THRESHOLD = 20
@@ -71,9 +71,6 @@ class BetterCoverDialog(QDialog):
         self.table.setEditTriggers(QAbstractItemView.EditTrigger.NoEditTriggers)
         self.table.verticalHeader().setVisible(False)
         self.table.verticalHeader().setDefaultSectionSize(THUMB.height() + 10)
-        self.table.horizontalHeader().setSectionResizeMode(0, QHeaderView.ResizeMode.Stretch)
-        self.table.setColumnWidth(1, 200)
-        self.table.setColumnWidth(2, 200)
         def _add_row(pair, row: int) -> None:
             book, data = pair
             title = getattr(book.metadata, "title", "") or os.path.basename(book.path)
@@ -91,6 +88,7 @@ class BetterCoverDialog(QDialog):
             parent if parent is not None else self, found, _add_row, "Preparing cover previews…",
             threshold=THUMBNAIL_PROGRESS_THRESHOLD, cancellable=False, update_every=5,
         )
+        make_columns_resizable(self.table, wide_column=0)
         layout.addWidget(self.table)
 
         buttons = QDialogButtonBox(QDialogButtonBox.StandardButton.Cancel)

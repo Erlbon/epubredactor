@@ -27,7 +27,6 @@ from PyQt6.QtWidgets import (
     QCheckBox,
     QDialog,
     QDialogButtonBox,
-    QHeaderView,
     QLabel,
     QTableWidget,
     QTableWidgetItem,
@@ -37,6 +36,7 @@ from PyQt6.QtWidgets import (
 from core.author_clean import AuthorResult, clean_authors
 from core.epub_metadata import EpubBook
 from redactor_common.gui.progress import run_with_progress
+from redactor_common.gui.table_columns import make_columns_resizable
 
 (BOOK_COL, KIND_COL, OLD_AUTHORS_COL, NEW_AUTHORS_COL, OLD_SORT_COL, NEW_SORT_COL, WHY_COL,
  APPLY_COL) = range(8)
@@ -119,7 +119,6 @@ class AuthorCleanDialog(QDialog):
             "Book", "Kind", "Authors now", "Authors new", "Sort now", "Sort new", "Why", "Apply",
         ])
         self.table.setEditTriggers(QAbstractItemView.EditTrigger.NoEditTriggers)
-        self.table.horizontalHeader().setSectionResizeMode(WHY_COL, QHeaderView.ResizeMode.Stretch)
         layout.addWidget(self.table, 1)
 
         self.status_label = QLabel("")
@@ -158,7 +157,7 @@ class AuthorCleanDialog(QDialog):
                 cb.toggled.connect(lambda checked, n=r: self._on_toggled(n, checked))
                 self._checkboxes[r] = cb
                 self.table.setCellWidget(r, APPLY_COL, cb)
-        self.table.resizeColumnsToContents()
+        make_columns_resizable(self.table, wide_column=WHY_COL)
         self.table.setColumnWidth(WHY_COL, max(self.table.columnWidth(WHY_COL), 300))
 
         safe_n = sum(1 for r in rows if r.kind == KIND_SAFE)

@@ -39,7 +39,6 @@ from PyQt6.QtWidgets import (
     QDialogButtonBox,
     QFileDialog,
     QHBoxLayout,
-    QHeaderView,
     QLabel,
     QLineEdit,
     QListWidget,
@@ -75,6 +74,7 @@ from redactor_common.core.path_parser import (
     split_pattern_history,
 )
 from redactor_common.gui.progress import run_with_progress
+from redactor_common.gui.table_columns import make_columns_resizable
 
 # Fields worth cross-checking for repetition across other books -- ones
 # a real library commonly has SEVERAL entries sharing the exact same
@@ -230,7 +230,6 @@ class FilenameParseDialog(QDialog):
         self.preview_table.setColumnCount(3)
         self.preview_table.setHorizontalHeaderLabels(["Book", "Extracted fields", "Apply"])
         self.preview_table.setEditTriggers(QAbstractItemView.EditTrigger.NoEditTriggers)
-        self.preview_table.horizontalHeader().setSectionResizeMode(EXTRACTED_COL, QHeaderView.ResizeMode.Stretch)
         layout.addWidget(self.preview_table, 1)
 
         self.status_label = QLabel("")
@@ -557,7 +556,7 @@ class FilenameParseDialog(QDialog):
             self._checkboxes[row] = cb
             self.preview_table.setCellWidget(row, APPLY_COL, cb)
 
-        self.preview_table.resizeColumnsToContents()
+        make_columns_resizable(self.preview_table, wide_column=EXTRACTED_COL)
         if self._auto_detected_pattern and pattern == self._auto_detected_pattern:
             self.status_label.setText(
                 f"Best-matching pattern selected automatically: {matched_count} of {len(self.books)} "
@@ -634,7 +633,7 @@ class FilenameParseDialog(QDialog):
             self._checkboxes[row] = cb
             self.preview_table.setCellWidget(row, PATH_APPLY_COL, cb)
 
-        self.preview_table.resizeColumnsToContents()
+        make_columns_resizable(self.preview_table, wide_column=EXTRACTED_COL)
         text = (
             f"{matched_count} of {len(self.books)} path(s) match this pattern; "
             f"{high} with high confidence (>= {round(HIGH_CONFIDENCE * 100)}%)."

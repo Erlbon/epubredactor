@@ -19,7 +19,6 @@ from PyQt6.QtWidgets import (
     QCheckBox,
     QDialog,
     QDialogButtonBox,
-    QHeaderView,
     QLabel,
     QTableWidget,
     QTableWidgetItem,
@@ -29,6 +28,7 @@ from PyQt6.QtWidgets import (
 from core.description_html import strip_html
 from core.epub_metadata import EpubBook
 from redactor_common.gui.progress import run_with_progress
+from redactor_common.gui.table_columns import make_columns_resizable
 
 BOOK_COL, OLD_COL, NEW_COL, APPLY_COL = range(4)
 
@@ -56,8 +56,6 @@ class StripDescriptionHtmlDialog(QDialog):
         self.table.setColumnCount(4)
         self.table.setHorizontalHeaderLabels(["Book", "Current value", "New value", "Apply"])
         self.table.setEditTriggers(QAbstractItemView.EditTrigger.NoEditTriggers)
-        self.table.horizontalHeader().setSectionResizeMode(OLD_COL, QHeaderView.ResizeMode.Stretch)
-        self.table.horizontalHeader().setSectionResizeMode(NEW_COL, QHeaderView.ResizeMode.Stretch)
         layout.addWidget(self.table, 1)
 
         self.status_label = QLabel("")
@@ -106,7 +104,7 @@ class StripDescriptionHtmlDialog(QDialog):
             self.table.setCellWidget(row, APPLY_COL, cb)
             self._new_values[book_index] = new_value
 
-        self.table.resizeColumnsToContents()
+        make_columns_resizable(self.table, wide_column=OLD_COL)
 
         if not rows_to_show:
             self.status_label.setText("No book's Description contains HTML markup.")

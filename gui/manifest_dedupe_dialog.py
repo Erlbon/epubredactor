@@ -23,7 +23,6 @@ from PyQt6.QtWidgets import (
     QCheckBox,
     QDialog,
     QDialogButtonBox,
-    QHeaderView,
     QLabel,
     QTableWidget,
     QTableWidgetItem,
@@ -32,6 +31,7 @@ from PyQt6.QtWidgets import (
 
 from core.epub_metadata import EpubBook
 from redactor_common.gui.progress import run_with_progress
+from redactor_common.gui.table_columns import make_columns_resizable
 
 BOOK_COL, DUPLICATE_COL, APPLY_COL = range(3)
 
@@ -59,7 +59,6 @@ class ManifestDedupeDialog(QDialog):
         self.table.setColumnCount(3)
         self.table.setHorizontalHeaderLabels(["Book", "Duplicate id(s)", "Fix"])
         self.table.setEditTriggers(QAbstractItemView.EditTrigger.NoEditTriggers)
-        self.table.horizontalHeader().setSectionResizeMode(DUPLICATE_COL, QHeaderView.ResizeMode.Stretch)
         layout.addWidget(self.table, 1)
 
         info = QLabel(
@@ -108,7 +107,7 @@ class ManifestDedupeDialog(QDialog):
             cb.setChecked(True)
             self._checkboxes[book_index] = cb
             self.table.setCellWidget(row, APPLY_COL, cb)
-        self.table.resizeColumnsToContents()
+        make_columns_resizable(self.table, wide_column=DUPLICATE_COL)
 
         if not self._duplicates:
             self.info_label.setText("No duplicate manifest ids found in the selected book(s).")

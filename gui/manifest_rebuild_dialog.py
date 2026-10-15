@@ -21,7 +21,6 @@ from PyQt6.QtWidgets import (
     QCheckBox,
     QDialog,
     QDialogButtonBox,
-    QHeaderView,
     QLabel,
     QTableWidget,
     QTableWidgetItem,
@@ -30,6 +29,7 @@ from PyQt6.QtWidgets import (
 
 from core.epub_metadata import EpubBook
 from redactor_common.gui.progress import run_with_progress
+from redactor_common.gui.table_columns import make_columns_resizable
 
 BOOK_COL, MISSING_COL, APPLY_COL = range(3)
 
@@ -57,7 +57,6 @@ class ManifestRebuildDialog(QDialog):
         self.table.setColumnCount(3)
         self.table.setHorizontalHeaderLabels(["Book", "Missing file(s)", "Remove && Rebuild"])
         self.table.setEditTriggers(QAbstractItemView.EditTrigger.NoEditTriggers)
-        self.table.horizontalHeader().setSectionResizeMode(MISSING_COL, QHeaderView.ResizeMode.Stretch)
         layout.addWidget(self.table, 1)
 
         warning = QLabel(
@@ -103,7 +102,7 @@ class ManifestRebuildDialog(QDialog):
             cb.setChecked(True)
             self._checkboxes[book_index] = cb
             self.table.setCellWidget(row, APPLY_COL, cb)
-        self.table.resizeColumnsToContents()
+        make_columns_resizable(self.table, wide_column=MISSING_COL)
 
         if not self._missing:
             self.info_label.setText("No missing manifest files found in the selected book(s).")

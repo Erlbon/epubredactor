@@ -26,7 +26,6 @@ from PyQt6.QtWidgets import (
     QDialog,
     QDialogButtonBox,
     QHBoxLayout,
-    QHeaderView,
     QLabel,
     QPushButton,
     QTableWidget,
@@ -37,6 +36,7 @@ from PyQt6.QtWidgets import (
 from core.epub_metadata import EpubBook
 from core.genre_detect import GenreSuggestion, scan_book_genres
 from redactor_common.gui.progress import run_with_progress
+from redactor_common.gui.table_columns import make_columns_resizable
 
 BOOK_COL, CURRENT_COL, GENRE_COL, SOURCE_COL, ADD_COL = range(5)
 
@@ -70,7 +70,6 @@ class GenreSuggestDialog(QDialog):
         self.table.setColumnCount(5)
         self.table.setHorizontalHeaderLabels(["Book", "Current Genre", "Suggested", "Found In", "Add"])
         self.table.setEditTriggers(QAbstractItemView.EditTrigger.NoEditTriggers)
-        self.table.horizontalHeader().setSectionResizeMode(SOURCE_COL, QHeaderView.ResizeMode.Stretch)
         layout.addWidget(self.table, 1)
 
         tick_row = QHBoxLayout()
@@ -143,7 +142,7 @@ class GenreSuggestDialog(QDialog):
                 self._checkboxes[row] = cb
                 self.table.setCellWidget(row, ADD_COL, cb)
                 row += 1
-        self.table.resizeColumnsToContents()
+        make_columns_resizable(self.table, wide_column=SOURCE_COL)
         self.status_label.setText(
             f"Found genre suggestions for {books_with_suggestions} of {len(self.books)} book(s). "
             "Hover over 'Found In' to see the matched text."

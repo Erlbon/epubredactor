@@ -22,7 +22,6 @@ from PyQt6.QtWidgets import (
     QCheckBox,
     QDialog,
     QDialogButtonBox,
-    QHeaderView,
     QLabel,
     QTableWidget,
     QTableWidgetItem,
@@ -31,6 +30,7 @@ from PyQt6.QtWidgets import (
 
 from core.epub_metadata import EpubBook
 from redactor_common.gui.progress import run_with_progress
+from redactor_common.gui.table_columns import make_columns_resizable
 
 STATUS_COLORS = {
     "OK": None,
@@ -64,7 +64,6 @@ class ValidationDialog(QDialog):
         self.table.setColumnCount(4)
         self.table.setHorizontalHeaderLabels(["Book", "Status", "Issues", "Fix"])
         self.table.setEditTriggers(QAbstractItemView.EditTrigger.NoEditTriggers)
-        self.table.horizontalHeader().setSectionResizeMode(ISSUES_COL, QHeaderView.ResizeMode.Stretch)
         layout.addWidget(self.table, 1)
 
         self.status_label = QLabel("")
@@ -118,7 +117,7 @@ class ValidationDialog(QDialog):
         run_with_progress(
             self, self.books, _step, "Updating list…", cancellable=False, update_every=25,
         )
-        self.table.resizeColumnsToContents()
+        make_columns_resizable(self.table, wide_column=ISSUES_COL)
         total_fixable = sum(1 for b in self.books if any(i.fixable for i in b.validation_issues))
         self.status_label.setText(f"{total_fixable} of {len(self.books)} book(s) have at least one fixable issue.")
 
