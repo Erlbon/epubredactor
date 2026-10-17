@@ -1,5 +1,12 @@
 # Changelog
 
+## 2026-10-17#04 -- Drag the side-panel fields into the order you want
+
+Shared part: redactor_common 2026-10-17#08 (core/field_order.py, gui/field_order.py); all four Redactor apps get the same facility.
+- New: **reorder the fields of the Bulk Edit Tags panel**: every field has a small grip at its left (drag it; tooltip "Drag to move this field"), and Alt+Up / Alt+Down in a field moves it too (never Ctrl+Alt). A line shows where it will land. Only the grip starts a drag, so typing and selecting in the fields is unaffected. The whole row (tick box, label, editor and its buttons) moves together.
+- The order is saved by field key (setting `panel/field_order`), restored at start and is part of Export/Import Settings (the column section). Until you move a field the panel keeps following the table's column order as before; once you have, your order wins (fields hidden as columns stay hidden, the rest keep your order). Right-click a grip or an empty part of the panel > **Reset Field Order** goes back to following the table.
+- Values, the tick boxes and edits stay with their field, not the position (tested: reorder, edit two books, Save, read back). Tab follows the new order.
+
 ## 2026-10-17#03 -- Save from the right-click menu
 
 Shared part: redactor_common 2026-10-17#07 (gui/context_menu.py: the optional Save Selected item); all four Redactor apps get it.

@@ -528,7 +528,8 @@ class MainWindow(QMainWindow):
         self.splitter = QSplitter(Qt.Orientation.Horizontal)
         layout.addWidget(self.splitter)
 
-        self.tag_panel = TagPanel()
+        self.tag_panel = TagPanel(
+            field_order_store=(app_settings.load_panel_field_order, app_settings.save_panel_field_order))
         # Deliberately low minimum -- lets the panel be dragged down to
         # a sliver, or fully collapsed (see toggle_tag_panel()) rather
         # than being locked to a wide fixed range.
@@ -1858,6 +1859,7 @@ class MainWindow(QMainWindow):
                 {key: i for i, key in enumerate(COLUMN_KEYS)},
             )
             self._on_columns_changed()
+            self.tag_panel.reload_field_order()  # the imported side-panel field order
         if "view" in applied:
             mode = app_settings.load_text_overflow_mode()
             self._apply_text_overflow_mode(mode)

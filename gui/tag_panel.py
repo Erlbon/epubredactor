@@ -43,6 +43,8 @@ from gui import app_settings
 from redactor_common.gui.quick_pick_dialog import QuickPickDialog
 from redactor_common.gui.collapsible_splitter import CollapseToggleButton
 from redactor_common.gui.image_pane import ImagePanelSplitter, ImagePreviewBox
+from redactor_common.core.field_order import merge_field_order
+from redactor_common.gui.field_order import FieldOrderController, FieldRow, reorder_grid_rows
 from redactor_common.gui.grid_utils import absorb_extra_row_space
 
 MULTIPLE_VALUES_PLACEHOLDER = "<multiple values>"
@@ -110,8 +112,15 @@ class TagPanel(QWidget):
     selectionCountChanged = pyqtSignal(int)  # lets MainWindow mirror this in its toolbar Apply action
     collapseToggleRequested = pyqtSignal()  # the panel doesn't control its own width -- MainWindow does
 
-    def __init__(self, parent=None):
+    def __init__(self, parent=None, field_order_store=None):
+        """`field_order_store` = (load, save) callables for the user's side-panel field order (a list of field
+        keys); None keeps it in memory only."""
         super().__init__(parent)
+        self._order_memory: list[str] = []
+        self._field_order_load, self._field_order_save = field_order_store or (
+            lambda: list(self._order_memory), lambda order: setattr(self, "_order_memory", list(order)))
+        self._row_widgets: dict[str, list[QWidget]] = {}
+        self._supplied_keys: list[str] = [key for key, _l, _m in FIELDS]  # what the window last asked to show
         self._checkboxes: dict[str, QCheckBox] = {}
         self._editors: dict[str, QWidget] = {}
         self._current_books: list[EpubBook] = []
@@ -137,6 +146,16 @@ class TagPanel(QWidget):
         self._fields_grid = QGridLayout(self._fields_box)
         self._fields_grid.setColumnStretch(2, 1)
         self._build_field_rows(self._visible_field_keys)
+        # Drag a field by its grip (redactor_common's field_order). Without a saved order the panel follows the
+        # table's column order, as before; once the user has moved a field, their order wins.
+        self._field_order = FieldOrderController(
+            self._fields_box,
+            get_rows=lambda: [FieldRow(key, widgets) for key, widgets in self._row_widgets.items()],
+            apply_order=self._apply_field_order,
+            default_order=self._default_field_order,
+            load_order=self._field_order_load, save_order=self._field_order_save,
+        )
+        self._apply_saved_order_at_start()
 
         # Scrollable so the fields section can be dragged much shorter
         # than its natural content height without the rows themselves
@@ -244,6 +263,7 @@ class TagPanel(QWidget):
         """Builds one grid row per key in field_keys, in that order.
         Assumes the grid is currently empty -- see set_visible_fields()
         for the teardown-and-rebuild path used after the first call."""
+        self._row_widgets = {}
         for row, key in enumerate(field_keys):
             label, multiline = FIELDS_BY_KEY[key]
             cb = QCheckBox()
@@ -273,11 +293,12 @@ class TagPanel(QWidget):
             self._fields_grid.addWidget(cb, row, 0)
             self._fields_grid.addWidget(lbl, row, 1)
             self._fields_grid.addWidget(editor, row, 2)
+            self._row_widgets[key] = [cb, lbl, editor]
 
             if key == "tags_str":
-                self._fields_grid.addWidget(self._build_genre_button(key), row, 3)
+                self._fields_grid.addWidget(self._add_extra(key, self._build_genre_button(key)), row, 3)
             elif key == "language":
-                self._fields_grid.addWidget(self._build_language_button(key), row, 3)
+                self._fields_grid.addWidget(self._add_extra(key, self._build_language_button(key)), row, 3)
             elif key == "authors_str":
                 autofill_btn = self._build_field_button(
                     "Guess \"First Last\" from the Author Sort field below "
@@ -287,7 +308,7 @@ class TagPanel(QWidget):
                     glyph="\u25b2",  # points up -- pulls its value from the field below
                 )
                 autofill_btn.clicked.connect(self._on_autofill_authors_from_sort)
-                self._fields_grid.addWidget(autofill_btn, row, 3)
+                self._fields_grid.addWidget(self._add_extra(key, autofill_btn), row, 3)
             elif key == "author_sort_str":
                 autofill_btn = self._build_field_button(
                     "Guess \"Last, First\" from the Author(s) field above "
@@ -295,7 +316,7 @@ class TagPanel(QWidget):
                     "result, it won't be right for every name)"
                 )
                 autofill_btn.clicked.connect(self._on_autofill_author_sort)
-                self._fields_grid.addWidget(autofill_btn, row, 3)
+                self._fields_grid.addWidget(self._add_extra(key, autofill_btn), row, 3)
             elif key == "isbn":
                 lookup_btn = self._build_field_button(
                     "Import Metadata from Google Books for each selected book, "
@@ -303,13 +324,56 @@ class TagPanel(QWidget):
                     "review what's found before anything's applied)"
                 )
                 lookup_btn.clicked.connect(self.isbnLookupRequested.emit)
-                self._fields_grid.addWidget(lookup_btn, row, 3)
+                self._fields_grid.addWidget(self._add_extra(key, lookup_btn), row, 3)
 
         # Without this, the gap between every field visibly grows as the
         # window/panel is resized taller -- see grid_utils.py's docstring.
         # Called after every rebuild (set_visible_fields() too), not just
         # this first build.
         absorb_extra_row_space(self._fields_grid, len(field_keys))
+
+    def _add_extra(self, key: str, widget: QWidget) -> QWidget:
+        """Registers a row's extra widget (a quick-pick or guess button) so a field move takes it along."""
+        self._row_widgets[key].append(widget)
+        return widget
+
+    # -- the user's field order (drag a field by its grip) ----------------------------------------------------
+
+    def _default_field_order(self) -> list[str]:
+        """The full default: the keys the window last asked to show (the table's column order), then the rest."""
+        rest = [key for key, _l, _m in FIELDS if key not in self._supplied_keys]
+        return list(self._supplied_keys) + rest
+
+    def _order_for(self, supplied: list[str]) -> list[str]:
+        """`supplied` in the user's saved order (unchanged when they never moved a field)."""
+        saved = self._field_order_load()
+        if not saved:
+            return list(supplied)
+        full = merge_field_order(saved, self._default_field_order())
+        return [key for key in full if key in supplied]
+
+    def _apply_saved_order_at_start(self) -> None:
+        ordered = self._order_for(self._visible_field_keys)
+        if ordered != self._visible_field_keys:
+            self._apply_field_order(ordered)
+        self._field_order.refresh()
+
+    def _apply_field_order(self, full_order: list[str]) -> None:
+        """Lays the shown rows out in `full_order` (hidden keys are not in the grid); only permutes the rows."""
+        visible = [key for key in full_order if key in self._row_widgets]
+        reorder_grid_rows(self._fields_grid, self._row_widgets, visible)
+        self._visible_field_keys = visible
+
+    def reset_field_order(self) -> None:
+        """Back to following the table's column order (also: right-click a grip or the panel > Reset Field Order)."""
+        self._field_order.reset()
+
+    def reload_field_order(self) -> None:
+        """Re-lays the fields out from the saved order (after Import Settings)."""
+        ordered = self._order_for(self._supplied_keys if self._supplied_keys else self._visible_field_keys)
+        ordered = [k for k in ordered if k in self._row_widgets]
+        self._apply_field_order(ordered)
+        self._field_order.refresh()
 
     def set_visible_fields(self, field_keys: list[str]) -> None:
         """Rebuilds the Bulk Edit Tags rows to show exactly these fields,
@@ -331,6 +395,8 @@ class TagPanel(QWidget):
         field_keys = [k for k in field_keys if k in valid_keys]
         if not field_keys:
             field_keys = [key for key, _l, _m in FIELDS]  # never show a totally empty panel
+        self._supplied_keys = list(field_keys)
+        field_keys = self._order_for(field_keys)
         if field_keys == self._visible_field_keys:
             return
 
@@ -350,6 +416,7 @@ class TagPanel(QWidget):
         self._editors.clear()
         self._visible_field_keys = field_keys
         self._build_field_rows(field_keys)
+        self._field_order.refresh()  # grips for the rebuilt rows
         self.set_selection(self._current_books)  # repopulate the rebuilt rows with current data
 
         for key, text in pending.items():

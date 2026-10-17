@@ -428,6 +428,18 @@ def save_hidden_column_keys(hidden: set[str]) -> None:
     _COLUMNS.save_hidden(hidden)
 
 
+_PANEL_FIELD_ORDER_KEY = "panel/field_order"
+
+
+def load_panel_field_order() -> list[str]:
+    """The user's order of the side-panel fields (field keys; [] = follow the table's column order)."""
+    return _STORE.str_list(_PANEL_FIELD_ORDER_KEY)
+
+
+def save_panel_field_order(order: list[str]) -> None:
+    _STORE.set_str_list(_PANEL_FIELD_ORDER_KEY, order)
+
+
 def load_column_order() -> list[str]:
     """The user's left-to-right column order by field key ([] = never moved: the default order)."""
     return _COLUMNS.order()
