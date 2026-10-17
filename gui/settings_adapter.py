@@ -36,7 +36,7 @@ _PORTABLE_SECTIONS = [
     sb.SectionSpec("redact", "Redact recipe"),
     sb.SectionSpec("patterns", "Rename / export / parse pattern history"),
     sb.SectionSpec("field_defaults", "Field defaults (blank-language default, ASCII and zero-pad choices)"),
-    sb.SectionSpec("columns", "Column visibility and widths"),
+    sb.SectionSpec("columns", "Column visibility, order and widths"),
     sb.SectionSpec("view", "View options (text wrapping)"),
     sb.SectionSpec("lists", "Custom and hidden genres and languages"),
     sb.SectionSpec("covers", "Junk cover list"),
@@ -112,6 +112,8 @@ class EpubSettingsAdapter(sb.SettingsAdapter):
             return {
                 "hidden": sorted(k for k in managed_list.decode_names(_text(s, "table/hidden_column_keys"))
                                  if k in self._column_keys),
+                "order": [k for k in managed_list.decode_names(_text(s, "table/column_order_by_key"))
+                          if k in self._column_keys],
                 "widths": {k: w for k, w in app_settings._parse_column_widths_by_key(
                     _text(s, "table/column_widths_by_key")).items() if k in self._column_keys},
             }
@@ -238,6 +240,9 @@ class EpubSettingsAdapter(sb.SettingsAdapter):
         if hidden is not None:
             # The filename column can never be hidden (see open_column_settings_dialog).
             app_settings.save_hidden_column_keys({k for k in hidden if k in self._column_keys and k != "filename"})
+        order = _str_list(values.get("order"))
+        if order is not None:
+            app_settings.save_column_order([k for k in order if k in self._column_keys])
         widths = sc.coerce_width_map(values.get("widths"), allowed_keys=self._column_keys)
         if widths is not None:
             app_settings.save_column_widths_by_key(widths)

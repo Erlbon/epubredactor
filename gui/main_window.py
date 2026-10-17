@@ -131,7 +131,9 @@ from redactor_common.gui.colors import (
     TABLE_SELECTION_STYLESHEET,
 )
 from redactor_common.gui.context_menu import show_table_context_menu
+from redactor_common.core.table_settings import merge_column_order
 from redactor_common.gui.column_menu import show_column_header_context_menu
+from redactor_common.gui.column_order import apply_column_order, visual_column_keys
 from redactor_common.gui.collapsible_splitter import SplitterPaneCollapser
 from redactor_common.gui import standard_shortcuts as shortcuts
 from gui import app_settings
@@ -590,6 +592,14 @@ class MainWindow(QMainWindow):
         for key in saved_hidden:
             if key in COLUMN_KEYS and key != "filename":
                 self.table.setColumnHidden(COLUMN_KEYS.index(key), True)
+
+        # Restore the user's column order (by field key, so a column added in a later version slots in where the
+        # default order puts it; nothing saved = the default order). Signals are blocked while moving.
+        apply_column_order(
+            self.table.horizontalHeader(),
+            merge_column_order(app_settings.load_column_order(), COLUMN_KEYS),
+            {key: i for i, key in enumerate(COLUMN_KEYS)},
+        )
 
         self.table.verticalHeader().setVisible(True)  # row numbers, always positionally accurate
         self.table.setSelectionBehavior(QAbstractItemView.SelectionBehavior.SelectRows)
@@ -1059,6 +1069,9 @@ class MainWindow(QMainWindow):
         self.tag_panel.set_visible_fields(self._visible_ordered_field_keys())
         hidden = {COLUMN_KEYS[i] for i in range(self.table.columnCount()) if self.table.isColumnHidden(i)}
         app_settings.save_hidden_column_keys(hidden)
+        order = visual_column_keys(self.table.horizontalHeader(), COLUMN_KEYS)
+        if order != COLUMN_KEYS or app_settings.load_column_order():
+            app_settings.save_column_order(order)  # an untouched default order is not written down
 
     # ------------------------------------------------------------------
     # Right-click context menus
@@ -1834,6 +1847,11 @@ class MainWindow(QMainWindow):
                 if key in widths:
                     self.table.setColumnWidth(i, widths[key])
             self._columns_sized = self._columns_sized or bool(widths)
+            apply_column_order(
+                self.table.horizontalHeader(),
+                merge_column_order(app_settings.load_column_order(), COLUMN_KEYS),
+                {key: i for i, key in enumerate(COLUMN_KEYS)},
+            )
             self._on_columns_changed()
         if "view" in applied:
             mode = app_settings.load_text_overflow_mode()
@@ -4453,18 +4471,25 @@ class MainWindow(QMainWindow):
     def open_column_settings_dialog(self) -> None:
         """Add/Remove Columns -- redactor_common's field-key-based
         ColumnSettingsDialog (the same one cbz/mp3/video use)."""
-        columns = [
-            (COLUMN_KEYS[i], self.table.horizontalHeaderItem(i).text())
-            for i in range(self.table.columnCount())
-        ]
+        header = self.table.horizontalHeader()
+        labels = {
+            COLUMN_KEYS[i]: self.table.horizontalHeaderItem(i).text() for i in range(self.table.columnCount())
+        }
+        # The columns in the order the table SHOWS them (a header drag included), hidden ones at their place.
+        columns = [(key, labels[key]) for key in visual_column_keys(header, COLUMN_KEYS)]
         hidden = {COLUMN_KEYS[i] for i in range(self.table.columnCount()) if self.table.isColumnHidden(i)}
         dialog = ColumnSettingsDialog(
             columns, hidden, protected_columns=frozenset({"filename"}), parent=self,
         )
         dialog.exec()
         new_hidden = dialog.hidden_fields()
-        for i, key in enumerate(COLUMN_KEYS):
-            self.table.setColumnHidden(i, key in new_hidden)
+        self.table.setUpdatesEnabled(False)  # one repaint at the end, no flicker
+        try:
+            for i, key in enumerate(COLUMN_KEYS):
+                self.table.setColumnHidden(i, key in new_hidden)
+            apply_column_order(header, dialog.column_order(), {key: i for i, key in enumerate(COLUMN_KEYS)})
+        finally:
+            self.table.setUpdatesEnabled(True)
         self._on_columns_changed()
 
     def open_genre_settings_dialog(self) -> None:

@@ -48,7 +48,7 @@ def test_read_section_is_json_typed_and_complete(adapter):
     fd = adapter.read_section("field_defaults")
     assert fd == {"blank_language_enabled": True, "blank_language_code": "en", "ascii_filenames": False,
                   "zero_pad_enabled": False, "zero_pad_width": 2}
-    assert adapter.read_section("columns") == {"hidden": [], "widths": {}}
+    assert adapter.read_section("columns") == {"hidden": [], "order": [], "widths": {}}
     assert adapter.read_section("view") == {"text_overflow_mode": "wrap"}
 
 

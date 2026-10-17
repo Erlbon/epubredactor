@@ -1,5 +1,13 @@
 # Changelog
 
+## 2026-10-17#02 -- Tools > Columns can move columns, and the column order is remembered
+
+Shared part: redactor_common 2026-10-17#06 (the Columns dialog, gui/column_order.py); all four Redactor apps get the same dialog.
+- New: **Tools > Columns now reorders the table's columns**, not only shows/hides them. The list is in the table's current left-to-right order (hidden columns included, a header drag is reflected), top = leftmost. Move a row with the arrow buttons (earlier / later) or by dragging it; the checkbox still shows or hides the column. Applied to the table at once (widths and hidden columns kept).
+- New: **the column order is remembered** (by column name, setting `table/column_order_by_key`): before, a dragged column went back to its default place at the next start. It is saved on every header drag and every change in Columns, restored at start, and is part of Export/Import Settings (the "Column visibility, order and widths" section). An untouched default order is not written down; a column added by a later version is placed after the saved ones.
+- The bulk-edit panel keeps following the table's column order.
+- Tests for the dialog and the persistence in the real window.
+
 ## 2026-10-17#01 -- Path column: shared, right after Filename
 
 Shared part: redactor_common 2026-10-17#05 (core/path_column.py, gui/path_column.py); all four Redactor apps now use the same Path column. The pin moves from 2026-10-16#07 to 2026-10-17#05, so the shared changes in between (2026-10-17#01 to #04) come with it.

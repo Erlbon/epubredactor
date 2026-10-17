@@ -358,8 +358,10 @@ def remove_ereader_server(url: str) -> None:
 _HIDDEN_COLUMN_KEYS_KEY = "table/hidden_column_keys"
 _COLUMN_WIDTHS_BY_KEY_KEY = "table/column_widths_by_key"
 
+_COLUMN_ORDER_KEY = "table/column_order_by_key"
+
 _COLUMNS = ColumnSettingsStore(
-    _STORE, _COLUMN_WIDTHS_BY_KEY_KEY, _HIDDEN_COLUMN_KEYS_KEY,
+    _STORE, _COLUMN_WIDTHS_BY_KEY_KEY, _HIDDEN_COLUMN_KEYS_KEY, _COLUMN_ORDER_KEY,
     legacy_widths_key=_COLUMN_WIDTHS_KEY, legacy_hidden_key=_HIDDEN_COLUMNS_KEY,
 )
 
@@ -424,6 +426,15 @@ def load_hidden_column_keys(column_keys: list[str]) -> set[str]:
 
 def save_hidden_column_keys(hidden: set[str]) -> None:
     _COLUMNS.save_hidden(hidden)
+
+
+def load_column_order() -> list[str]:
+    """The user's left-to-right column order by field key ([] = never moved: the default order)."""
+    return _COLUMNS.order()
+
+
+def save_column_order(order: list[str]) -> None:
+    _COLUMNS.save_order(order)
 
 
 def _parse_column_widths_by_key(raw) -> dict[str, int]:

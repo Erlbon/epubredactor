@@ -1292,7 +1292,8 @@ auto-fit to content once — the very first time you load books with
 nothing saved yet. After that, resizing a column (by dragging its edge)
 sticks, both for the rest of the session and the next time you open the
 app. Column **visibility** (Tools > Columns, or a column
-header's own quick-hide) is remembered the same way.
+header's own quick-hide) is remembered the same way, and so is the
+column **order** (drag a header, or move columns in Tools > Columns).
 
 ## Project layout
 
