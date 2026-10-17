@@ -1137,11 +1137,16 @@ class MainWindow(QMainWindow):
     def _show_table_context_menu(self, pos) -> None:
         # Selection-fix, and the generic Open Containing Folder/Copy Path
         # actions, are handled by the shared helper -- see its docstring.
+        # A typed-in, not yet applied panel edit belongs to the selection as it is now and counts as an unsaved
+        # change in "Save Selected (N)", as it does for Save All.
+        self.tag_panel.apply_bulk_edit()
         show_table_context_menu(
             self, self.table, pos,
             get_selected_items=self._currently_selected_books,
             get_path=lambda book: book.path,
             extra_items=self._context_menu_items,
+            save_selected=self.save_selected_books,
+            is_dirty=lambda book: book.dirty and not book.load_error and not book.save_error,
         )
 
     # ------------------------------------------------------------------
@@ -2971,8 +2976,18 @@ class MainWindow(QMainWindow):
         # unconditionally: it's a no-op if nothing's checked, or if nothing
         # is currently selected in the table (see _apply_bulk_edit's guard).
         self.tag_panel.apply_bulk_edit()
+        self._save_changed_among(self.books)
 
-        all_dirty = [b for b in self.books if b.dirty and not b.load_error]
+    def save_selected_books(self, books: list[EpubBook]) -> None:
+        """Right-click > Save Selected (N): the very same flow as File > Save All (confirmation, progress,
+        failure report), restricted to these books."""
+        self.tag_panel.apply_bulk_edit()  # a pending panel edit counts, exactly as for Save All
+        wanted = {id(b) for b in books}
+        self._save_changed_among([b for b in self.books if id(b) in wanted])
+
+    def _save_changed_among(self, candidates: list[EpubBook]) -> None:
+        """Save All's body: saves the changed books among `candidates` (all loaded books for Save All)."""
+        all_dirty = [b for b in candidates if b.dirty and not b.load_error]
         # Books that already failed to save last time are excluded from
         # this automatic sweep -- some causes (a path that's simply too
         # long for Windows, for instance) are permanent properties of
