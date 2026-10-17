@@ -19,3 +19,6 @@ dist-linux/
 # File > Undo Last Rename's log (redactor_common's RenameLog) -- per-user data,
 # next to the settings like epubredactor_settings.ini.
 epubredactor_rename_log.json
+
+# Written next to the crash log when History is on (one line per Save All)
+save_log.txt

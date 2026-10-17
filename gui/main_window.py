@@ -62,7 +62,7 @@ from PyQt6.QtWidgets import (
 )
 
 from core.epub_metadata import EpubBook, EpubError
-from core import history
+from core import crash_log, history
 from redactor_common.gui.history_dialog import HistoryDialog
 from core.fields import FIELDS, NUMERIC_FIELD_KEYS
 from core.genres import add_genres
@@ -133,6 +133,8 @@ from redactor_common.gui.colors import (
 from redactor_common.gui.context_menu import show_table_context_menu
 from redactor_common.core.table_settings import merge_column_order
 from redactor_common.gui.column_menu import show_column_header_context_menu
+from redactor_common.core.save_report import SaveReport, append_save_log, files_still_dirty, nothing_to_save_reason
+from redactor_common.gui import crash_dialog
 from redactor_common.gui.column_order import apply_column_order, visual_column_keys
 from redactor_common.gui.collapsible_splitter import SplitterPaneCollapser
 from redactor_common.gui import standard_shortcuts as shortcuts
@@ -2977,8 +2979,20 @@ class MainWindow(QMainWindow):
         # actual in-memory metadata until Apply runs. Safe to call
         # unconditionally: it's a no-op if nothing's checked, or if nothing
         # is currently selected in the table (see _apply_bulk_edit's guard).
-        self.tag_panel.apply_bulk_edit()
-        self._save_changed_among(self.books)
+        try:
+            self.tag_panel.apply_bulk_edit()
+            self._save_changed_among(self.books)
+        except Exception as exc:  # noqa: BLE001 - never a silent Save All
+            self._save_all_crashed(exc)
+
+    def _save_all_crashed(self, exc: Exception) -> None:
+        crash_dialog.report_exception(exc, "Save All stopped because of an unexpected error")
+        self.status.showMessage(f"Save All stopped because of an unexpected error: {exc}", 15000)
+        try:
+            self._rebuild_table()
+            self._refresh_status()
+        except Exception:  # noqa: BLE001 - the report above matters more than a repaint
+            pass
 
     def save_selected_books(self, books: list[EpubBook]) -> None:
         """Right-click > Save Selected (N): the very same flow as File > Save All (confirmation, progress,
@@ -3003,8 +3017,11 @@ class MainWindow(QMainWindow):
         dirty_books = [b for b in all_dirty if not b.save_error]
         previously_failed = len(all_dirty) - len(dirty_books)
 
+        load_error_names = [os.path.basename(b.path) for b in candidates if b.dirty and b.load_error]
         if not dirty_books:
             if previously_failed:
+                reason = (f"Nothing to save: {previously_failed} changed book(s) already failed to save and are "
+                          "skipped to avoid repeating the same error")
                 QMessageBox.information(
                     self, "Nothing to save",
                     f"{previously_failed} book(s) still have unsaved changes, but already "
@@ -3013,7 +3030,11 @@ class MainWindow(QMainWindow):
                     "once you believe the problem is fixed.",
                 )
             else:
-                QMessageBox.information(self, "Nothing to save", "No unsaved changes.")
+                reason = nothing_to_save_reason(len(load_error_names), load_error_names)
+                QMessageBox.information(self, "Nothing to save", reason)
+            self.status.showMessage(reason, 15000)
+            append_save_log(os.path.dirname(crash_log.log_path()), history.history_enabled(),
+                            SaveReport(nothing=reason))
             return
 
         reply = QMessageBox.question(
@@ -3029,7 +3050,18 @@ class MainWindow(QMainWindow):
         self._rebuild_table()
         self._refresh_status()
         self._on_selection_changed()  # panel could be showing stale data from before this save
-        self._report_save_result(len(dirty_books), errors, in_place=True)
+        report = SaveReport(skipped_load_errors=load_error_names)
+        report.failed = [(os.path.basename(path), message) for path, message in errors]
+        report.saved = len(dirty_books) - len(errors)
+        failed_names = {name for name, _reason in report.failed}
+        report.still_dirty = files_still_dirty(
+            dirty_books, lambda b: b.dirty, lambda b: os.path.basename(b.path) in failed_names,
+            lambda b: os.path.basename(b.path))
+        report.saved -= len(report.still_dirty)
+        self.status.showMessage(report.status_line(), 30000)
+        append_save_log(os.path.dirname(crash_log.log_path()), history.history_enabled(), report)
+        self._report_save_result(len(dirty_books), errors, in_place=True, extra_problems=(
+            [line for line in report.problem_lines()[len(report.failed):]]))
 
     def retry_save(self, book: EpubBook) -> None:
         """Explicitly retries saving one book that previously failed --
@@ -3093,9 +3125,10 @@ class MainWindow(QMainWindow):
                 errors.append((book.path, message))
                 if not output_folder:
                     book.save_error = message
-            except Exception:  # noqa: BLE001 - surface unexpected errors, don't crash
+            except Exception as exc:  # noqa: BLE001 - surface unexpected errors, don't crash
                 message = traceback.format_exc(limit=2)
                 errors.append((book.path, message))
+                crash_dialog.report_exception(exc, "Save All hit an unexpected error")
                 if not output_folder:
                     book.save_error = message
 
@@ -3114,8 +3147,13 @@ class MainWindow(QMainWindow):
         if notice:
             self.status.showMessage(notice, 15000)
 
-    def _report_save_result(self, attempted: int, errors: list[tuple[str, str]], in_place: bool) -> None:
+    def _report_save_result(
+        self, attempted: int, errors: list[tuple[str, str]], in_place: bool, extra_problems: list[str] | None = None,
+    ) -> None:
         self._show_journal_notice()
+        if extra_problems:
+            # Skipped load errors / files left marked unsaved without an error: named, never silent.
+            QMessageBox.warning(self, "Save report", "\n".join(extra_problems))
         if not errors:
             QMessageBox.information(self, "Saved", f"Successfully saved {attempted} file(s).")
             return

@@ -16,6 +16,15 @@ def _no_real_install_dirs(monkeypatch):
 
 
 @pytest.fixture(autouse=True)
+def _isolated_save_log(monkeypatch, tmp_path):
+    """With History on, Save All appends one line to save_log.txt next to the crash log (the project folder when
+    running from source): tests point the crash log at a temporary folder so no test writes there."""
+    from core import crash_log
+
+    monkeypatch.setattr(crash_log, "log_path", lambda: str(tmp_path / "logs" / "epubredactor_crash.log"))
+
+
+@pytest.fixture(autouse=True)
 def _non_blocking_message_boxes(monkeypatch):
     """QMessageBox.information/warning/critical are modal and never
     return under the offscreen test platform -- two tests
