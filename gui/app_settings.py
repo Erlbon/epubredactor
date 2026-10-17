@@ -396,8 +396,30 @@ def save_hidden_columns(hidden: set[int]) -> None:
     _STORE.set_int_set(_HIDDEN_COLUMNS_KEY, hidden)
 
 
+_PATH_COLUMN_SEEDED_KEY = "table/path_column_seeded"
+
+
+def path_column_seeded() -> bool:
+    """True once the one-time un-hiding of the shared Path column has run (redactor_common.core.path_column)."""
+    return _STORE.bool_value(_PATH_COLUMN_SEEDED_KEY, False)
+
+
+def set_path_column_seeded() -> None:
+    _STORE.set_bool(_PATH_COLUMN_SEEDED_KEY, True)
+
+
+def _legacy_index_order(column_keys: list[str]) -> list[str]:
+    """The one-time migration of the OLD index-based values maps an index through this list. Those indices were
+    written when Path was column 0 and Filename column 1; the table now has them the other way round (2026-10-17,
+    the shared Path column goes after Filename), so the first two are swapped back for that mapping only."""
+    keys = list(column_keys)
+    if keys[:2] == ["filename", "path"]:
+        keys[0], keys[1] = keys[1], keys[0]
+    return keys
+
+
 def load_hidden_column_keys(column_keys: list[str]) -> set[str]:
-    return _COLUMNS.hidden(column_keys)
+    return _COLUMNS.hidden(_legacy_index_order(column_keys))
 
 
 def save_hidden_column_keys(hidden: set[str]) -> None:
@@ -409,7 +431,7 @@ def _parse_column_widths_by_key(raw) -> dict[str, int]:
 
 
 def load_column_widths_by_key(column_keys: list[str]) -> dict[str, int]:
-    return _COLUMNS.widths(column_keys)
+    return _COLUMNS.widths(_legacy_index_order(column_keys))
 
 
 def save_column_widths_by_key(widths: dict[str, int]) -> None:

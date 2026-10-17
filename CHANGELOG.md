@@ -1,5 +1,13 @@
 # Changelog
 
+## 2026-10-17#01 -- Path column: shared, right after Filename
+
+Shared part: redactor_common 2026-10-17#05 (core/path_column.py, gui/path_column.py); all four Redactor apps now use the same Path column. The pin moves from 2026-10-16#07 to 2026-10-17#05, so the shared changes in between (2026-10-17#01 to #04) come with it.
+- Changed: **the Path column is now directly after Filename** (it was the first column, before Filename) and visible by default. It still shows the book's folder; the tooltip has the full file path.
+- New: **Ctrl+C on the table copies the current column of the selected rows, the Path column as full file paths** (one per line). Sorting the column is case-insensitive natural text order.
+- One-time migration (setting `table/path_column_seeded`): if you had hidden the Path column, it is shown once so you see it. After that your own hiding wins. (This app does not save a dragged column order, so there is no order to migrate; column widths and hiding are saved by column name, so they carry over to the new position.)
+- The Path cell updates after Rename File, Rename / Export by Pattern, Undo Last Rename and Move into Folders (tests for rename and move).
+
 ## 2026-10-16#01 -- Progress boxes appear in time and block the window; Cancel keeps the box up
 
 From the 2026-10-16 independent code review (shared progress dialogs and threading); the fixes are in redactor_common 2026-10-16#07.

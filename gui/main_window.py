@@ -86,6 +86,8 @@ from redactor_common.gui.folder_options import (
 from redactor_common.gui.progress import ProgressReporter, run_busy, run_with_progress
 from redactor_common.gui.settings_bundle_dialogs import export_settings, import_settings
 from redactor_common.gui.sortable_table import NumericTableWidgetItem, suspend_sorting
+from redactor_common.gui.path_column import PathTableWidgetItem, install_cell_copy
+from redactor_common.core.path_column import PATH_KEY, PATH_LABEL
 
 from gui import cover_quality
 from redactor_common.gui.zoom_toolbar import TableZoomController
@@ -194,8 +196,9 @@ from redactor_common.core.trash import TrashError, move_to_trash
 from redactor_common.gui.duplicates_dialog import run_find_duplicates
 from core.epub_duplicates import COLUMNS as EPUB_DUPLICATE_COLUMNS, find_duplicate_groups
 
-PATH_COL = 0
-FILENAME_COL = 1
+# Filename first, the shared Path column directly after it (redactor_common.core.path_column; was Path first).
+FILENAME_COL = 0
+PATH_COL = 1
 STATUS_COL = 2
 FIRST_FIELD_COL = 3
 # Junk Cover is appended AFTER every FIELDS column, deliberately, rather
@@ -212,7 +215,7 @@ COVER_SIZE_COL = JUNK_COVER_COL + 1
 # widths/visibility are persisted by (see app_settings'
 # load_hidden_column_keys()), so inserting a column later can't silently
 # re-point a saved preference at the wrong column.
-COLUMN_KEYS = ["path", "filename", "status", *[key for key, _label, _ml in FIELDS], "junk_cover", "cover_size"]
+COLUMN_KEYS = ["filename", "path", "status", *[key for key, _label, _ml in FIELDS], "junk_cover", "cover_size"]
 # Colors now live in redactor_common.gui.colors -- this project's own
 # scheme became the shared standard (mp3/video had each picked their
 # own row-tint/selection colors independently). See that module's
@@ -551,7 +554,7 @@ class MainWindow(QMainWindow):
         self._row_reflow_timer.setSingleShot(True)
         self._row_reflow_timer.timeout.connect(self._reflow_table_rows)
         self._text_overflow_mode = app_settings.load_text_overflow_mode()
-        headers = ["Path", "Filename", "Status"] + [label for _key, label, _m in FIELDS] + ["Junk Cover", "Cover"]
+        headers = ["Filename", PATH_LABEL, "Status"] + [label for _key, label, _m in FIELDS] + ["Junk Cover", "Cover"]
         self.table.setColumnCount(len(headers))
         self.table.setHorizontalHeaderLabels(headers)
         self.table.horizontalHeader().setSectionResizeMode(
@@ -578,6 +581,12 @@ class MainWindow(QMainWindow):
         # hide, see open_column_settings_dialog's `locked` set) even though
         # it should never end up in a saved hidden set in the first place.
         saved_hidden = app_settings.load_hidden_column_keys(COLUMN_KEYS)
+        if not app_settings.path_column_seeded():
+            # Once: a hidden Path column from before it was shared is un-hidden so that it is seen; after that
+            # the user's own choice wins (redactor_common.core.path_column).
+            saved_hidden = saved_hidden - {PATH_KEY}
+            app_settings.save_hidden_column_keys(saved_hidden)
+            app_settings.set_path_column_seeded()
         for key in saved_hidden:
             if key in COLUMN_KEYS and key != "filename":
                 self.table.setColumnHidden(COLUMN_KEYS.index(key), True)
@@ -587,6 +596,7 @@ class MainWindow(QMainWindow):
         self.table.setSelectionMode(QAbstractItemView.SelectionMode.ExtendedSelection)
         self.table.setIconSize(COVER_ICON_SIZE)
         self.table.setSortingEnabled(True)  # click a header to sort by that column
+        install_cell_copy(self.table)  # Ctrl+C: the current column of the selected rows (full path for Path)
 
         # Lazy cover-icon loading: _populate_row() only ever shows an
         # ALREADY-cached icon (see _apply_cached_cover_icon_only) and
@@ -1376,9 +1386,8 @@ class MainWindow(QMainWindow):
         unconditionally pushes to the undo stack -- turning one refresh
         into a cascade of bogus undo entries for every field column)."""
         path_item = self.table.item(row, PATH_COL)
-        if path_item is not None:
-            path_item.setText(os.path.dirname(book.path))
-            path_item.setToolTip(book.path)
+        if isinstance(path_item, PathTableWidgetItem):
+            path_item.set_path(book.path)
         name_item = self.table.item(row, FILENAME_COL)
         if name_item is not None:
             name_item.setText(os.path.basename(book.path))
@@ -1924,9 +1933,8 @@ class MainWindow(QMainWindow):
     def _populate_row(self, row: int, book: EpubBook) -> None:
         accum = self._perf_accum
         with accum.section("path+filename cells"):
-            path_item = QTableWidgetItem(os.path.dirname(book.path))
+            path_item = PathTableWidgetItem(book.path)  # the folder as text, the full path as tooltip and for Ctrl+C
             path_item.setFlags(path_item.flags() & ~Qt.ItemFlag.ItemIsEditable)
-            path_item.setToolTip(book.path)
             self.table.setItem(row, PATH_COL, path_item)
 
             name_item = QTableWidgetItem(os.path.basename(book.path))

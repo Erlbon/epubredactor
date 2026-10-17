@@ -279,7 +279,7 @@ them in one go.
   that's since moved or been deleted is skipped quietly rather than
   shown as an error.
 - Drag-and-drop files/folders straight onto the window (always recursive)
-- **Path** column (leftmost) shows each book's folder location, handy once
+- **Path** column (right after Filename) shows each book's folder (full path as tooltip and on Ctrl+C), handy once
   you've loaded books from more than one place
 - Editable table — tweak a single book's field directly in the grid
 - **Keyboard navigation**: Tab/Shift+Tab move horizontally between fields

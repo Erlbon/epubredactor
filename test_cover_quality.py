@@ -113,7 +113,7 @@ def test_fetch_by_isbn(monkeypatch):
 
 def test_find_better_covers_offers_only_improvements_and_undoes(tmp_path, monkeypatch):
     from gui import better_cover_dialog
-    from gui.main_window import COVER_SIZE_COL, MainWindow
+    from gui.main_window import COVER_SIZE_COL, FILENAME_COL, MainWindow
 
     small, big = _jpeg(300, 450), _jpeg(1200, 1800)
     books = [
@@ -126,7 +126,7 @@ def test_find_better_covers_offers_only_improvements_and_undoes(tmp_path, monkey
     monkeypatch.setattr(better_cover, "fetch_cover_by_isbn", lambda isbn, get=None: by_isbn.get(isbn))
     window = MainWindow()
     window._load_paths(books)
-    cover_cells = {window.table.item(r, 1).text(): window.table.item(r, COVER_SIZE_COL).text()
+    cover_cells = {window.table.item(r, FILENAME_COL).text(): window.table.item(r, COVER_SIZE_COL).text()
                    for r in range(window.table.rowCount())}
     assert cover_cells["small.epub"] == "300×450" and cover_cells["none.epub"] == "none"
     offered = {}
@@ -140,7 +140,7 @@ def test_find_better_covers_offers_only_improvements_and_undoes(tmp_path, monkey
     assert offered["titles"] == ["No cover", "Small cover"]  # not the one already bigger, not the one without ISBN
     by_name = {b.path.rsplit("\\", 1)[-1].rsplit("/", 1)[-1]: b for b in window.books}
     assert cover_quality.cover_size(by_name["small.epub"]) == (1200, 1800) and by_name["small.epub"].dirty
-    row = next(r for r in range(window.table.rowCount()) if window.table.item(r, 1).text() == "small.epub")
+    row = next(r for r in range(window.table.rowCount()) if window.table.item(r, FILENAME_COL).text() == "small.epub")
     assert window.table.item(row, COVER_SIZE_COL).text() == "1200×1800"
     window.on_undo()
     assert cover_quality.cover_size(by_name["small.epub"]) == (300, 450)
