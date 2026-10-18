@@ -1133,8 +1133,7 @@ class MainWindow(QMainWindow):
             MenuAction("send_ereader", "eReader (Wireless)…", self.open_send_to_ereader_dialog),
         ]))
         items.append(Separator())
-        items.append(self.remove_files_act)
-        items.append(self.delete_files_act)
+        items.append(self.delete_files_act)  # Remove from List: File menu (Delete key) only
         return items
 
     def _show_table_context_menu(self, pos) -> None:

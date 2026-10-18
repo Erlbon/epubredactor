@@ -247,7 +247,7 @@ def test_context_menu():
     assert _names(items) == [
         "-", "Rename File", "-", "Look Up>", "Read Book", "Organize>", "Cover>", "-",
         "Redact", "Validate and Fix", "Open in Sigil", "Send to>", "-",
-        "Remove from List", "Delete Files (Recycle Bin)",
+        "Delete Files (Recycle Bin)",
     ]
 
     def sub(name):

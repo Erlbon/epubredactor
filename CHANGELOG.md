@@ -1,5 +1,9 @@
 # Changelog
 
+## 2026-10-18#02 -- No Remove from List in the right-click menu
+
+- Right-click > Remove from List is gone (it sat right above Delete Files, which looks alike but is not). File > Remove from List, the Delete key and Clear List stay; Delete Files stays in the right-click menu. Nothing else in the menu changed.
+
 ## 2026-10-18#01 -- Google Books and Open Library searches use the book's publisher (and language)
 
 - Google Books and Open Library lookups from the dialogs now add the book's own **publisher** to the search (`inpublisher:` / `publisher=`), and Google Books also its **language** (`langRestrict`, two-letter codes only), so a reprint's own edition ranks first instead of the most popular one. If that narrowed search finds nothing, the same search runs again without them, so nothing that was found before is lost. Books with no publisher search exactly as before.
