@@ -1,5 +1,11 @@
 # Changelog
 
+## 2026-10-18#04 -- The crash log says when each launch started
+
+Shared part: redactor_common 2026-10-18-07 (core/crash_log.py).
+- `epubredactor_crash.log` gets one line at every launch: a separator, then `<date time> started: pid N`. A native-crash dump (an access violation inside Qt, which carries no time of its own) now sits under the launch it belongs to. The newest entry is at the bottom of the file. Python exceptions keep their own timestamps as before.
+- Nothing else changed.
+
 ## 2026-10-18#03 -- One shared conversion policy (Tools > Preferences > Conversion)
 
 Shared part: redactor_common 2026-10-18-06 (conversion_policy, ConversionPolicyWidget); video already has it, music and comics follow.
