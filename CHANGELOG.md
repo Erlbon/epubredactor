@@ -1,5 +1,9 @@
 # Changelog
 
+## 2026-10-18#07 -- The intro text of three book dialogs wraps
+
+- Remove Running Headers and Page Numbers showed its whole explanation as one line that ran off the window; it now wraps like the other dialogs. The same was fixed in the intro lines of Strip HTML from Descriptions and Validate and Fix. No other label was found with the same flaw.
+
 ## 2026-10-18#06 -- Calibre lookup: retry without the ISBN, and no startup noise in the error
 
 - A Calibre lookup with an ISBN searches only for that ISBN, so a book whose ISBN no source knows came back "no results" even though its title and author would have found it. When the ISBN search finds nothing and the book also has a title or author, the lookup is now repeated once without the ISBN. An ISBN-only search is not retried.

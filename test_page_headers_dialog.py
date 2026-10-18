@@ -33,3 +33,16 @@ def test_turning_the_join_off_changes_the_preview(tmp_path):
 def test_nothing_to_clean_disables_apply(tmp_path):
     dialog = PageHeadersDialog([EpubBook(make_epub(str(tmp_path / "plain.epub")))])
     assert dialog.table.rowCount() == 0 and not dialog._ok_button.isEnabled()
+
+
+def test_intro_texts_of_the_book_dialogs_wrap_instead_of_running_off_the_window():
+    """The Remove Running Headers intro was one unbroken line of ~400 characters (cut off at the window edge)."""
+    import inspect
+    import gui.page_headers_dialog as phd
+    import gui.strip_description_html_dialog as sdd
+    import gui.validation_dialog as vd
+
+    for module in (phd, sdd, vd):
+        source = inspect.getsource(module)
+        assert "intro.setWordWrap(True)" in source, module.__name__
+        assert "addWidget(QLabel(" not in source, module.__name__  # a long label added inline cannot be wrapped

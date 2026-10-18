@@ -55,10 +55,12 @@ class ValidationDialog(QDialog):
 
     def _build_ui(self) -> None:
         layout = QVBoxLayout(self)
-        layout.addWidget(QLabel(
+        intro = QLabel(
             f"Showing {len(self.books)} book(s). Tick 'Fix' for any book with automatically "
             "fixable issues, then Apply. Issues without a fix listed need manual attention."
-        ))
+        )
+        intro.setWordWrap(True)
+        layout.addWidget(intro)
 
         self.table = QTableWidget()
         self.table.setColumnCount(4)

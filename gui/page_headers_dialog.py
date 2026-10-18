@@ -52,13 +52,15 @@ class PageHeadersDialog(QDialog):
 
     def _build_ui(self) -> None:
         layout = QVBoxLayout(self)
-        layout.addWidget(QLabel(
+        intro = QLabel(
             f"Looks at {len(self.books)} book(s) for the page furniture a scan-and-OCR conversion leaves in the text: "
             "running headers (\"30 BOOK TITLE\", \"CHAPTER TITLE 33\"), page numbers and the empty paragraphs around "
             "them. Only a book where the headers prove themselves (a repeating heading and page numbers that rise "
             "through the whole book) is listed. Nothing is written until you save; Save then rewrites the book in "
             "place (the previous content is not kept, so check the preview: this cannot be undone after saving)."
-        ))
+        )
+        intro.setWordWrap(True)
+        layout.addWidget(intro)
         self.join_check = QCheckBox("Also rejoin sentences a page break cut in two (and words hyphenated at the page end)")
         self.join_check.setChecked(True)
         self.join_check.toggled.connect(lambda _checked: self._refresh_preview())

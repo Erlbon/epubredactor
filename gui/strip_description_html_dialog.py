@@ -47,10 +47,12 @@ class StripDescriptionHtmlDialog(QDialog):
 
     def _build_ui(self) -> None:
         layout = QVBoxLayout(self)
-        layout.addWidget(QLabel(
+        intro = QLabel(
             f"Applies to {len(self.books)} book(s). Only books whose Description actually "
             "contains HTML markup are listed -- a plain-text description is never touched."
-        ))
+        )
+        intro.setWordWrap(True)
+        layout.addWidget(intro)
 
         self.table = QTableWidget()
         self.table.setColumnCount(4)
