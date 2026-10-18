@@ -459,13 +459,29 @@ class MainWindow(QMainWindow):
         self._build_ui()
         self.setAcceptDrops(True)
         self._refresh_status()
-        QTimer.singleShot(0, self._restore_last_session)
+        QTimer.singleShot(0, self._restore_last_session_painted)
         # _show_beta_warning is intentionally not scheduled for now: it
         # could steal focus from an "include subfolders?" prompt shown by
         # a startup action running around the same time, since both are
         # modal popups competing to grab attention right as the window
         # first appears. The method is left in place below in case this
         # notice comes back later, just not shown automatically.
+
+    def _restore_last_session_painted(self, waited: int = 0) -> None:
+        """Runs the session restore only once the window is on screen and has painted, and paints it again after.
+        The restore goes through redactor_common's progress calls, which switch the whole window's painting off while
+        they run (progress._InputBlock); started before the first paint (a timer of 0 ms can fire first) the window
+        stayed white until it was resized (2026-10-18: seen with a saved session of books on D:). Waits up to
+        about 2 s for the window to be visible."""
+        if not self.isVisible() and waited < 40:
+            QTimer.singleShot(50, lambda: self._restore_last_session_painted(waited + 1))
+            return
+        self.repaint()  # the first paint happens now, before anything switches painting off
+        try:
+            self._restore_last_session()
+        finally:
+            self.update()
+            self.repaint()
 
     def _restore_last_session(self) -> None:
         """Reopens whatever was loaded when the app was last closed --

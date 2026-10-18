@@ -1,5 +1,10 @@
 # Changelog
 
+## 2026-10-18#05 -- A saved session no longer leaves the window white at startup
+
+- Fix: with a saved list of last session's books, the window could come up all white (menus and toolbar missing) until it was resized. The session restore started before the window had painted for the first time, and redactor_common's progress call switches the whole window's painting off while it runs. The restore now waits until the window is visible, paints once first and paints again afterwards.
+- Found by taking the old settings file apart: it only happened with `last_session_files` present. Not proven on a real screen from here (only offscreen tests): try it with your old settings file.
+
 ## 2026-10-18#04 -- The crash log says when each launch started
 
 Shared part: redactor_common 2026-10-18-07 (core/crash_log.py).

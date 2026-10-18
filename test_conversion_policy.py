@@ -251,3 +251,22 @@ def test_page_saves_the_policy_on_ok_and_cancel_drops_it(tmp_path):
     policy = cs.get_policy()
     assert (policy.on_open, policy.originals, policy.quarantine_folder) == (
         pm.ON_OPEN_NEVER, pm.ORIGINALS_QUARANTINE, str(tmp_path / "q"))
+
+
+# -- startup: the session restore must not leave the window unpainted ------------------------------------------------
+
+
+def test_session_restore_paints_before_and_after_and_waits_for_the_window(monkeypatch):
+    window = mw.MainWindow()
+    steps = []
+    monkeypatch.setattr(window, "repaint", lambda: steps.append("repaint"))
+    monkeypatch.setattr(window, "_restore_last_session", lambda: steps.append("restore"))
+    window.show()
+    window._restore_last_session_painted()
+    assert steps == ["repaint", "restore", "repaint"]
+
+    waited = []
+    hidden = mw.MainWindow()
+    monkeypatch.setattr(hidden, "_restore_last_session", lambda: waited.append("restore"))
+    hidden._restore_last_session_painted()  # not visible yet: it waits instead of restoring
+    assert waited == []
