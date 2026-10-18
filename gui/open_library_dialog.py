@@ -86,7 +86,8 @@ class OpenLibraryDialog(LookupDialogBase):
         if not title:
             return LookupResult(error="no title set -- can't search", used_query=used)
         try:
-            candidates = search_open_library(title, authors)
+            publisher = book.metadata.publisher.strip()
+            candidates = search_open_library(title, authors, **({"publisher": publisher} if publisher else {}))
         except OpenLibraryLookupError as exc:
             return LookupResult(error=str(exc), used_query=used)
         if not candidates:

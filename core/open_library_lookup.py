@@ -105,7 +105,7 @@ class OpenLibraryCandidate:
 _default_fetch = make_default_fetch("EpubRedactor/1.0", timeout=DEFAULT_TIMEOUT)
 
 
-def build_search_url(title: str, author: str = "", max_results: int = 6) -> str:
+def build_search_url(title: str, author: str = "", max_results: int = 6, publisher: str = "") -> str:
     title = (title or "").strip()
     if not title:
         raise OpenLibraryLookupError("A title is required to search Open Library.")
@@ -113,6 +113,8 @@ def build_search_url(title: str, author: str = "", max_results: int = 6) -> str:
     first_author = author.split(";")[0].strip() if author else ""
     if first_author:
         params.append(f"author={quote(first_author)}")
+    if (publisher or "").strip():
+        params.append(f"publisher={quote(publisher.strip())}")
     params.append(f"limit={max_results}")
     return f"{SEARCH_URL}?{'&'.join(params)}"
 
@@ -169,14 +171,19 @@ def _fetch_search(url: str, fetch, sleep_fn) -> list[OpenLibraryCandidate]:
 
 
 def search_open_library(
-    title: str, author: str = "", fetch=None, max_results: int = 6, sleep_fn=time.sleep
+    title: str, author: str = "", fetch=None, max_results: int = 6, sleep_fn=time.sleep, publisher: str = ""
 ) -> list[OpenLibraryCandidate]:
     """Search for candidates. Raises OpenLibraryLookupError on missing
     title, network failure, or an unparseable response. Returns an
     empty list (not an error) when the search succeeds but finds
-    nothing."""
-    url = build_search_url(title, author, max_results)
-    return _fetch_search(url, fetch, sleep_fn)
+    nothing. With a `publisher` the search first asks for that publisher
+    (a reprint's own edition ranks first), then, if nothing came back,
+    again without it."""
+    if (publisher or "").strip():
+        found = _fetch_search(build_search_url(title, author, max_results, publisher), fetch, sleep_fn)
+        if found:
+            return found
+    return _fetch_search(build_search_url(title, author, max_results), fetch, sleep_fn)
 
 
 def search_open_library_by_isbn(

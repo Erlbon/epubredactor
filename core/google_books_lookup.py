@@ -92,7 +92,7 @@ class GoogleBooksCandidate:
 _default_fetch = make_default_fetch("EpubRedactor/1.0", timeout=DEFAULT_TIMEOUT)
 
 
-def build_query_url(title: str, authors_str: str = "", max_results: int = 5) -> str:
+def build_query_url(title: str, authors_str: str = "", max_results: int = 5, publisher: str = "", language: str = "") -> str:
     title = (title or "").strip()
     if not title:
         raise GoogleBooksLookupError("A title is required to search Google Books.")
@@ -104,8 +104,15 @@ def build_query_url(title: str, authors_str: str = "", max_results: int = 5) -> 
     if first_author:
         query_parts.append(f"inauthor:{first_author}")
 
+    if (publisher or "").strip():
+        query_parts.append(f"inpublisher:{publisher.strip()}")
+
     query = "+".join(query_parts)
-    return f"{API_URL}?q={quote(query)}&maxResults={max_results}"
+    url = f"{API_URL}?q={quote(query)}&maxResults={max_results}"
+    code = (language or "").strip().lower()
+    if len(code) == 2 and code.isalpha():  # langRestrict takes a two-letter ISO 639-1 code; anything else is skipped
+        url += f"&langRestrict={code}"
+    return url
 
 
 def _cover_url_from_image_links(image_links: dict) -> str:
@@ -188,14 +195,21 @@ def search_google_books(
     fetch=None,
     max_results: int = 5,
     sleep_fn=time.sleep,
+    publisher: str = "",
+    language: str = "",
 ) -> list[GoogleBooksCandidate]:
     """Search for candidates matching the given title/author(s).
 
     Raises GoogleBooksLookupError on missing title, network failure, or
     an unparseable response. Returns an empty list (not an error) when
-    the search succeeds but simply finds nothing."""
-    url = build_query_url(title, authors_str, max_results)
-    return _fetch_search(url, fetch, sleep_fn)
+    the search succeeds but simply finds nothing. With a `publisher`
+    and/or `language` the search is first narrowed by them, then, if
+    nothing came back, repeated without."""
+    if (publisher or "").strip() or (language or "").strip():
+        found = _fetch_search(build_query_url(title, authors_str, max_results, publisher, language), fetch, sleep_fn)
+        if found:
+            return found
+    return _fetch_search(build_query_url(title, authors_str, max_results), fetch, sleep_fn)
 
 
 def search_google_books_by_isbn(

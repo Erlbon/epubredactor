@@ -19,10 +19,10 @@ import gui.open_library_dialog as ol  # noqa: E402
 _app = QApplication.instance() or QApplication(sys.argv)
 
 
-def _book(path, title="Mort", authors="Terry Pratchett", isbn="", cover=None):
+def _book(path, title="Mort", authors="Terry Pratchett", isbn="", cover=None, publisher="", language=""):
     return SimpleNamespace(
         path=path, cover_bytes=cover,
-        metadata=SimpleNamespace(title=title, authors_str=authors, isbn=isbn),
+        metadata=SimpleNamespace(title=title, authors_str=authors, isbn=isbn, publisher=publisher, language=language),
     )
 
 
@@ -33,7 +33,7 @@ def _candidate(**fields):
 def test_google_books_applies_fields_and_cover(monkeypatch):
     seen = []
     monkeypatch.setattr(gb, "search_google_books",
-                        lambda title, authors: seen.append((title, authors)) or [_candidate(title="Mort", publisher="Gollancz")])
+                        lambda title, authors, **kw: seen.append((title, authors)) or [_candidate(title="Mort", publisher="Gollancz")])
     monkeypatch.setattr(gb, "download_cover_image", lambda c: b"jpegbytes")
     dialog = gb.GoogleBooksDialog([_book("a.epub"), _book("b.epub", title="")])
     assert seen == [("Mort", "Terry Pratchett")]  # the untitled book isn't searched
@@ -43,7 +43,7 @@ def test_google_books_applies_fields_and_cover(monkeypatch):
 
 
 def test_open_library_unticked_row_is_not_applied(monkeypatch):
-    monkeypatch.setattr(ol, "search_open_library", lambda title, authors: [_candidate(title="X")])
+    monkeypatch.setattr(ol, "search_open_library", lambda title, authors, **kw: [_candidate(title="X")])
     monkeypatch.setattr(ol, "download_cover_image", lambda c: b"img")
     dialog = ol.OpenLibraryDialog([_book("a.epub"), _book("b.epub")])
     dialog._checkboxes[1].setChecked(False)
@@ -54,7 +54,7 @@ def test_open_library_unticked_row_is_not_applied(monkeypatch):
 def test_search_this_item_uses_the_corrected_query(monkeypatch):
     seen = []
 
-    def search(title, authors):
+    def search(title, authors, **kw):
         seen.append(title)
         return [_candidate(title=title)] if title == "Guards! Guards!" else []
 
@@ -98,3 +98,13 @@ def test_calibre_large_batch_can_be_declined(monkeypatch):
     books = [_book(f"{i}.epub") for i in range(cal.WARN_BATCH_SIZE + 1)]
     dialog = cal.CalibreLookupDialog(books)
     assert dialog.accepted_changes() == {}
+
+
+def test_the_books_publisher_and_language_go_into_the_search(monkeypatch):
+    seen = []
+    monkeypatch.setattr(gb, "search_google_books", lambda title, authors, **kw: seen.append(kw) or [])
+    monkeypatch.setattr(ol, "search_open_library", lambda title, authors, **kw: seen.append(kw) or [])
+    gb.GoogleBooksDialog([_book("a.epub", publisher="Gollancz", language="en")])
+    ol.OpenLibraryDialog([_book("a.epub", publisher="Gollancz", language="en")])
+    gb.GoogleBooksDialog([_book("b.epub")])
+    assert seen == [{"publisher": "Gollancz", "language": "en"}, {"publisher": "Gollancz"}, {}]

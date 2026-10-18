@@ -1,5 +1,10 @@
 # Changelog
 
+## 2026-10-18#01 -- Google Books and Open Library searches use the book's publisher (and language)
+
+- Google Books and Open Library lookups from the dialogs now add the book's own **publisher** to the search (`inpublisher:` / `publisher=`), and Google Books also its **language** (`langRestrict`, two-letter codes only), so a reprint's own edition ranks first instead of the most popular one. If that narrowed search finds nothing, the same search runs again without them, so nothing that was found before is lost. Books with no publisher search exactly as before.
+- Not proven against the live services from here: try it on a few real files.
+
 ## 2026-10-17#05 -- A visible error box and a clear result after every Save All
 
 Shared part: redactor_common 2026-10-17#11 (gui/crash_dialog.py, core/save_report.py, run_with_progress(on_error=)); all four Redactor apps get it.

@@ -58,7 +58,8 @@ class GoogleBooksDialog(LookupDialogBase):
         if not title:
             return LookupResult(error="no title set -- can't search", used_query=used)
         try:
-            candidates = search_google_books(title, authors)
+            extra = {k: v for k, v in (("publisher", book.metadata.publisher.strip()), ("language", book.metadata.language.strip())) if v}
+            candidates = search_google_books(title, authors, **extra)
         except GoogleBooksLookupError as exc:
             return LookupResult(error=str(exc), used_query=used)
         if not candidates:
