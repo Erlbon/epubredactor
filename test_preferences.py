@@ -32,7 +32,7 @@ def _dialog():
 
 def test_pages_and_no_auto_number_setting():
     dialog = _dialog()
-    assert dialog.page_titles() == ["Filenames", "Language", "Tools and Paths", "History"]
+    assert dialog.page_titles() == ["Filenames", "Language", "Tools and Paths", "History", "Conversion"]
     keys = set(defaults(preferences.build_sections()))
     # this app has no Auto-Numbering (no such key or feature anywhere), so no padding setting for it
     assert KEY_AUTO_NUMBER_PADDING not in keys

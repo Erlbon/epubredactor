@@ -9,6 +9,8 @@ redactor_common with this app's pages.
   Language    shared: the blank-language default (with its on/off switch)
   Tools and Paths   Calibre folder, Sigil program, Open Library database and dumps,
                     ISFDB database and backup
+  Conversion  the shared conversion policy (redactor_common's ConversionPolicyWidget): what happens when a book
+              in another format is opened, and to the original after a verified conversion
   History     the opt-in History journal (off by default) + Delete History...
               (a PrefAction: a button that acts at once and holds no value)
 
@@ -36,10 +38,11 @@ from redactor_common.core.preferences import (
     filenames_section,
     language_section,
 )
-from PyQt6.QtWidgets import QMessageBox
+from PyQt6.QtWidgets import QLabel, QMessageBox, QVBoxLayout, QWidget
 from redactor_common.gui.preferences_dialog import PreferencesDialog
 
-from core import history
+from core import conversion_safety, history
+from redactor_common.gui.conversion_policy_widget import ConversionPolicyWidget
 from gui import app_settings
 
 # App-specific setting names.
@@ -190,5 +193,57 @@ def make_backend() -> CallbackBackend:
     return CallbackBackend(_get, _set)
 
 
+class ConversionPage(QWidget):
+    """Preferences > Conversion: the shared policy widget on top, then what is specific to this app. Saved by save() on
+    OK / Apply, dropped on Cancel, like the other pages."""
+
+    def __init__(self, parent=None):
+        super().__init__(parent)
+        layout = QVBoxLayout(self)
+        intro = QLabel(
+            "Books in other formats (MOBI, AZW3, FB2, ...) are converted to EPUB with Calibre's ebook-convert, by "
+            "File > Import and Convert and by the offer after Open Folder. The result is written beside the book "
+            "with the extension .epub, so the original can always be kept. Until you save this page the app does "
+            "what it always did: it asks, and keeps the originals."
+        )
+        intro.setWordWrap(True)
+        layout.addWidget(intro)
+        self._initial = conversion_safety.get_policy()
+        self.policy_widget = ConversionPolicyWidget(
+            self._initial, never_text="Open Folder does not offer other e-book formats")
+        layout.addWidget(self.policy_widget)
+        note = QLabel("The target format is always EPUB. The Calibre folder is set on the Tools and Paths page.")
+        note.setWordWrap(True)
+        layout.addWidget(note)
+        layout.addStretch(1)
+
+    def save(self) -> None:
+        # Untouched, the page saves nothing: an OK on some other page must not turn "never saved" (the app's old
+        # behaviour) into a saved policy.
+        policy = self.policy_widget.policy()
+        if policy != self._initial:
+            conversion_safety.save_policy(policy)
+            self._initial = policy
+
+
+class AppPreferencesDialog(PreferencesDialog):
+    """The shared dialog plus the Conversion page, which the shared dialog neither reads nor writes: it is saved by
+    apply() / accept(), so Cancel drops its edits like on every shared page."""
+
+    def __init__(self, parent=None):
+        pages: list[ConversionPage] = []
+
+        def build() -> QWidget:
+            pages.append(ConversionPage())
+            return pages[-1]
+
+        super().__init__(build_sections(), make_backend(), parent, extra_pages=[("Conversion", build)])
+        self.conversion_page = pages[0]
+
+    def apply(self) -> None:
+        super().apply()
+        self.conversion_page.save()
+
+
 def make_dialog(parent=None) -> PreferencesDialog:
-    return PreferencesDialog(build_sections(), make_backend(), parent)
+    return AppPreferencesDialog(parent)

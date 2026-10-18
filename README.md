@@ -48,7 +48,11 @@ them in one go.
   installation's `ebook-convert` tool, then adds the results straight
   into your working list. PDF is deliberately not offered by default —
   PDF-to-EPUB conversion quality is inconsistent, since PDFs have no
-  real text-flow structure to extract.
+  real text-flow structure to extract. **Tools > Preferences > Conversion**
+  sets what happens to the original afterwards (kept, the default; moved to
+  a dated "converted originals" folder with an undo log; or the Recycle Bin),
+  whether Open Folder asks, converts automatically or never offers, and
+  whether a **dry run** comes first.
 - **Import Metadata from ISFDB (Local Database)** — Metadata > Look Up >
   ISFDB (Local Database)…, on an offline copy of the
   [ISFDB](https://www.isfdb.org) (Internet Speculative Fiction Database)

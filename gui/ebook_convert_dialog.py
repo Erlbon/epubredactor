@@ -19,6 +19,7 @@ import threading
 
 from PyQt6.QtWidgets import (
     QDialog,
+    QCheckBox,
     QDialogButtonBox,
     QFileDialog,
     QHBoxLayout,
@@ -29,6 +30,7 @@ from PyQt6.QtWidgets import (
     QVBoxLayout,
 )
 
+from core import conversion_safety
 from core.calibre_tools import cancellable_run, find_tool
 from core.ebook_convert import EbookConvertError, SUPPORTED_SOURCE_EXTENSIONS, convert_to_epub
 from redactor_common.gui.background_call import call_in_background
@@ -43,8 +45,12 @@ def _file_filter() -> str:
 
 
 class EbookConvertDialog(QDialog):
-    def __init__(self, parent=None, initial_paths: list[str] | None = None):
+    def __init__(self, parent=None, initial_paths: list[str] | None = None, policy=None):
         super().__init__(parent)
+        # The shared conversion policy (Preferences > Conversion): what happens to each original afterwards.
+        self._policy = policy or conversion_safety.get_policy()
+        self.outcomes: list[conversion_safety.Outcome] = []
+        self.report_text = ""
         self.setWindowTitle("Import to EPUB")
         self.resize(600, 440)
         self._tool_path = ""
@@ -93,6 +99,11 @@ class EbookConvertDialog(QDialog):
         self.status_label.setWordWrap(True)
         self.status_label.setStyleSheet("color: gray; font-size: 11px;")
         layout.addWidget(self.status_label)
+
+        self.dry_run_box = QCheckBox("Dry run first: list what would be converted and what would happen to the "
+                                     "originals, and change nothing")
+        self.dry_run_box.setChecked(self._policy.dry_run_first)
+        layout.addWidget(self.dry_run_box)
 
         buttons = QDialogButtonBox(QDialogButtonBox.StandardButton.Cancel)
         self.convert_btn = buttons.addButton("Convert", QDialogButtonBox.ButtonRole.AcceptRole)
@@ -158,11 +169,38 @@ class EbookConvertDialog(QDialog):
     # Conversion
 
     def _run_conversion(self) -> None:
+        """The Convert button: a dry run when the box is ticked (it is then unticked, so the next click converts)."""
+        dry_run = self.dry_run_box.isChecked()
+        self.convert_all(dry_run=dry_run, show_report=True)
+        if dry_run:
+            self.dry_run_box.setChecked(False)
+
+    def convert_all(self, dry_run: bool = False, show_report: bool = True) -> bool:
+        """Converts the listed files; True when the dialog should now close (something was converted). A dry run
+        converts nothing, touches nothing and only reports. Each original is then settled by the policy, after the
+        result was verified."""
         if not self._source_paths:
-            return
+            return False
         succeeded: list[str] = []
         errors: list[str] = []
         taken: set[str] = set()
+        outcomes: list[conversion_safety.Outcome] = []
+        if dry_run:
+            lines = []
+            for source in self._source_paths:
+                directory = os.path.dirname(source)
+                stem = os.path.splitext(os.path.basename(source))[0]
+                output_path = unique_path(directory, stem, ".epub", taken)
+                taken.add(os.path.normcase(os.path.abspath(output_path)))
+                outcome = conversion_safety.settle_original(source, output_path, self._policy, dry_run=True)
+                lines.append(f"{os.path.basename(source)} -> {os.path.basename(output_path)}; original "
+                             + {"kept": "kept", "quarantined": f"would be moved to {outcome.destination}",
+                                "recycled": "would go to the Recycle Bin"}.get(outcome.action, outcome.action)
+                             + (f" ({outcome.note})" if outcome.note else ""))
+            self.report_text = "Dry run: nothing was converted or changed.\n\n" + "\n".join(lines)
+            if show_report:
+                QMessageBox.information(self, "Dry run", self.report_text)
+            return False
         # Each conversion is one long ebook-convert process: it runs off the
         # GUI thread (the window keeps painting) and Cancel kills it.
         cancel = threading.Event()
@@ -179,6 +217,8 @@ class EbookConvertDialog(QDialog):
             except (EbookConvertError, OSError) as exc:
                 if not cancel.is_set():
                     errors.append(f"{os.path.basename(source)}: {exc}")
+                return
+            outcomes.append(conversion_safety.settle_original(source, output_path, self._policy))
 
         run_with_progress(
             self, self._source_paths, _step, "Converting to EPUB…", threshold=1,
@@ -186,18 +226,30 @@ class EbookConvertDialog(QDialog):
             on_cancel=cancel.set,
         )
         self._converted_paths = succeeded
+        self.outcomes = outcomes
+
+        total = len(self._source_paths)
+        report = [f"Converted {len(succeeded)} of {total} file(s)."] + [o.line() for o in outcomes]
+        if errors:
+            report += ["", "Failed:"] + errors[:5] + (["..."] if len(errors) > 5 else [])
+        self.report_text = "\n".join(report)
 
         if errors:
             details = "\n".join(errors[:5]) + ("\n..." if len(errors) > 5 else "")
             QMessageBox.warning(
                 self, "Some conversions failed",
-                f"{len(succeeded)} of {len(self._source_paths)} succeeded.\n\nFailed:\n{details}",
+                f"{len(succeeded)} of {total} succeeded.\n\nFailed:\n{details}",
             )
+        # Today's behaviour (originals kept) stays silent on success; moving or recycling an original is said.
+        if show_report and succeeded and self._policy.originals != conversion_safety.policy_mod.ORIGINALS_KEEP:
+            QMessageBox.information(self, "Conversion done", self.report_text)
 
         if succeeded:
             self.accept()
+            return True
         # If nothing succeeded, stay open so the user can adjust and retry
         # rather than closing on a fully-failed batch.
+        return False
 
     # ------------------------------------------------------------------
     # Result accessor, read by the caller after exec() returns Accepted

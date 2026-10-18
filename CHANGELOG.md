@@ -1,5 +1,15 @@
 # Changelog
 
+## 2026-10-18#03 -- One shared conversion policy (Tools > Preferences > Conversion)
+
+Shared part: redactor_common 2026-10-18-06 (conversion_policy, ConversionPolicyWidget); video already has it, music and comics follow.
+- New page **Tools > Preferences > Conversion**: *when a book in another format is opened* (ask / convert automatically / never), *what happens to the original after a verified conversion* (quarantine with an undo log / Recycle Bin / keep), the quarantine and undo-log folders, the recent-file guard and **Dry run first**.
+- **Nothing changes until you save that page**: until then the app asks (the Open Folder offer, with its per-folder "Don't ask again", which applies to *ask* only) and keeps every original where it is, exactly as before. OK on another Preferences page does not save this one.
+- *Convert automatically*: Open Folder converts the other e-book formats with Calibre without asking, loads the results and shows a report of what was done (or says Calibre was not found). *Never*: no offer, and a folder with only such books reports "No EPUB Files".
+- *Quarantine*: the original moves to `converted originals <date>` (in the set quarantine folder, else beside the book) with a TSV undo log; *Recycle Bin*; *Keep*. Only after the result is checked (a non-empty, valid EPUB zip); a failed check, or a book changed in the last N minutes, leaves the original alone. Nothing is ever deleted outright.
+- Import and Convert has a **Dry run** box (ticked by the policy's default): it lists what would be converted and what would happen to each original, and changes nothing; it unticks afterwards.
+- Not changed: the command line `epubredactor convert` and its `--trash-original`.
+
 ## 2026-10-18#02 -- No Remove from List in the right-click menu
 
 - Right-click > Remove from List is gone (it sat right above Delete Files, which looks alike but is not). File > Remove from List, the Delete key and Clear List stay; Delete Files stays in the right-click menu. Nothing else in the menu changed.

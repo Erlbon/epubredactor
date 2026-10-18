@@ -62,7 +62,7 @@ from PyQt6.QtWidgets import (
 )
 
 from core.epub_metadata import EpubBook, EpubError
-from core import crash_log, history
+from core import conversion_safety, crash_log, history
 from redactor_common.gui.history_dialog import HistoryDialog
 from core.fields import FIELDS, NUMERIC_FIELD_KEYS
 from core.genres import add_genres
@@ -1560,6 +1560,8 @@ class MainWindow(QMainWindow):
 
         # Look first, clear after: a folder with nothing to open must not wipe the current list.
         epub_paths, others = run_busy(self, "Looking for e-books...", scan)
+        if conversion_safety.get_policy().on_open == conversion_safety.policy_mod.ON_OPEN_NEVER:
+            others = []  # Preferences > Conversion: never offer to convert, so it is as if there were none
         if not epub_paths and not others:
             QMessageBox.information(
                 self, "No EPUB Files",
@@ -1583,7 +1585,17 @@ class MainWindow(QMainWindow):
         """Open Folder loads only .epub. Say what else Calibre could convert in those folders (and subfolders),
         and offer to open Import and Convert with the files already listed (redactor_common's convert offer;
         the box also has "Don't ask again for this folder", or "... for these folders" when several were opened:
-        then the offer is skipped only when every one of them was declined before)."""
+        then the offer is skipped only when every one of them was declined before).
+
+        What happens is the shared policy of Preferences > Conversion ("When a file needs converting"): ask (the
+        box below, with its per-folder "Don't ask again", which applies to ask only), convert automatically (no
+        question; a report lists what was done) or never (no offer)."""
+        policy = conversion_safety.get_policy()
+        if not others or policy.on_open == conversion_safety.policy_mod.ON_OPEN_NEVER:
+            return
+        if policy.on_open == conversion_safety.policy_mod.ON_OPEN_AUTO:
+            self._convert_books_automatically(others, policy)
+            return
         remember_key = None
         if folders:
             remember_key = folders[0] if len(folders) == 1 else list(folders)
@@ -1595,11 +1607,28 @@ class MainWindow(QMainWindow):
         )
         if answer != CONVERT_YES:
             return
-        dialog = EbookConvertDialog(self, initial_paths=others)
+        dialog = EbookConvertDialog(self, initial_paths=others, policy=policy)
         if dialog.exec() == EbookConvertDialog.DialogCode.Accepted:
             converted = dialog.converted_epub_paths()
             if converted:
                 self._load_paths(converted)
+
+    def _convert_books_automatically(self, others: list[str], policy) -> None:
+        """on_open = auto: the files are converted without asking (the same Calibre conversion as the Import and
+        Convert dialog, each original then settled by the policy), loaded, and a report says what was done."""
+        dialog = EbookConvertDialog(self, initial_paths=others, policy=policy)
+        if not dialog._tool_path:
+            QMessageBox.warning(
+                self, "Convert Automatically",
+                f"{len(others)} e-book(s) in other formats were found, but Calibre's ebook-convert could not be "
+                "found, so nothing was converted. Set the Calibre folder in Tools > Preferences, or use "
+                "File > Import and Convert.")
+            return
+        dialog.convert_all(dry_run=False, show_report=False)
+        converted = dialog.converted_epub_paths()
+        if converted:
+            self._load_paths(converted)
+        QMessageBox.information(self, "Converted Automatically", dialog.report_text or "Nothing was converted.")
 
     def _load_paths(self, paths: list[str]) -> None:
         # Normalize to the OS's native separator right at this single
