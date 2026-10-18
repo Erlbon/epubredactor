@@ -1,5 +1,10 @@
 # Changelog
 
+## 2026-10-18#08 -- No label runs off the screen (redactor_common 2026-10-18-08)
+
+Shared part: redactor_common 2026-10-18-08 (gui/label_wrap.py, installed by run_app).
+- Any label whose one-line text would be wider than 80% of the screen now word-wraps by itself, in every dialog of the app, so a long explanation can no longer be cut off at the window edge. Short labels are untouched. Nothing else changed.
+
 ## 2026-10-18#07 -- The intro text of three book dialogs wraps
 
 - Remove Running Headers and Page Numbers showed its whole explanation as one line that ran off the window; it now wraps like the other dialogs. The same was fixed in the intro lines of Strip HTML from Descriptions and Validate and Fix. No other label was found with the same flaw.
