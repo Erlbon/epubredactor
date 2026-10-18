@@ -284,3 +284,50 @@ if __name__ == "__main__":
     test_fetch_metadata_missing_executable_raises()
     test_fetch_metadata_isbn_only_search()
     print("\nALL CALIBRE LOOKUP TESTS PASSED")
+
+
+def test_isbn_that_no_source_knows_is_retried_by_title_and_author():
+    calls = []
+    opf = (b'<package xmlns="http://www.idpf.org/2007/opf"><metadata xmlns:dc="http://purl.org/dc/elements/1.1/">'
+           b"<dc:title>The Shattered Skies</dc:title></metadata></package>")
+
+    def fake_run(args, capture_output, timeout, **kwargs):
+        calls.append(args)
+        if "--isbn" in args:
+            return _FakeCompletedProcess(returncode=1, stdout=b"", stderr=b"")
+        return _FakeCompletedProcess(returncode=0, stdout=opf)
+
+    result = fetch_metadata("/fake/exe", title="The Shattered Skies", authors="John Birmingham",
+                            isbn="9781789545944", run_fn=fake_run)
+    assert result.title == "The Shattered Skies"
+    assert len(calls) == 2 and "--isbn" in calls[0] and "--isbn" not in calls[1]
+
+
+def test_isbn_only_search_is_not_retried_and_nothing_found_raises():
+    calls = []
+
+    def fake_run(args, capture_output, timeout, **kwargs):
+        calls.append(args)
+        return _FakeCompletedProcess(returncode=1, stdout=b"", stderr=b"")
+
+    try:
+        fetch_metadata("/fake/exe", isbn="9781789545944", run_fn=fake_run)
+        assert False, "should have raised"
+    except CalibreLookupError:
+        pass
+    assert len(calls) == 1
+
+
+def test_startup_noise_is_dropped_from_the_error_so_the_real_reason_shows():
+    noise = (b'Error: calibre_plugins.fantastic_fiction._init_:96: SyntaxWarning: "." is an invalid escape\n'
+             b"[12232:2192:1018/202420.548:ERROR:direct_composition_support.cc(225)] GetGpuDriverOverlayInfo failed\n"
+             b"No matches found for this book\n")
+
+    def fake_run(args, capture_output, timeout, **kwargs):
+        return _FakeCompletedProcess(returncode=1, stdout=b"", stderr=noise)
+
+    try:
+        fetch_metadata("/fake/exe", title="x", run_fn=fake_run)
+        assert False, "should have raised"
+    except CalibreLookupError as exc:
+        assert str(exc) == "No matches found for this book"

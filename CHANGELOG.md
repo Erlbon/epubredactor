@@ -1,5 +1,11 @@
 # Changelog
 
+## 2026-10-18#06 -- Calibre lookup: retry without the ISBN, and no startup noise in the error
+
+- A Calibre lookup with an ISBN searches only for that ISBN, so a book whose ISBN no source knows came back "no results" even though its title and author would have found it. When the ISBN search finds nothing and the book also has a title or author, the lookup is now repeated once without the ISBN. An ISBN-only search is not retried.
+- The error shown for a failed lookup no longer starts with Calibre's startup chatter (a plugin's SyntaxWarning, Chromium's GPU message); those lines are dropped before the first 500 characters are kept, so the actual reason is what you read.
+- Not proven against the live book (The Shattered Skies, John Birmingham): please run that lookup again.
+
 ## 2026-10-18#05 -- A saved session no longer leaves the window white at startup
 
 - Fix: with a saved list of last session's books, the window could come up all white (menus and toolbar missing) until it was resized. The session restore started before the window had painted for the first time, and redactor_common's progress call switches the whole window's painting off while it runs. The restore now waits until the window is visible, paints once first and paints again afterwards.

@@ -28,6 +28,7 @@ the user has enabled).
 
 from __future__ import annotations
 
+import re
 import subprocess
 from dataclasses import dataclass
 
@@ -185,6 +186,34 @@ def fetch_metadata(
     if not (title or authors or isbn):
         raise CalibreLookupError("Need at least a title, author, or ISBN to search with.")
 
+    try:
+        return _run_lookup(exe_path, title, authors, isbn, timeout, run_fn)
+    except _NothingFound as first:
+        # An ISBN narrows Calibre's search to that ISBN: when no source knows it, title + author can still find
+        # the book. Tried once, only when there is something besides the ISBN to search with.
+        if isbn and (title or authors):
+            try:
+                return _run_lookup(exe_path, title, authors, "", timeout, run_fn)
+            except _NothingFound:
+                pass
+        raise CalibreLookupError(str(first)) from None
+
+
+class _NothingFound(CalibreLookupError):
+    """fetch-ebook-metadata exited with an error (usually: no source found a match)."""
+
+
+# Startup chatter that says nothing about the search itself: a Calibre plugin's own SyntaxWarning, Chromium's GPU
+# messages ("[1234:5678:1018/202420.548:ERROR:direct_composition_support.cc(225)] ..."), the line the warning quotes.
+_NOISE = re.compile(r"SyntaxWarning|\[\d+:\d+:\d+/[\d.]+:(?:ERROR|WARNING|INFO)|^\s*(?:Error: )?calibre_plugins\.", re.IGNORECASE)
+
+
+def _meaningful(stderr_text: str) -> str:
+    lines = [line for line in stderr_text.splitlines() if line.strip() and not _NOISE.search(line)]
+    return "\n".join(lines).strip()
+
+
+def _run_lookup(exe_path, title, authors, isbn, timeout, run_fn) -> CalibreLookupResult:
     args = [exe_path, "--opf", "--timeout", str(timeout)]
     if title:
         args += ["--title", title]
@@ -203,10 +232,10 @@ def fetch_metadata(
         raise CalibreLookupError(f"Could not run Calibre's fetch-ebook-metadata: {exc}") from exc
 
     if proc.returncode != 0:
-        stderr_text = _decode(proc.stderr).strip()
+        stderr_text = _meaningful(_decode(proc.stderr).strip())
         if len(stderr_text) > MAX_STDERR_CHARS:
-            stderr_text = stderr_text[:MAX_STDERR_CHARS].rstrip() + "\u2026"
-        raise CalibreLookupError(stderr_text or "Calibre metadata lookup found nothing or failed.")
+            stderr_text = stderr_text[:MAX_STDERR_CHARS].rstrip() + "…"
+        raise _NothingFound(stderr_text or "Calibre metadata lookup found nothing or failed.")
 
     return parse_calibre_opf(proc.stdout if isinstance(proc.stdout, bytes) else _encode(proc.stdout))
 
