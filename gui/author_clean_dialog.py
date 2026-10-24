@@ -37,6 +37,7 @@ from core.author_clean import AuthorResult, clean_authors
 from core.epub_metadata import EpubBook
 from redactor_common.gui.progress import run_with_progress
 from redactor_common.gui.table_columns import make_columns_resizable
+from redactor_common.gui.owned_dialog import OwnedDialog
 
 (BOOK_COL, KIND_COL, OLD_AUTHORS_COL, NEW_AUTHORS_COL, OLD_SORT_COL, NEW_SORT_COL, WHY_COL,
  APPLY_COL) = range(8)
@@ -88,7 +89,7 @@ def build_rows(book_index: int, book: EpubBook) -> list[Row]:
     return rows
 
 
-class AuthorCleanDialog(QDialog):
+class AuthorCleanDialog(OwnedDialog):
     def __init__(self, books: list[EpubBook], parent=None):
         super().__init__(parent)
         self.setWindowTitle("Clean Up Authors")

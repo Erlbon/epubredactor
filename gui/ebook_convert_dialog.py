@@ -37,6 +37,7 @@ from redactor_common.gui.background_call import call_in_background
 from redactor_common.gui.progress import run_with_progress
 from core.rename_pattern import unique_path
 from gui import app_settings
+from redactor_common.gui.owned_dialog import OwnedDialog
 
 
 def _file_filter() -> str:
@@ -44,7 +45,7 @@ def _file_filter() -> str:
     return f"Supported formats ({exts})"
 
 
-class EbookConvertDialog(QDialog):
+class EbookConvertDialog(OwnedDialog):
     def __init__(self, parent=None, initial_paths: list[str] | None = None, policy=None):
         super().__init__(parent)
         # The shared conversion policy (Preferences > Conversion): what happens to each original afterwards.

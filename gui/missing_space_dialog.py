@@ -33,12 +33,13 @@ from core.epub_metadata import EpubBook
 from core.missing_space import find_missing_spaces, suggest_fix
 from redactor_common.gui.progress import run_with_progress
 from redactor_common.gui.table_columns import make_columns_resizable
+from redactor_common.gui.owned_dialog import OwnedDialog
 
 SCANNED_FIELDS = [("title", "Title"), ("series", "Series")]
 BOOK_COL, FIELD_COL, CURRENT_COL, SUGGESTED_COL, APPLY_COL = range(5)
 
 
-class MissingSpaceDialog(QDialog):
+class MissingSpaceDialog(OwnedDialog):
     def __init__(self, books: list[EpubBook], parent=None):
         super().__init__(parent)
         self.setWindowTitle("Detect Missing Spaces")

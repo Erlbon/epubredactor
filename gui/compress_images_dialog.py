@@ -31,6 +31,7 @@ from PyQt6.QtWidgets import (
 from core.epub_metadata import EpubBook
 from redactor_common.gui.progress import run_with_progress
 from redactor_common.gui.table_columns import make_columns_resizable
+from redactor_common.gui.owned_dialog import OwnedDialog
 
 BOOK_COL, IMAGES_COL, APPLY_COL = range(3)
 
@@ -45,7 +46,7 @@ def format_size(num_bytes: int) -> str:
     return f"{num_bytes} B"
 
 
-class CompressImagesDialog(QDialog):
+class CompressImagesDialog(OwnedDialog):
     def __init__(self, books: list[EpubBook], parent=None):
         super().__init__(parent)
         self.setWindowTitle("Compress Images (Lossy)")

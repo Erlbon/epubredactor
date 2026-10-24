@@ -37,11 +37,12 @@ from core.epub_metadata import EpubBook
 from core.genre_detect import GenreSuggestion, scan_book_genres
 from redactor_common.gui.progress import run_with_progress
 from redactor_common.gui.table_columns import make_columns_resizable
+from redactor_common.gui.owned_dialog import OwnedDialog
 
 BOOK_COL, CURRENT_COL, GENRE_COL, SOURCE_COL, ADD_COL = range(5)
 
 
-class GenreSuggestDialog(QDialog):
+class GenreSuggestDialog(OwnedDialog):
     def __init__(self, books: list[EpubBook], vocabulary: list[str] | None = None, parent=None):
         super().__init__(parent)
         self.setWindowTitle("Suggest Genres")

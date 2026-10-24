@@ -31,6 +31,7 @@ from core.author_sort import author_sort_to_authors, authors_to_author_sort
 from core.epub_metadata import EpubBook
 from redactor_common.gui.progress import run_with_progress
 from redactor_common.gui.table_columns import make_columns_resizable
+from redactor_common.gui.owned_dialog import OwnedDialog
 
 BOOK_COL, OLD_COL, NEW_COL, APPLY_COL = range(4)
 
@@ -42,7 +43,7 @@ DIRECTIONS = {
 }
 
 
-class AuthorSortDialog(QDialog):
+class AuthorSortDialog(OwnedDialog):
     def __init__(self, books: list[EpubBook], parent=None):
         super().__init__(parent)
         self.setWindowTitle("Author ↔ Author Sort Conversion")

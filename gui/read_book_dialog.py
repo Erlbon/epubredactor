@@ -27,6 +27,7 @@ from PyQt6.QtWidgets import (
 
 from core.epub_metadata import EpubBook, resolve_resource_path
 from core.reader_html import DEFAULT_STYLESHEET, prepare_reader_html
+from redactor_common.gui.owned_dialog import OwnedDialog
 
 MAX_IMAGE_BYTES = 20 * 1024 * 1024      # skip image files bigger than this
 MAX_IMAGE_PIXELS = 40_000_000           # ...or that decode to more pixels
@@ -84,7 +85,7 @@ class ReaderBrowser(QTextBrowser):
         return self._image_cache[key]
 
 
-class ReadBookDialog(QDialog):
+class ReadBookDialog(OwnedDialog):
     def __init__(self, book: EpubBook, parent=None) -> None:
         super().__init__(parent)
         self._book = book

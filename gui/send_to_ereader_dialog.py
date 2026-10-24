@@ -40,9 +40,10 @@ from PyQt6.QtWidgets import (
 from core.epub_metadata import EpubBook
 from gui import app_settings
 from redactor_common.core.os_utils import reveal_in_file_manager
+from redactor_common.gui.owned_dialog import OwnedDialog
 
 
-class SendToEreaderDialog(QDialog):
+class SendToEreaderDialog(OwnedDialog):
     def __init__(self, books: list[EpubBook], parent=None):
         super().__init__(parent)
         self.setWindowTitle("Send to eReader (Wireless)")

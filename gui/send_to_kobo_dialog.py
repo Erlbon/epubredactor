@@ -25,9 +25,10 @@ from PyQt6.QtWidgets import (
 from core.epub_metadata import EpubBook
 from core.kobo_usb import KoboSendError, find_connected_kobos, send_to_kobo
 from redactor_common.gui.progress import run_with_progress
+from redactor_common.gui.owned_dialog import OwnedDialog
 
 
-class SendToKoboDialog(QDialog):
+class SendToKoboDialog(OwnedDialog):
     def __init__(self, books: list[EpubBook], parent=None):
         super().__init__(parent)
         self.setWindowTitle("Send to Kobo (USB)")

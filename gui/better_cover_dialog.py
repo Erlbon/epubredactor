@@ -27,6 +27,7 @@ from PyQt6.QtWidgets import (
 from gui.cover_quality import image_size
 from redactor_common.gui.progress import run_with_progress
 from redactor_common.gui.table_columns import make_columns_resizable
+from redactor_common.gui.owned_dialog import OwnedDialog
 
 THUMB = QSize(90, 135)
 THUMBNAIL_PROGRESS_THRESHOLD = 20
@@ -47,7 +48,7 @@ def _size_text(data) -> str:
     return f"{size[0]}×{size[1]}" if size else ("none" if not data else "?")
 
 
-class BetterCoverDialog(QDialog):
+class BetterCoverDialog(OwnedDialog):
     def __init__(self, found: list, note: str = "", parent=None):
         """`found`: (book, new_cover_bytes) pairs, each an improvement."""
         super().__init__(parent)

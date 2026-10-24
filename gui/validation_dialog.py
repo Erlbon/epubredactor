@@ -31,6 +31,7 @@ from PyQt6.QtWidgets import (
 from core.epub_metadata import EpubBook
 from redactor_common.gui.progress import run_with_progress
 from redactor_common.gui.table_columns import make_columns_resizable
+from redactor_common.gui.owned_dialog import OwnedDialog
 
 STATUS_COLORS = {
     "OK": None,
@@ -41,7 +42,7 @@ STATUS_COLORS = {
 BOOK_COL, STATUS_COL, ISSUES_COL, FIX_COL = range(4)
 
 
-class ValidationDialog(QDialog):
+class ValidationDialog(OwnedDialog):
     def __init__(self, books: list[EpubBook], parent=None):
         super().__init__(parent)
         self.setWindowTitle("Validate / Fix Issues")

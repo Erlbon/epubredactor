@@ -75,6 +75,7 @@ from redactor_common.core.path_parser import (
 )
 from redactor_common.gui.progress import run_with_progress
 from redactor_common.gui.table_columns import make_columns_resizable
+from redactor_common.gui.owned_dialog import OwnedDialog
 
 # Fields worth cross-checking for repetition across other books -- ones
 # a real library commonly has SEVERAL entries sharing the exact same
@@ -100,7 +101,7 @@ PATH_TICK_CONFIDENCE = 0.5
 SCAN_PROGRESS_THRESHOLD = 3
 
 
-class FilenameParseDialog(QDialog):
+class FilenameParseDialog(OwnedDialog):
     REFRESH_DEBOUNCE_MS = 275
 
     def __init__(

@@ -28,11 +28,12 @@ from PyQt6.QtWidgets import (
 from core.epub_metadata import EpubBook
 from redactor_common.core.series_numbering import DEFAULT_START, DEFAULT_STEP, generate_series_numbers
 from redactor_common.gui.table_columns import make_columns_resizable
+from redactor_common.gui.owned_dialog import OwnedDialog
 
 BOOK_COL, CURRENT_COL, NEW_COL = range(3)
 
 
-class SeriesNumberDialog(QDialog):
+class SeriesNumberDialog(OwnedDialog):
     def __init__(self, books: list[EpubBook], parent=None):
         super().__init__(parent)
         self._sized = False  # starting column widths set once; later preview refreshes keep dragged widths

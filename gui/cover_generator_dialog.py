@@ -29,6 +29,7 @@ from core.epub_metadata import EpubBook
 from gui.cover_render import generate_cover_image
 from redactor_common.gui.progress import run_with_progress
 from redactor_common.gui.table_columns import make_columns_resizable
+from redactor_common.gui.owned_dialog import OwnedDialog
 
 BOOK_COL, PREVIEW_COL, APPLY_COL = range(3)
 THUMB_SIZE = QSize(70, 105)
@@ -41,7 +42,7 @@ THUMB_SIZE = QSize(70, 105)
 PROGRESS_THRESHOLD = 3
 
 
-class CoverGeneratorDialog(QDialog):
+class CoverGeneratorDialog(OwnedDialog):
     def __init__(self, books: list[EpubBook], parent=None):
         super().__init__(parent)
         self.setWindowTitle("Generate Cover from Metadata")

@@ -32,12 +32,13 @@ from core.epub_metadata import EpubBook
 from core.toc_generate import TocEntry, generate_toc_entries, needs_toc
 from redactor_common.gui.progress import run_with_progress
 from redactor_common.gui.table_columns import make_columns_resizable
+from redactor_common.gui.owned_dialog import OwnedDialog
 
 BOOK_COL, ENTRIES_COL, APPLY_COL = range(3)
 PREVIEW_ENTRIES = 10
 
 
-class TocGenerateDialog(QDialog):
+class TocGenerateDialog(OwnedDialog):
     def __init__(self, books: list[EpubBook], parent=None):
         super().__init__(parent)
         self.setWindowTitle("Generate Table of Contents")

@@ -1,5 +1,10 @@
 # Changelog
 
+## 2026-10-24#01 -- Dialogs no longer stay in memory after they are closed
+
+Shared part: redactor_common 2026-10-24#03 (gui/owned_dialog.py).
+- **A memory leak is fixed.** Every dialog was made with the main window as its parent, and Qt keeps a child alive as long as its parent, so each dialog that had been opened stayed in memory with all its widgets until the program closed: about 22 dialogs, the two shared Find Duplicates and Column dialogs among them. Now every dialog uses the shared `OwnedDialog` base, whose `exec()` frees the dialog once control is back in the event loop, so what the code reads from it right after it closes is still there. A test fails when a new dialog class is made straight from QDialog.
+
 ## 2026-10-18#08 -- No label runs off the screen (redactor_common 2026-10-18-08)
 
 Shared part: redactor_common 2026-10-18-08 (gui/label_wrap.py, installed by run_app).

@@ -29,11 +29,12 @@ from core.description_html import strip_html
 from core.epub_metadata import EpubBook
 from redactor_common.gui.progress import run_with_progress
 from redactor_common.gui.table_columns import make_columns_resizable
+from redactor_common.gui.owned_dialog import OwnedDialog
 
 BOOK_COL, OLD_COL, NEW_COL, APPLY_COL = range(4)
 
 
-class StripDescriptionHtmlDialog(QDialog):
+class StripDescriptionHtmlDialog(OwnedDialog):
     def __init__(self, books: list[EpubBook], parent=None):
         super().__init__(parent)
         self.setWindowTitle("Strip HTML from Description")

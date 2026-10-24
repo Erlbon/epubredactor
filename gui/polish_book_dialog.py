@@ -46,12 +46,13 @@ from core.rename_pattern import unique_path
 from redactor_common.gui.background_call import call_in_background
 from redactor_common.gui.progress import run_with_progress
 from gui import app_settings
+from redactor_common.gui.owned_dialog import OwnedDialog
 
 HYPHENS_DONT_CHANGE, HYPHENS_ADD, HYPHENS_REMOVE = "Don't change", "Add", "Remove"
 JACKET_DONT_CHANGE, JACKET_INSERT, JACKET_REMOVE = "Don't change", "Insert", "Remove"
 
 
-class PolishBookDialog(QDialog):
+class PolishBookDialog(OwnedDialog):
     def __init__(self, books: list[EpubBook], parent=None):
         super().__init__(parent)
         self.setWindowTitle("Polish Book")
