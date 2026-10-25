@@ -41,7 +41,8 @@ from redactor_common.core.preferences import (
 from PyQt6.QtWidgets import QLabel, QMessageBox, QVBoxLayout, QWidget
 from redactor_common.gui.preferences_dialog import PreferencesDialog
 
-from core import conversion_safety, history
+from core import app_paths, conversion_safety, history
+from redactor_common.core import selfupdate
 from redactor_common.gui.conversion_policy_widget import ConversionPolicyWidget
 from gui import app_settings
 
@@ -146,6 +147,7 @@ def build_sections() -> list[PrefSection]:
             "An undo for saved changes, kept between sessions (Tools > History).",
             actions=(DELETE_HISTORY_ACTION,),
         ),
+        selfupdate.updates_section(),
     ]
 
 
@@ -190,7 +192,9 @@ def make_backend() -> CallbackBackend:
     def _set(values: dict) -> None:
         app_settings.write_settings({INI_KEYS[key]: value for key, value in values.items()})
 
-    return CallbackBackend(_get, _set)
+    # The Updates page's switch lives in epubredactor_updates.json, not in the ini.
+    return selfupdate.with_update_settings(CallbackBackend(_get, _set),
+                                           selfupdate.UpdateSettings(app_paths.updates_json_path()))
 
 
 class ConversionPage(QWidget):

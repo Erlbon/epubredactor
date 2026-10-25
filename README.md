@@ -1046,7 +1046,7 @@ with the same key in every app:
 - **Tools** — Preferences… | Open Library Database…, ISFDB Database… |
   Columns…, Genres…, Languages… | History… | Enable Performance Logging,
   Open Performance Log…
-- **Help** — Changelog…, Credits… | About The ƎPUB Redactor
+- **Help** — Changelog…, Credits… | Check for Updates… | About The ƎPUB Redactor
 
 The right-click menu on the table repeats the per-book commands (Rename
 File, Look Up, Read Book, Organize > Rename / Export / Move and Number

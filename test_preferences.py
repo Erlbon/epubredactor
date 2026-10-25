@@ -22,6 +22,7 @@ from redactor_common.core.preferences import (  # noqa: E402
     defaults,
 )
 from redactor_common.gui.preferences_dialog import PreferencesDialog  # noqa: E402
+from redactor_common.core.selfupdate import KEY_CHECK_FOR_UPDATES  # noqa: E402
 
 _app = QApplication.instance() or QApplication(sys.argv)
 
@@ -32,13 +33,13 @@ def _dialog():
 
 def test_pages_and_no_auto_number_setting():
     dialog = _dialog()
-    assert dialog.page_titles() == ["Filenames", "Language", "Tools and Paths", "History", "Conversion"]
+    assert dialog.page_titles() == ["Filenames", "Language", "Tools and Paths", "History", "Updates", "Conversion"]
     keys = set(defaults(preferences.build_sections()))
     # this app has no Auto-Numbering (no such key or feature anywhere), so no padding setting for it
     assert KEY_AUTO_NUMBER_PADDING not in keys
     assert {KEY_ASCII_FILENAMES, KEY_ZERO_PAD_NUMBERS, KEY_ZERO_PAD_WIDTH, KEY_BLANK_LANGUAGE_ENABLED,
             KEY_DEFAULT_LANGUAGE} <= keys
-    assert keys == set(preferences.INI_KEYS)
+    assert keys - {KEY_CHECK_FOR_UPDATES} == set(preferences.INI_KEYS)  # that one is in epubredactor_updates.json
 
 
 def test_wrap_and_perf_logging_are_menu_items_only_not_duplicated_in_preferences():

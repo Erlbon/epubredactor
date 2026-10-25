@@ -72,8 +72,8 @@ def test_menu_contents_and_order():
         "Preferences", "-", "Open Library Database", "ISFDB Database", "-", "Columns", "Genres", "Languages", "-",
         "History", "-", "Enable Performance Logging", "Open Performance Log",
     ]
-    assert _plain_items(m["Help"])[:3] == ["Changelog", "Credits", "-"]
-    assert _plain_items(m["Help"])[3].startswith("About ")
+    assert _plain_items(m["Help"])[:5] == ["Changelog", "Credits", "-", "Check for Updates", "-"]
+    assert _plain_items(m["Help"])[5].startswith("About ")
 
 
 def test_submenus():

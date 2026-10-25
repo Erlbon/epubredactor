@@ -74,6 +74,8 @@ from core.calibre_tools import find_install_dir as find_calibre_install_dir
 from core.sigil_tools import SigilLaunchError, find_sigil, sigil_file_filter
 from core.sigil_tools import open_in_sigil as launch_sigil
 from core.version import APP_NAME, APP_REPO_URL, APP_VERSION, RELEASE_LABEL
+from core import app_paths
+from redactor_common.gui.update_controller import UpdateController
 from redactor_common.core.error_summary import summarize_errors
 from redactor_common.core.folder_refresh import find_new_files_in_loaded_folders
 from redactor_common.core.os_utils import reveal_in_file_manager
@@ -671,9 +673,12 @@ class MainWindow(QMainWindow):
 
         # Menu bar and toolbar are built after the widgets above, since
         # some of their actions (Apply) are wired directly to tag_panel.
+        # Help > Check for Updates and the opt-in daily check (redactor_common's gui/update_controller.py).
+        self.updates = UpdateController(self, APP_NAME, APP_VERSION, APP_REPO_URL, app_paths.updates_json_path())
         self._build_menu_bar()
         self._build_toolbar()
         self._on_columns_changed()  # initial sync; a no-op given the default column order
+        self.updates.start_auto_check()  # nothing unless switched on in Preferences > Updates
 
         self.status = QStatusBar()
         self.setStatusBar(self.status)
@@ -878,6 +883,7 @@ class MainWindow(QMainWindow):
 
         help_items = standard_help_items(
             APP_NAME, self.open_changelog_dialog, self.open_credits_dialog, self.open_about_dialog,
+            updates_slot=self.updates.check_now,
         )
 
         spec = StandardMenuSpec(

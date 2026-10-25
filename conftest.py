@@ -41,6 +41,14 @@ def _non_blocking_message_boxes(monkeypatch):
 
 
 @pytest.fixture(autouse=True)
+def _isolated_update_settings(monkeypatch, tmp_path):
+    """Help > Check for Updates keeps its switch in epubredactor_updates.json next to the settings; tests use a
+    temporary one, so the daily check is off in every test and nothing is written to the project folder."""
+    from core import app_paths
+    monkeypatch.setattr(app_paths, "updates_json_path", lambda: str(tmp_path / "epubredactor_updates.json"))
+
+
+@pytest.fixture(autouse=True)
 def _isolated_settings_and_perf_flag(monkeypatch, tmp_path):
     """Keep tests off the real dev-mode epubredactor_settings.ini (a
     test toggling perf logging used to persist that into the
