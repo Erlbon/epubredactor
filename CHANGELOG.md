@@ -1,5 +1,11 @@
 # Changelog
 
+## 2026-11-02#02 -- Validate and Fix finds broken EPUB 3 metadata
+
+- **New check, error: "refine an element that does not exist".** An EPUB 3 book with a `<meta refines="#id">` whose id is gone (every EPUB 3 book this app saved before 2026-11-02#01 that had a pandoc-style author role) is now listed. The fix removes those metas. Redact applies it on its own, like the other safe fixes.
+- **New check, warning: EPUB 2 attributes in an EPUB 3 package.** `opf:file-as`, `opf:role`, `opf:authority`, `opf:scheme` and the like, whether this app or another tool wrote them. The fix turns them into EPUB 3 refining metas (`file-as`, `role`, `authority` + `term`, `identifier-type`; an ISBN becomes `urn:isbn:…`) and removes the few EPUB 3 has no place for (such as `opf:event` on a date), naming them. It is a warning, not an error, because reading apps ignore these attributes; Redact leaves this fix to you, since it can remove an attribute.
+- EPUB 2 books are not checked for either.
+
 ## 2026-11-02#01 -- EPUB 3 books are saved with valid author, DDC and ISBN metadata
 
 - **Saving no longer leaves a broken reference behind.** Authors and subjects are rebuilt on every save, but their EPUB 3 refining metas (`<meta refines="#epub-creator-1" property="role">`, as pandoc writes them) were left in place, pointing at an id that no longer existed. EPUBCheck reports that as an error. Now those metas go with the element, and a save also removes any such leftover from earlier saves.

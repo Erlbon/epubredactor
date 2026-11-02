@@ -267,20 +267,86 @@ def _remove_with_refines(md: etree._Element, el: etree._Element) -> None:
     md.remove(el)
 
 
-def _remove_dangling_refines(root: etree._Element, md: etree._Element) -> None:
+def _remove_dangling_refines(root: etree._Element, md: etree._Element) -> int:
     """Remove metas whose refines="#id" names no element in the package,
     an EPUBCheck error (books saved by this app before 2026-11-02 have one
-    left from the dc:creator it rebuilt without its id)."""
+    left from the dc:creator it rebuilt without its id). Returns how many."""
+    removed = 0
     while True:
-        ids = {e.get("id") for e in root.iter() if e.get("id")}
-        dangling = [
-            m for m in md.findall("opf:meta", namespaces=NS)
-            if (m.get("refines") or "").startswith("#") and m.get("refines")[1:] not in ids
-        ]
+        dangling = set(_dangling_refines(root, md))
         if not dangling:
-            return
-        for meta_el in dangling:
-            md.remove(meta_el)
+            return removed
+        for meta_el in md.findall("opf:meta", namespaces=NS):
+            if meta_el.get("refines") in dangling:
+                md.remove(meta_el)
+                removed += 1
+
+
+def _convert_opf_attributes(root: etree._Element, md: etree._Element) -> tuple[int, list[str]]:
+    """Turn the EPUB 2 opf: attributes in an EPUB 3 package into what
+    EPUB 3 uses: opf:file-as, opf:role and opf:authority become refining
+    metas (a DDC subject also gets its term), an ISBN's opf:scheme becomes
+    a "urn:isbn:" value and any other opf:scheme an identifier-type meta.
+    Attributes EPUB 3 has no place for (opf:event on a date, say) are
+    dropped. Returns (converted count, names of the dropped attributes)."""
+    converted = 0
+    dropped: list[str] = []
+    for el, attr in _opf_attributes(md):
+        value = (el.attrib.pop(attr) or "").strip()
+        local = etree.QName(attr).localname
+        if not value:
+            continue
+        if local == "scheme" and value.upper() == "ISBN":
+            text = (el.text or "").strip()
+            if not _URN_ISBN_RE.match(text):
+                el.text = f"urn:isbn:{text}"
+            converted += 1
+            continue
+        props = {
+            "file-as": [("file-as", value, "")],
+            "role": [("role", value, "marc:relators")],
+            "authority": [("authority", value, ""), ("term", (el.text or "").strip(), "")],
+            "scheme": [("identifier-type", value, "")],
+        }.get(local)
+        if props is None:
+            dropped.append(f"opf:{local}")
+            continue
+        if not el.get("id"):
+            el.set("id", _unique_id(root, f"{etree.QName(el).localname}-1"))
+        anchor = el
+        for prop, prop_value, scheme in props:
+            if not prop_value or _refined_value(md, el, prop):
+                continue
+            meta_el = etree.Element(f"{{{NS['opf']}}}meta")
+            meta_el.set("refines", f"#{el.get('id')}")
+            meta_el.set("property", prop)
+            if scheme:
+                meta_el.set("scheme", scheme)
+            meta_el.text = prop_value
+            anchor.addnext(meta_el)
+            anchor = meta_el
+        converted += 1
+    return converted, dropped
+
+
+def _is_epub3(root: etree._Element) -> bool:
+    return (root.get("version") or "").strip().startswith("3")
+
+
+def _dangling_refines(root: etree._Element, md: etree._Element) -> list[str]:
+    """The refines="#id" values in the metadata that name no element."""
+    ids = {e.get("id") for e in root.iter() if e.get("id")}
+    return [
+        m.get("refines") for m in md.findall("opf:meta", namespaces=NS)
+        if (m.get("refines") or "").startswith("#") and m.get("refines")[1:] not in ids
+    ]
+
+
+def _opf_attributes(md: etree._Element) -> list[tuple[etree._Element, str]]:
+    """(element, attribute) for every opf:-namespaced attribute inside the
+    metadata, e.g. opf:file-as. Only EPUB 2 allows them."""
+    prefix = f"{{{NS['opf']}}}"
+    return [(el, a) for el in md.iter() for a in el.attrib if a.startswith(prefix)]
 
 
 def _unique_id(root: etree._Element, base: str) -> str:
@@ -885,6 +951,32 @@ class EpubBook:
                 fixable=True,
             ))
 
+        # --- EPUB 3 metadata: refines that point at nothing (an EPUBCheck
+        # error; this app left one behind on every save before 2026-11-02)
+        # and EPUB 2 opf: attributes, which EPUB 3 does not allow (EPUBCheck
+        # reports them too, but reading apps ignore them, hence a warning).
+        if _is_epub3(root):
+            dangling_refs = _dangling_refines(root, md)
+            if dangling_refs:
+                shown = ", ".join(sorted(set(dangling_refs))[:3]) + (", ..." if len(set(dangling_refs)) > 3 else "")
+                issues.append(ValidationIssue(
+                    "DANGLING_REFINES", SEVERITY_ERROR,
+                    f"{len(dangling_refs)} metadata "
+                    f"{'entry refines' if len(dangling_refs) == 1 else 'entries refine'} "
+                    f"an element that does not exist: {shown}. Fixing removes "
+                    f"{'it' if len(dangling_refs) == 1 else 'them'}.",
+                    fixable=True,
+                ))
+            opf_attrs = _opf_attributes(md)
+            if opf_attrs:
+                attr_names = sorted({f"opf:{etree.QName(a).localname}" for _el, a in opf_attrs})
+                issues.append(ValidationIssue(
+                    "EPUB2_ATTRIBUTES_IN_EPUB3", SEVERITY_WARNING,
+                    f"{len(opf_attrs)} EPUB 2 attribute(s) in an EPUB 3 package ({', '.join(attr_names)}). "
+                    "Fixing turns them into EPUB 3 refining metas.",
+                    fixable=True,
+                ))
+
         # --- manifest: files that should exist actually exist, ids are unique
         opf_dir = posixpath.dirname(self.opf_path)
         manifest_items = manifest.findall("opf:item", namespaces=NS) if manifest is not None else []
@@ -1079,6 +1171,20 @@ class EpubBook:
                 if removed:
                     noun = "reference" if removed == 1 else "references"
                     fixed.append(f"Removed {removed} broken spine {noun}")
+
+            elif issue.code == "DANGLING_REFINES":
+                removed = _remove_dangling_refines(root, md)
+                if removed:
+                    fixed.append(f"Removed {removed} metadata entr{'y' if removed == 1 else 'ies'} "
+                                 f"that refined nothing")
+
+            elif issue.code == "EPUB2_ATTRIBUTES_IN_EPUB3":
+                converted, dropped = _convert_opf_attributes(root, md)
+                if converted:
+                    fixed.append(f"Turned {converted} EPUB 2 attribute(s) into EPUB 3 refining metas")
+                if dropped:
+                    fixed.append(f"Removed {len(dropped)} EPUB 2 attribute(s) EPUB 3 has no place for: "
+                                 f"{', '.join(sorted(set(dropped)))}")
 
         self.dirty = True
         self.revalidate()
@@ -1573,7 +1679,7 @@ class EpubBook:
         file_ops = {"add": {}, "remove": set()}
         # EPUB 2 keeps its opf:file-as / opf:role / opf:authority attributes;
         # EPUB 3 does not allow them and gets ids plus refining metas instead.
-        epub3 = (root.get("version") or "").strip().startswith("3")
+        epub3 = _is_epub3(root)
 
         def add_refine(el: etree._Element, prop: str, value: str, scheme: str = "") -> None:
             meta_el = etree.SubElement(md, f"{{{nsmap_opf}}}meta")
@@ -1786,7 +1892,7 @@ class EpubBook:
 
         # EPUB 3 has no opf:scheme attribute; there the value itself says
         # what it is, as a "urn:isbn:" URN (which _read_isbn also reads).
-        epub3 = (root.get("version") or "").strip().startswith("3")
+        epub3 = _is_epub3(root)
         if isbn_el is not None:
             new_el = isbn_el
         else:

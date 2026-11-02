@@ -126,8 +126,12 @@ TOC_PARTIAL_CONFIDENCE = 0.5
 TOC_FALLBACK_CONFIDENCE = 0.3
 
 # The validator fixes Redact applies on its own. LANGUAGE_MISSING is
-# left out on purpose: its fix writes "en" without looking at the book.
-SAFE_FIX_CODES = {"PRIMARY_ID_MISSING", "AUTHORS_AMPERSAND", "DANGLING_SPINE_ITEMREF"}
+# left out on purpose: its fix writes "en" without looking at the book, and
+# so is EPUB2_ATTRIBUTES_IN_EPUB3, which drops attributes EPUB 3 has no
+# place for.
+SAFE_FIX_CODES = {
+    "PRIMARY_ID_MISSING", "AUTHORS_AMPERSAND", "DANGLING_SPINE_ITEMREF", "DANGLING_REFINES",
+}
 
 _SECTION_TITLE_RE = re.compile(r"^(Section \d+|Cover)$")
 _URL_SCHEME_RE = re.compile(r"^[A-Za-z][A-Za-z0-9+.\-]*:")

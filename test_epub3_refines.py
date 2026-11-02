@@ -254,6 +254,62 @@ def test_isbn_epub2_keeps_opf_scheme(tmp_path):
     assert EpubBook(path).metadata.isbn == "9780141439518"
 
 
+OTHER_TOOL_EPUB3_METADATA = """<?xml version="1.0" encoding="UTF-8"?>
+<package xmlns="http://www.idpf.org/2007/opf" version="3.0" unique-identifier="BookId">
+  <metadata xmlns:dc="http://purl.org/dc/elements/1.1/" xmlns:opf="http://www.idpf.org/2007/opf">
+    <dc:identifier id="BookId">urn:uuid:eeee</dc:identifier>
+    <dc:identifier opf:scheme="ISBN">9780141439518</dc:identifier>
+    <dc:identifier opf:scheme="GOODREADS">12345</dc:identifier>
+    <dc:title>Other Tool</dc:title>
+    <dc:language>en</dc:language>
+    <dc:date opf:event="publication">1999</dc:date>
+    <dc:contributor opf:role="trl" opf:file-as="Tolk, Tom">Tom Tolk</dc:contributor>
+  </metadata>"""
+
+
+def codes(book):
+    return {i.code for i in book.validation_issues}
+
+
+def test_validate_flags_and_fixes_the_old_saved_epub3(tmp_path):
+    path = build_epub(tmp_path / "old3.epub", OLD_SAVED_EPUB3_METADATA)
+    book = EpubBook(path)
+    assert {"DANGLING_REFINES", "EPUB2_ATTRIBUTES_IN_EPUB3"} <= codes(book)
+    fixed = book.apply_fixes({"DANGLING_REFINES", "EPUB2_ATTRIBUTES_IN_EPUB3"})
+    assert fixed and book.dirty
+    assert not {"DANGLING_REFINES", "EPUB2_ATTRIBUTES_IN_EPUB3"} & codes(book)
+    book.save()
+    root = read_opf(path)
+    assert dangling_refines(root) == [] and opf_attributes(root) == []
+    reread = EpubBook(path)
+    assert reread.metadata.author_sort == ["Lawson, Allan"]
+    assert reread.metadata.ddc == "823.914"
+    assert not {"DANGLING_REFINES", "EPUB2_ATTRIBUTES_IN_EPUB3"} & codes(reread)
+
+
+def test_validate_fix_converts_other_tools_attributes(tmp_path):
+    path = build_epub(tmp_path / "other3.epub", OTHER_TOOL_EPUB3_METADATA)
+    book = EpubBook(path)
+    assert "EPUB2_ATTRIBUTES_IN_EPUB3" in codes(book)
+    assert "DANGLING_REFINES" not in codes(book)
+    fixed = book.apply_fixes({"EPUB2_ATTRIBUTES_IN_EPUB3"})
+    assert any("opf:event" in line for line in fixed)
+    book.save()
+    root = read_opf(path)
+    assert opf_attributes(root) == [] and dangling_refines(root) == []
+    contributor = root.find(".//dc:contributor", namespaces=NS)
+    assert refining(root, contributor, "role") == ["trl"]
+    assert refining(root, contributor, "file-as") == ["Tolk, Tom"]
+    goodreads = [el for el in root.iter(f"{{{DC_NS}}}identifier") if el.text == "12345"][0]
+    assert refining(root, goodreads, "identifier-type") == ["GOODREADS"]
+    assert EpubBook(path).metadata.isbn == "9780141439518"
+
+
+def test_epub2_attributes_are_not_flagged_in_epub2(tmp_path):
+    book = EpubBook(build_epub(tmp_path / "old2.epub", EPUB2_METADATA))
+    assert not {"DANGLING_REFINES", "EPUB2_ATTRIBUTES_IN_EPUB3"} & codes(book)
+
+
 def test_round_trip_is_stable(tmp_path):
     for name, source in (("pandoc3.epub", PANDOC_EPUB3_METADATA),
                          ("old3.epub", OLD_SAVED_EPUB3_METADATA),
