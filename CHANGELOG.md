@@ -1,5 +1,12 @@
 # Changelog
 
+## 2026-11-02#01 -- EPUB 3 books are saved with valid author, DDC and ISBN metadata
+
+- **Saving no longer leaves a broken reference behind.** Authors and subjects are rebuilt on every save, but their EPUB 3 refining metas (`<meta refines="#epub-creator-1" property="role">`, as pandoc writes them) were left in place, pointing at an id that no longer existed. EPUBCheck reports that as an error. Now those metas go with the element, and a save also removes any such leftover from earlier saves.
+- **EPUB 3 books get EPUB 3 markup.** Author sort, author role and the DDC were written as `opf:file-as`, `opf:role` and `opf:authority` attributes, which only EPUB 2 allows. In an EPUB 3 book they are now written as refining metas (`file-as`, `role` with `marc:relators`, and `authority` DDC plus `term` for the DDC subject), and the ISBN as `urn:isbn:…` instead of `opf:scheme="ISBN"`. EPUB 2 books are written exactly as before.
+- **A translator stays a translator.** A name in Authors that the book already marked with another role (`trl`, `edt`, …) keeps that role on save, in both formats; only names without one get `aut`. Before, every name was turned into `aut`.
+- Both forms are read, so a book saved by an earlier version still shows its author sort and DDC, and is repaired the next time it is saved.
+
 ## 2026-10-30#01 -- The exe is no longer UPX-compressed
 
 - Windows Defender flagged the 2026-10-18#03 release exe as `Trojan:Win32/Yomal!rfn`, a false positive that UPX-packed, unsigned programs often draw. The build no longer runs UPX (`upx=False` in the spec, `build_exe.bat` no longer puts it on PATH). The exe grows from 35.7 MB to 42.9 MB (+20%).

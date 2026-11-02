@@ -16,15 +16,19 @@ an EPUB's OPF (package) document, plus:
   Writing both maximizes compatibility across Calibre, Kobo firmware of
   different vintages, and other reading apps.
 
-- ISBN as a second <dc:identifier opf:scheme="ISBN">, kept separate from
+- ISBN as a second <dc:identifier opf:scheme="ISBN"> (EPUB 2) or
+  <dc:identifier>urn:isbn:...</dc:identifier> (EPUB 3), kept separate from
   the book's primary/unique identifier (usually a UUID).
 
 - Publication date as <dc:date>, split into year/month/day for editing
   and reassembled with only as much precision as was actually provided
   (a book with just a year won't get a fake "-01-01" bolted on).
 
-- DDC (Dewey Decimal) classification as a <dc:subject opf:authority="DDC">,
-  kept separate from ordinary tags/genre <dc:subject> elements.
+- DDC (Dewey Decimal) classification as a <dc:subject opf:authority="DDC">
+  (EPUB 2) or a dc:subject refined by authority "DDC" and term metas
+  (EPUB 3), kept separate from ordinary tags/genre <dc:subject> elements.
+  Author sort and role follow the same split: opf:file-as / opf:role
+  attributes in EPUB 2, refining metas in EPUB 3. Both forms are read.
 
 - Cover image: located via the EPUB3 `properties="cover-image"` manifest
   attribute or the EPUB2 `<meta name="cover" content="...">` convention.
@@ -238,6 +242,54 @@ _FONT_OBFUSCATION_ALGORITHMS = {
     "http://www.idpf.org/2008/embedding",
     "http://ns.adobe.com/pdf/enc#RC",
 }
+
+
+def _refining_metas(md: etree._Element, el_id: Optional[str]) -> list[etree._Element]:
+    """The EPUB 3 <meta refines="#el_id"> elements that describe one element."""
+    if not el_id:
+        return []
+    return [m for m in md.findall("opf:meta", namespaces=NS) if m.get("refines") == f"#{el_id}"]
+
+
+def _refined_value(md: etree._Element, el: etree._Element, prop: str) -> str:
+    """Text of the first meta refining `el` with property `prop`, or ""."""
+    for meta_el in _refining_metas(md, el.get("id")):
+        if meta_el.get("property") == prop:
+            return (meta_el.text or "").strip()
+    return ""
+
+
+def _remove_with_refines(md: etree._Element, el: etree._Element) -> None:
+    """Remove `el` and every meta that refines it (and any meta refining
+    those), so no refines is left pointing at an id that is gone."""
+    for meta_el in _refining_metas(md, el.get("id")):
+        _remove_with_refines(md, meta_el)
+    md.remove(el)
+
+
+def _remove_dangling_refines(root: etree._Element, md: etree._Element) -> None:
+    """Remove metas whose refines="#id" names no element in the package,
+    an EPUBCheck error (books saved by this app before 2026-11-02 have one
+    left from the dc:creator it rebuilt without its id)."""
+    while True:
+        ids = {e.get("id") for e in root.iter() if e.get("id")}
+        dangling = [
+            m for m in md.findall("opf:meta", namespaces=NS)
+            if (m.get("refines") or "").startswith("#") and m.get("refines")[1:] not in ids
+        ]
+        if not dangling:
+            return
+        for meta_el in dangling:
+            md.remove(meta_el)
+
+
+def _unique_id(root: etree._Element, base: str) -> str:
+    existing_ids = {e.get("id") for e in root.iter() if e.get("id")}
+    candidate, n = base, 2
+    while candidate in existing_ids:
+        candidate = f"{base}-{n}"
+        n += 1
+    return candidate
 
 
 def href_to_archive_path(opf_dir: str, href: str) -> str:
@@ -489,6 +541,9 @@ class EpubBook:
         description = first_text("description")
         pub_year, pub_month, pub_day = parse_date_parts(first_text("date"))
 
+        # Both forms are read: EPUB 2 attributes (opf:file-as, opf:authority,
+        # also what this app wrote into EPUB 3 books before 2026-11-02) and
+        # EPUB 3 refining metas (<meta refines="#id" property="file-as">).
         opf_file_as_attr = f"{{{NS['opf']}}}file-as"
         authors: list[str] = []
         author_sort: list[str] = []
@@ -497,7 +552,9 @@ class EpubBook:
             if not name:
                 continue
             authors.append(name)
-            author_sort.append((el.get(opf_file_as_attr) or "").strip())
+            author_sort.append(
+                (el.get(opf_file_as_attr) or "").strip() or _refined_value(md, el, "file-as")
+            )
         while author_sort and not author_sort[-1]:
             author_sort.pop()
 
@@ -508,7 +565,9 @@ class EpubBook:
             text = (el.text or "").strip()
             if not text:
                 continue
-            authority = (el.get(opf_authority_attr) or el.get("authority") or "").strip()
+            authority = (
+                el.get(opf_authority_attr) or el.get("authority") or _refined_value(md, el, "authority")
+            ).strip()
             if authority.upper() == "DDC":
                 ddc = text
             else:
@@ -1508,46 +1567,59 @@ class EpubBook:
         non-OPF archive changes needed (currently: cover image add/replace
         /remove): {"add": {archive_path: bytes}, "remove": {archive_path}}."""
         md = self._metadata_el()
+        root = self._opf_tree.getroot()
         nsmap_dc = NS["dc"]
         nsmap_opf = NS["opf"]
         file_ops = {"add": {}, "remove": set()}
+        # EPUB 2 keeps its opf:file-as / opf:role / opf:authority attributes;
+        # EPUB 3 does not allow them and gets ids plus refining metas instead.
+        epub3 = (root.get("version") or "").strip().startswith("3")
+
+        def add_refine(el: etree._Element, prop: str, value: str, scheme: str = "") -> None:
+            meta_el = etree.SubElement(md, f"{{{nsmap_opf}}}meta")
+            meta_el.set("refines", f"#{el.get('id')}")
+            meta_el.set("property", prop)
+            if scheme:
+                meta_el.set("scheme", scheme)
+            meta_el.text = value
 
         def set_dc_single(tag: str, value: str) -> None:
             el = md.find(f"dc:{tag}", namespaces=NS)
             if not value:
                 if el is not None:
-                    md.remove(el)
+                    _remove_with_refines(md, el)
                 return
             if el is None:
                 el = etree.SubElement(md, f"{{{nsmap_dc}}}{tag}")
             el.text = value
 
-        def set_dc_multi(tag: str, values: list[str]) -> None:
-            for el in md.findall(f"dc:{tag}", namespaces=NS):
-                md.remove(el)
-            for v in values:
-                el = etree.SubElement(md, f"{{{nsmap_dc}}}{tag}")
-                el.text = v
-
         def set_creators(authors: list[str], author_sort: list[str]) -> None:
-            for el in md.findall("dc:creator", namespaces=NS):
-                md.remove(el)
             opf_file_as_attr = f"{{{nsmap_opf}}}file-as"
             opf_role_attr = f"{{{nsmap_opf}}}role"
+            # dc:creator is rebuilt from scratch rather than patched in
+            # place, so the roles are remembered by name first. A name with
+            # a role other than "aut" (a translator marked "trl", say: this
+            # app has no separate field for one, so it sits in Authors)
+            # keeps that role; every other name gets MARC relator "aut".
+            old_roles: dict[str, str] = {}
+            for el in md.findall("dc:creator", namespaces=NS):
+                role = (el.get(opf_role_attr) or "").strip() or _refined_value(md, el, "role")
+                old_roles.setdefault((el.text or "").strip(), role)
+                _remove_with_refines(md, el)
             for i, name in enumerate(authors):
+                sort_name = author_sort[i] if i < len(author_sort) else ""
+                role = old_roles.get(name) or "aut"
                 el = etree.SubElement(md, f"{{{nsmap_dc}}}creator")
                 el.text = name
-                if i < len(author_sort) and author_sort[i]:
-                    el.set(opf_file_as_attr, author_sort[i])
-                # Every name in this app's own Authors field is a genuine
-                # author (unlike, say, a translator or illustrator, which
-                # this app has no separate field for) -- MARC relator
-                # code "aut" is the correct role for all of them. Without
-                # this, a book that had genuine role distinctions (e.g. a
-                # translator correctly marked opf:role="trl") would have
-                # that lost on save, since dc:creator is always rebuilt
-                # from scratch here rather than patched in place.
-                el.set(opf_role_attr, "aut")
+                if epub3:
+                    el.set("id", _unique_id(root, f"creator-{i + 1}"))
+                    if sort_name:
+                        add_refine(el, "file-as", sort_name)
+                    add_refine(el, "role", role, scheme="marc:relators")
+                else:
+                    if sort_name:
+                        el.set(opf_file_as_attr, sort_name)
+                    el.set(opf_role_attr, role)
 
         set_dc_single("title", self.metadata.title)
         set_creators(self.metadata.authors, self.metadata.author_sort)
@@ -1561,16 +1633,23 @@ class EpubBook:
         # --- subjects: tags/genre (plain dc:subject) and DDC classification
         # (dc:subject with opf:authority="DDC") share the same element type,
         # so they're rebuilt together to avoid clobbering one when writing
-        # the other.
+        # the other. In EPUB 3 the DDC is marked by refining metas
+        # (authority DDC, term = the class number) instead.
         for el in md.findall("dc:subject", namespaces=NS):
-            md.remove(el)
+            _remove_with_refines(md, el)
         for tag_value in self.metadata.tags:
             el = etree.SubElement(md, f"{{{nsmap_dc}}}subject")
             el.text = tag_value
-        if self.metadata.ddc.strip():
+        ddc = self.metadata.ddc.strip()
+        if ddc:
             el = etree.SubElement(md, f"{{{nsmap_dc}}}subject")
-            el.set(f"{{{nsmap_opf}}}authority", "DDC")
-            el.text = self.metadata.ddc.strip()
+            el.text = ddc
+            if epub3:
+                el.set("id", _unique_id(root, "subject-ddc"))
+                add_refine(el, "authority", "DDC")
+                add_refine(el, "term", ddc)
+            else:
+                el.set(f"{{{nsmap_opf}}}authority", "DDC")
 
         # --- series & collection: strip ALL existing belongs-to-collection
         # meta (both series-type and other-type, e.g. "set"), then rewrite
@@ -1631,6 +1710,8 @@ class EpubBook:
         self._write_isbn(md)
         self._write_cover(md, file_ops)
         self._write_toc(md, file_ops)
+        if epub3:
+            _remove_dangling_refines(root, md)
         file_ops["remove"].update(self._orphan_files_to_remove)
         file_ops["add"].update(self._image_replacements)
         self._write_stamp(md, file_ops)
@@ -1700,22 +1781,24 @@ class EpubBook:
 
         if not new_isbn:
             if isbn_el is not None and isbn_el.get("id") != primary_id:
-                md.remove(isbn_el)
+                _remove_with_refines(md, isbn_el)
             return
 
+        # EPUB 3 has no opf:scheme attribute; there the value itself says
+        # what it is, as a "urn:isbn:" URN (which _read_isbn also reads).
+        epub3 = (root.get("version") or "").strip().startswith("3")
         if isbn_el is not None:
-            isbn_el.text = new_isbn
-            isbn_el.set(opf_scheme_attr, "ISBN")
+            new_el = isbn_el
         else:
             new_el = etree.SubElement(md, f"{{{NS['dc']}}}identifier")
+        if epub3:
+            new_el.attrib.pop(opf_scheme_attr, None)
+            new_el.text = f"urn:isbn:{new_isbn}"
+        else:
             new_el.set(opf_scheme_attr, "ISBN")
             new_el.text = new_isbn
-            existing_ids = {e.get("id") for e in md.iter() if e.get("id")}
-            candidate_id, n = "isbn-id", 2
-            while candidate_id in existing_ids:
-                candidate_id = f"isbn-id-{n}"
-                n += 1
-            new_el.set("id", candidate_id)
+        if isbn_el is None:
+            new_el.set("id", _unique_id(root, "isbn-id"))
 
     def _write_cover(self, md: etree._Element, file_ops: dict) -> None:
         """Apply any staged cover add/replace/removal to the manifest (and

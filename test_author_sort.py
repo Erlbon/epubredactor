@@ -93,8 +93,10 @@ def test_set_author_sort_roundtrip():
     assert b2.metadata.author_sort_str == "Doe, Jane"
     with zipfile.ZipFile(out) as zf:
         opf = zf.read("OEBPS/content.opf").decode()
-        assert 'file-as="Doe, Jane"' in opf
-    print("PASS: setting author_sort writes opf:file-as and round-trips")
+        # An EPUB 3 package: the sort name is a refining meta, not opf:file-as.
+        assert 'property="file-as">Doe, Jane<' in opf, opf
+        assert "opf:file-as" not in opf
+    print("PASS: setting author_sort writes a file-as meta and round-trips")
 
 
 def test_multi_author_alignment():
@@ -167,10 +169,10 @@ def test_primary_author_only_sort_set():
 
 
 def test_save_writes_role_aut_for_every_author():
-    # Every name in this app's Authors list is a genuine author (there's
-    # no separate translator/illustrator field), so opf:role="aut" should
-    # be stamped on every dc:creator written, whether or not the source
-    # book had a role attribute at all.
+    # A name with no earlier role is a genuine author, so role "aut" is
+    # written for every dc:creator, whether or not the source book had a
+    # role at all. This is an EPUB 3 package, so the role is a refining
+    # meta; EPUB 2 keeps opf:role="aut" (test_epub3_refines.py).
     path = os.path.join(TEST_DIR, "role.epub")
     build(path, OPF_NO_SORT)  # Jane Doe, no file-as, no role
     b = EpubBook(path)
@@ -179,8 +181,9 @@ def test_save_writes_role_aut_for_every_author():
     b.save(out)
     with zipfile.ZipFile(out) as zf:
         opf = zf.read("OEBPS/content.opf").decode()
-        assert opf.count('opf:role="aut"') == 2, opf
-    print("PASS: save() writes opf:role=\"aut\" for every author")
+        assert opf.count('property="role" scheme="marc:relators">aut<') == 2, opf
+        assert "opf:role" not in opf
+    print("PASS: save() writes role \"aut\" for every author")
 
 
 if __name__ == "__main__":
