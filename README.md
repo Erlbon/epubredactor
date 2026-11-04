@@ -36,9 +36,13 @@ them in one go.
   them to (Tools > Columns) — no separate field-management
   screen needed. **Apply** lives in the toolbar and Edit menu now,
   always reachable regardless of panel size or how many fields are
-  ticked on. Saving (either Save All or Save As) applies any
-  pending panel changes first, so you never lose an edit you typed but
-  forgot to explicitly Apply.
+  ticked on. You never lose an edit you typed but forgot to Apply:
+  clicking other books applies it to the books you were editing (one
+  undo step, and the status bar says "Applied pending edits to N
+  books"), saving (Save All or Save As) applies it first, and Refresh
+  List, Clear List, Open Folder and closing the window count it as an
+  unsaved change before they ask. Undo, fixes and other actions that
+  keep the same books selected leave it typed, still unapplied.
 - Cover image preview grows or shrinks to fill the available space in
   the Cover Image section. A draggable divider between it and Bulk Edit
   Tags lets you give it much more room — Bulk Edit Tags scrolls rather
