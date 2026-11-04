@@ -127,6 +127,59 @@ def test_a_refresh_of_the_same_selection_keeps_the_pending_edit_pending(tmp_path
     window.close()
 
 
+def _record_questions(monkeypatch, answer):
+    asked = []
+
+    def question(*args, **kwargs):
+        asked.append(args[2] if len(args) > 2 else "")
+        return answer
+    monkeypatch.setattr(QMessageBox, "question", staticmethod(question))
+    return asked
+
+
+@pytest.mark.parametrize("command", ["refresh_list", "clear_list"])
+def test_list_commands_ask_about_pending_edits_and_keep_them_when_cancelled(tmp_path, monkeypatch, command):
+    """Refresh List / Clear List with only a typed, not Applied edit: it is applied first (undoable), so it counts
+    as an unsaved change in the "discard?" question; answering No loses nothing."""
+    window = _window(tmp_path)
+    _select(window, "a.epub", "b.epub")
+    _type_publisher(window, "Asked About")
+    asked = _record_questions(monkeypatch, QMessageBox.StandardButton.No)
+    getattr(window, command)()
+    assert len(asked) == 1 and "unsaved changes" in asked[0]
+    assert len(window.books) == 3
+    a, b = _book(window, "a.epub"), _book(window, "b.epub")
+    assert a.metadata.publisher == "Asked About" and b.metadata.publisher == "Asked About"
+    assert a.dirty and b.dirty
+    window.on_undo()
+    assert a.metadata.publisher != "Asked About"
+    window.close()
+
+
+@pytest.mark.parametrize("command", ["refresh_list", "clear_list"])
+def test_list_commands_without_pending_edits_ask_nothing(tmp_path, monkeypatch, command):
+    window = _window(tmp_path)
+    _select(window, "a.epub", "b.epub")
+    asked = _record_questions(monkeypatch, QMessageBox.StandardButton.No)
+    getattr(window, command)()
+    assert asked == []
+    assert not window.undo_manager.can_undo()
+    window.close()
+
+
+def test_quitting_asks_about_pending_edits(tmp_path, monkeypatch):
+    window = _window(tmp_path)
+    _select(window, "a.epub")
+    _type_publisher(window, "Do Not Lose Me")
+    asked = _record_questions(monkeypatch, QMessageBox.StandardButton.No)
+    window.close()
+    assert len(asked) == 1 and window.isVisible()
+    assert _book(window, "a.epub").metadata.publisher == "Do Not Lose Me"
+    for book in window.books:
+        book.dirty = False
+    window.close()
+
+
 def test_remove_from_list_drops_pending_edits_for_the_removed_books_without_an_undo_entry(tmp_path):
     window = _window(tmp_path)
     _select(window, "a.epub", "b.epub")

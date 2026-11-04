@@ -1593,7 +1593,7 @@ class MainWindow(QMainWindow):
             )
             return
         if self.books and epub_paths:
-            if self._count_dirty() and not self._confirm_discard(
+            if self._has_unsaved_changes() and not self._confirm_discard(
                 "clear the current list and open a new folder"
             ):
                 return
@@ -2873,7 +2873,7 @@ class MainWindow(QMainWindow):
         if not self.books:
             self.status.showMessage("The list is already empty.", 6000)
             return
-        if self._count_dirty() and not self._confirm_discard("clear the list"):
+        if self._has_unsaved_changes() and not self._confirm_discard("clear the list"):
             return
         self.books = []
         self._rebuild_table()
@@ -3002,7 +3002,7 @@ class MainWindow(QMainWindow):
         if not self.books:
             self.status.showMessage("Refresh List: nothing is loaded yet. Open a folder or files first.", 6000)
             return
-        if self._count_dirty() and not self._confirm_discard(
+        if self._has_unsaved_changes() and not self._confirm_discard(
             "refresh the list (discarding unsaved changes)"
         ):
             return
@@ -4771,6 +4771,13 @@ class MainWindow(QMainWindow):
             msg += f"  \u2022  {errors} failed to load"
         self.status_label.setText(msg)
 
+    def _has_unsaved_changes(self) -> bool:
+        """For the "discard unsaved changes?" checks: a typed, not yet
+        Applied panel edit is applied first (undoable), so it counts and is
+        asked about instead of vanishing with the list; answering No keeps it."""
+        self._commit_pending_panel_edits()
+        return self._count_dirty() > 0
+
     def _confirm_discard(self, action_desc: str) -> bool:
         reply = QMessageBox.question(
             self,
@@ -4781,7 +4788,7 @@ class MainWindow(QMainWindow):
         return reply == QMessageBox.StandardButton.Yes
 
     def closeEvent(self, event) -> None:
-        if self._count_dirty() and not self._confirm_discard("quit without saving"):
+        if self._has_unsaved_changes() and not self._confirm_discard("quit without saving"):
             event.ignore()
             return
         # Remember exactly what's loaded right now (including an empty

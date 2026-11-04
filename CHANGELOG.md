@@ -1,5 +1,10 @@
 # Changelog
 
+## 2026-11-04#02 -- Refresh List, Clear List, Open Folder and quitting ask about typed edits too
+
+- **A typed, not Applied side-panel edit now counts as an unsaved change.** Refresh List, Clear List, Open Folder (which replaces the list) and closing the window used to throw it away without a word when no book was otherwise changed. Now it is applied to the selected books first, so the "You have unsaved changes" question comes up; answer No and the edit is kept (applied, and undoable with Undo). With nothing typed, these commands behave as before.
+- Remove from List is unchanged: it never asks, also not for changed books, and the edit belongs to the books being removed.
+
 ## 2026-11-04#01 -- Typed edits in the side panel are no longer lost when you select other books
 
 - **Selecting other books applies what you typed.** A field ticked and filled in the Bulk Edit panel but not Applied used to vanish the moment you clicked another row. Now it is applied to the books you had selected before the click, exactly as Apply would (one Undo entry, rows marked changed), and the status bar says "Applied pending edits to N books". Apply is still there, it is just no longer required.
