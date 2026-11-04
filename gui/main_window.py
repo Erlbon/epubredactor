@@ -421,6 +421,7 @@ class MainWindow(QMainWindow):
 
         self.books: list[EpubBook] = []
         self._updating_table = False
+        self._rebuilding_table = False  # see _on_selection_changed()
         self.undo_manager = UndoManager(max_entries=UNDO_MAX_ENTRIES)
         self._cover_icon_cache = AsyncIconCache(COVER_ICON_SIZE, parent=self)
         self._cover_icon_cache.icon_ready.connect(self._on_cover_icon_ready)
@@ -1753,7 +1754,16 @@ class MainWindow(QMainWindow):
 
     def _rebuild_table(self) -> None:
         with perf_log.timed(f"_rebuild_table total ({len(self.books)} books)"):
-            self._rebuild_table_impl()
+            self._rebuilding_table = True
+            try:
+                self._rebuild_table_impl()
+            finally:
+                self._rebuilding_table = False
+            # Once, with the final selection: a pending panel edit stays
+            # pending if the same books are still selected, is applied if
+            # the selection really changed, and is dropped only when its
+            # books left the list (Remove, Refresh List, Clear).
+            self._on_selection_changed()
 
     def _rebuild_table_impl(self) -> None:
         # Capture the current selection by BOOK IDENTITY (not row index)
@@ -2362,14 +2372,46 @@ class MainWindow(QMainWindow):
         self._refresh_status()
 
     def _on_selection_changed(self) -> None:
+        if self._rebuilding_table:
+            # Mid-rebuild the selection flickers (rows replaced, cleared,
+            # restored); _rebuild_table_impl() calls this once at the end.
+            return
         books = self._currently_selected_books()
-        self.tag_panel.set_selection(books)
+        same_selection = {id(b) for b in books} == {id(b) for b in self.tag_panel.current_books()}
+        if not same_selection:
+            self._commit_pending_panel_edits()
+        # A refresh of the same selection (after Undo, a rebuild, an
+        # operation on these books) keeps the pending edit pending.
+        self.tag_panel.set_selection(books, keep_pending=same_selection)
         # Reflects/acts on the FIRST selected book, same "first of N"
         # convention the cover preview itself uses for a mixed selection.
         self.tag_panel.set_cover_junk_flagged(bool(books) and self._book_is_junk_cover(books[0]))
 
-    def _apply_bulk_edit(self, values: dict) -> None:
-        books = self._currently_selected_books()
+    def _commit_pending_panel_edits(self) -> int:
+        """Applies what is ticked/typed in the bulk-edit panel but not yet
+        Applied to the books the panel was showing (the PREVIOUS selection,
+        when called on a selection change), through the normal Apply path:
+        one undo entry, rows marked changed. Otherwise a selection change
+        silently threw the typing away. Books since removed from the list
+        are skipped, as are fields already holding the typed value; nothing
+        left -> no undo entry, no message. Returns the number of books."""
+        live = {id(b) for b in self.books}
+        books = [b for b in self.tag_panel.current_books() if id(b) in live and not b.load_error]
+        pending = self.tag_panel.pending_edits()
+        values = {
+            key: value for key, value in pending.items()
+            if any((getattr(b.metadata, key, "") or "") != value for b in books)
+        }
+        if not books or not values:
+            return 0
+        self._apply_bulk_edit(values, books)
+        self.status.showMessage(f"Applied pending edits to {len(books)} book{'' if len(books) == 1 else 's'}", 8000)
+        return len(books)
+
+    def _apply_bulk_edit(self, values: dict, books: list[EpubBook] | None = None) -> None:
+        """books: None = the current selection (the Apply action)."""
+        if books is None:
+            books = self._currently_selected_books()
         if not books:
             # Can normally only happen now via save_changed()/save_as_copies()
             # calling tag_panel.apply_bulk_edit() proactively -- the toolbar

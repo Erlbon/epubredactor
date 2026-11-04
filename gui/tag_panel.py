@@ -400,11 +400,7 @@ class TagPanel(QWidget):
         if field_keys == self._visible_field_keys:
             return
 
-        pending = {
-            key: self._editor_text(editor)
-            for key, editor in self._editors.items()
-            if self._checkboxes[key].isChecked()
-        }
+        pending = self._pending_texts()
 
         while self._fields_grid.count():
             item = self._fields_grid.takeAt(0)
@@ -418,7 +414,18 @@ class TagPanel(QWidget):
         self._build_field_rows(field_keys)
         self._field_order.refresh()  # grips for the rebuilt rows
         self.set_selection(self._current_books)  # repopulate the rebuilt rows with current data
+        self._restore_pending(pending)
 
+    def _pending_texts(self) -> dict[str, str]:
+        """The raw editor text of every ticked field -- what a rebuild has
+        to put back to keep a not-yet-Applied edit."""
+        return {
+            key: self._editor_text(editor)
+            for key, editor in self._editors.items()
+            if self._checkboxes[key].isChecked()
+        }
+
+    def _restore_pending(self, pending: dict[str, str]) -> None:
         for key, text in pending.items():
             if key in self._editors:
                 self._set_editor_text(self._editors[key], text)
@@ -570,11 +577,22 @@ class TagPanel(QWidget):
 
     # ------------------------------------------------------------------
 
-    def set_selection(self, books: list[EpubBook]) -> None:
+    def current_books(self) -> list[EpubBook]:
+        """The books the panel was last populated from -- the selection a
+        pending edit was typed against (MainWindow applies it to these
+        when the selection moves on)."""
+        return list(self._current_books)
+
+    def set_selection(self, books: list[EpubBook], keep_pending: bool = False) -> None:
         """books: the currently selected EpubBook objects (non-error only).
         Repopulates every visible field, showing the common value or a
         <multiple values> placeholder, and unchecks everything. Also
-        refreshes the cover preview to the first selected book's cover."""
+        refreshes the cover preview to the first selected book's cover.
+
+        keep_pending: re-tick and re-fill whatever was ticked before -- for
+        a refresh of the SAME selection (after Undo, a rebuild, ...), so a
+        not-yet-Applied edit survives it."""
+        pending = self._pending_texts() if keep_pending else {}
         self._current_books = books
         self._populating = True
         self._selected_count = len(books)
@@ -617,6 +635,7 @@ class TagPanel(QWidget):
 
         self._update_cover_preview(books)
         self._populating = False
+        self._restore_pending(pending)
 
     def _update_cover_preview(self, books: list[EpubBook]) -> None:
         self._page_paths = []
@@ -738,10 +757,16 @@ class TagPanel(QWidget):
         Public (not a private click handler) since Apply now lives as a
         toolbar action in MainWindow rather than a button inside this
         panel -- see the note in MainWindow._build_menu_bar()."""
+        result = self.pending_edits()
+        if result:
+            self.applyRequested.emit(result)
+        self._uncheck_all()
+
+    def pending_edits(self) -> dict[str, str]:
+        """{field_key: value} for every ticked field -- exactly what
+        apply_bulk_edit() would apply, without applying or unticking."""
         result = {}
         for key in self._visible_field_keys:
             if self._checkboxes[key].isChecked():
                 result[key] = self._editor_text(self._editors[key]).strip() if key != "description" else self._editor_text(self._editors[key])
-        if result:
-            self.applyRequested.emit(result)
-        self._uncheck_all()
+        return result

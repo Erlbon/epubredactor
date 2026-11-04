@@ -1,5 +1,11 @@
 # Changelog
 
+## 2026-11-04#01 -- Typed edits in the side panel are no longer lost when you select other books
+
+- **Selecting other books applies what you typed.** A field ticked and filled in the Bulk Edit panel but not Applied used to vanish the moment you clicked another row. Now it is applied to the books you had selected before the click, exactly as Apply would (one Undo entry, rows marked changed), and the status bar says "Applied pending edits to N books". Apply is still there, it is just no longer required.
+- Nothing happens when nothing was selected before, when nothing is ticked, or when the typed value is what the books already have (no Undo entry, no message).
+- **Undo, Redo, Search & Replace and other actions that refresh the panel keep the edit pending** (still ticked, still filled in) instead of discarding it, as long as the same books stay selected. Removing the books from the list (Remove from List, Delete, Refresh List, Clear List) still drops it, since its books are gone.
+
 ## 2026-11-02#02 -- Validate and Fix finds broken EPUB 3 metadata
 
 - **New check, error: "refine an element that does not exist".** An EPUB 3 book with a `<meta refines="#id">` whose id is gone (every EPUB 3 book this app saved before 2026-11-02#01 that had a pandoc-style author role) is now listed. The fix removes those metas. Redact applies it on its own, like the other safe fixes.
