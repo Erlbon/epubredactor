@@ -1,5 +1,9 @@
 # Changelog
 
+## 2026-11-04#03 -- Ctrl+S saves again
+
+- **Ctrl+S** is Save All again, for good, and the menu shows it. Ctrl+Shift+A still works too. It was dropped on 2026-10-14 as an expiring alias, but that was never the intent: Ctrl+S is the key everybody presses to save.
+
 ## 2026-11-04#02 -- Refresh List, Clear List, Open Folder and quitting ask about typed edits too
 
 - **A typed, not Applied side-panel edit now counts as an unsaved change.** Refresh List, Clear List, Open Folder (which replaces the list) and closing the window used to throw it away without a word when no book was otherwise changed. Now it is applied to the selected books first, so the "You have unsaved changes" question comes up; answer No and the edit is kept (applied, and undoable with Undo). With nothing typed, these commands behave as before.

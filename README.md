@@ -1061,7 +1061,7 @@ Keyboard shortcuts:
 | File > Open Files | Ctrl+O |
 | File > Open Folder | Ctrl+Shift+O |
 | File > Save As | Ctrl+Shift+S |
-| File > Save All | Ctrl+Shift+A |
+| File > Save All | Ctrl+S or Ctrl+Shift+A |
 | File > Rename File | F2 |
 | File > Rename / Export / Move | Ctrl+E |
 | File > Remove from List | Delete |

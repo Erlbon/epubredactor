@@ -38,7 +38,7 @@ import traceback
 import webbrowser
 
 from PyQt6.QtCore import QItemSelectionModel, QSize, Qt, QTimer
-from PyQt6.QtGui import QActionGroup, QColor, QGuiApplication, QIcon
+from PyQt6.QtGui import QActionGroup, QColor, QGuiApplication, QIcon, QKeySequence
 from PyQt6.QtWidgets import (
     QAbstractItemView,
     QApplication,
@@ -908,8 +908,9 @@ class MainWindow(QMainWindow):
         actions["delete_files"].setToolTip("Send the selected books' files to the Recycle Bin (Shift+Delete)")
         add_command_palette(self, actions)  # Ctrl+K, View > Command Palette…
 
-        # Save All is Ctrl+Shift+A and Delete Files is Shift+Delete (family
-        # keys); the old Ctrl+S / F8 aliases were dropped 2026-10-14.
+        # Save All is Ctrl+S (the key everybody presses; owner, 2026-11-04)
+        # and Ctrl+Shift+A (family key), set where save_act is picked up
+        # below. Delete Files is Shift+Delete; the old F8 alias is gone.
         # F1 used to open About; F1 is Help contents everywhere else, so it is
         # simply unbound now (no alias: lint forbids F1 on About).
 
@@ -922,6 +923,7 @@ class MainWindow(QMainWindow):
             actions["include_subfolders"], load=app_settings.load_include_subfolders, save=app_settings.save_include_subfolders,
         )
         self.save_act = actions["save_all"]  # saves every changed book, see above
+        self.save_act.setShortcuts([QKeySequence(shortcuts.SAVE), QKeySequence(shortcuts.SAVE_ALL)])
         self.save_as_act = actions["save_as"]
         self.rename_file_act = actions["rename_file"]
         self.rename_files_act = actions["rename_export_move"]

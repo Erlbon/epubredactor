@@ -34,7 +34,10 @@ def _read(rel):
 def test_no_compatibility_aliases_left():
     window = mw.MainWindow()
     bound = {s.toString() for a in window.findChildren(QAction) for s in a.shortcuts()}
-    assert "Ctrl+S" not in bound and "F8" not in bound
+    assert "F8" not in bound
+    # Ctrl+S is Save All for good (owner, 2026-11-04), not an alias.
+    assert [s.toString() for s in window.save_act.shortcuts()] == ["Ctrl+S", "Ctrl+Shift+A"]
+    assert [a for a in window.findChildren(QAction) if "Ctrl+S" in {s.toString() for s in a.shortcuts()}] == [window.save_act]
     readme = _read("README.md")
     assert "still works for one more release" not in readme
 

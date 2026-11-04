@@ -143,12 +143,12 @@ def _keys(action):
     return [s.toString() for s in action.shortcuts()]
 
 
-def test_save_all_is_save_files_renamed_and_the_ctrl_s_alias_is_gone():
+def test_save_all_is_save_files_renamed_and_ctrl_s_saves_all():
     window = mw.MainWindow()
     registry = get_action_registry(window)
     assert "save" not in registry  # there is no save-selected to offer
     assert labels.plain_label(window.save_act.text()) == "Save All"
-    assert _keys(window.save_act) == ["Ctrl+Shift+A"]  # Ctrl+S alias dropped 2026-10-14
+    assert _keys(window.save_act) == ["Ctrl+S", "Ctrl+Shift+A"]  # Ctrl+S for good (owner, 2026-11-04)
 
 
 def test_shortcut_fixes_without_compatibility_aliases():
