@@ -1,5 +1,11 @@
 # Changelog
 
+## 2026-11-05#02 -- the Linux test run passes again
+
+- **A test no longer assumes Windows' file order.** The folder scan sorts the way the system does: Windows ignores
+  case, Linux puts capitals first. The leftover-skipping test expected Windows' order, so GitHub's Linux job had
+  failed since 2026-10-14. It now checks which books were found, not their order. No change to the app.
+
 ## 2026-11-05#01 -- `redact -n` (dry run), and Undo keeps 50 steps
 
 - **redactor_common 2026-11-05-01** (was 2026-11-04-02): the shared Redact engine gets a dry run, and Undo's depth is

@@ -44,7 +44,8 @@ def test_epub_scans_skip_the_apps_own_leftovers(tmp_path):
     for name in ("Dune.redact-orig.epub", ".Dune.redact-0123abcd.epub", ".epubredactor-scratch.epub", "sub/b.redact-orig.mobi",
                  "My.Partial.Cut.epub"):
         (tmp_path / name).write_text("x")
-    assert _rel(find_epubs([str(tmp_path)]), tmp_path) == ["a.epub", "My.Partial.Cut.epub"]
+    # The order is the platform's (case-insensitive only on Windows), so compare without it.
+    assert sorted(_rel(find_epubs([str(tmp_path)]), tmp_path)) == sorted(["a.epub", "My.Partial.Cut.epub"])
     assert "sub/b.redact-orig.mobi" not in _rel(find_convertible_books([str(tmp_path)]), tmp_path)
     named = str(tmp_path / "Dune.redact-orig.epub")
     assert find_epubs([named]) == [named]
