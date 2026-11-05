@@ -509,6 +509,7 @@ class GuardStep(Step):
 
     key = "guard"
     label = "Check the book"
+    dry_run_safe = True  # must run in a dry run too: it is what stops a DRM / unreadable / dirty book
 
     def run(self, ctx: EpubCtx) -> StepResult:
         if ctx.skip_reason:
@@ -519,6 +520,7 @@ class GuardStep(Step):
 class ValidateFixStep(Step):
     key = "validate_fix"
     label = "Fix validation issues"
+    dry_run_safe = True  # fixes and the stamp go into the in-memory book; record_validation() only reads the zip
     description = (
         "Applies the fixes Validate / Fix Issues offers: repairs a broken unique-identifier, splits "
         "'A & B' into two authors, drops spine entries that point at nothing. (The 'set a missing "
@@ -543,6 +545,7 @@ class ValidateFixStep(Step):
 class DedupeManifestIdsStep(Step):
     key = "dedupe_manifest_ids"
     label = "Deduplicate manifest IDs"
+    dry_run_safe = True
     description = "Gives the second and later manifest items that share an id a fresh id (Repair > Deduplicate Manifest IDs)."
 
     def run(self, ctx: EpubCtx) -> StepResult:
@@ -553,6 +556,7 @@ class DedupeManifestIdsStep(Step):
 class RebuildManifestStep(Step):
     key = "rebuild_manifest"
     label = "Rebuild manifest"
+    dry_run_safe = True
     description = (
         "Removes manifest items whose files are missing from the book, and the spine entries that "
         "use them (Repair > Rebuild Manifest). Web addresses (remote resources) are not touched."
@@ -572,6 +576,7 @@ class RebuildManifestStep(Step):
 class RepairNavigationStep(Step):
     key = "repair_navigation"
     label = "Repair navigation"
+    dry_run_safe = True  # orphan removal is only staged on the book; the files go at save(), which a dry run never calls
     description = "Removes <guide> references that point at files that do not exist (Repair > Repair Navigation)."
     options = (
         OptionSpec(
@@ -592,6 +597,7 @@ class RepairNavigationStep(Step):
 class RemovePageHeadersStep(Step):
     key = "remove_page_headers"
     label = "Remove running headers and page numbers"
+    dry_run_safe = True  # edits the in-memory text only
     description = (
         "For a scanned book whose text still carries the printed page furniture (\"30 BOOK TITLE\", \"CHAPTER TITLE "
         "33\", bare page numbers and the empty paragraphs around them), removes it and puts back together the "
@@ -633,6 +639,7 @@ class TocPlan:
 class GenerateTocStep(Step):
     key = "generate_toc"
     label = "Generate table of contents"
+    dry_run_safe = True  # the new TOC is staged on the book (written by save())
     description = (
         "For a book with no table of contents, builds one from its headings (Repair > Generate Table of "
         "Contents). A list of headings is applied automatically; a 'Section 1, Section 2...' fallback is "
@@ -662,6 +669,7 @@ class GenerateTocStep(Step):
 class StripDescriptionHtmlStep(Step):
     key = "strip_description_html"
     label = "Strip HTML from description"
+    dry_run_safe = True
     description = "Turns markup in the description into plain text (Repair > Strip HTML from Description)."
 
     def run(self, ctx: EpubCtx) -> StepResult:
@@ -675,6 +683,7 @@ class StripDescriptionHtmlStep(Step):
 class CleanAuthorsStep(Step):
     key = "clean_authors"
     label = "Clean up authors"
+    dry_run_safe = True
     description = (
         "Tidies Author(s) and Author Sort with the deterministic fixes of Repair > Clean Up Authors: spacing and "
         "initials, role suffixes and 'et al.', 'Last, First' to 'First Last', duplicates, a generated or tidied "
@@ -701,6 +710,7 @@ class CleanAuthorsStep(Step):
 class LanguageStep(Step):
     key = "language"
     label = "Detect language"
+    dry_run_safe = True
     description = "When the language is blank or unknown, guesses it from the book's text (en, no, it, de, fr)."
 
     def run(self, ctx: EpubCtx) -> StepResult:
@@ -733,6 +743,7 @@ class _ScanFieldStep(Step):
 
     field = ""  # the ContentScanResult / metadata attribute
     noun = ""  # how the change reads in the report
+    dry_run_safe = True  # all four scan steps: read the book's text, fill the in-memory field
 
     def current(self, ctx: EpubCtx) -> str:
         return getattr(ctx.work.metadata, self.field)
@@ -821,6 +832,7 @@ class MetadataLookupStep(Step):
     key = "metadata_lookup"
     # The key stays "metadata_lookup" (saved recipes refer to it); only the label changed.
     label = "Fill empty fields from lookups (local database first)"
+    dry_run_safe = True  # web lookups and the local databases, opened read-only (mode=ro); no cache on disk
     description = (
         "Fills EMPTY fields (author, publisher, year, ISBN, genre, language, description, and the series with "
         "its number) from your local databases first -- ISFDB, the only source that knows the series (when set up "
@@ -1004,6 +1016,7 @@ class CoverCandidate:
 class CoverStep(Step):
     key = "cover"
     label = "Cover"
+    dry_run_safe = True  # downloads and a generated image are held in memory and set on the in-memory book
     description = (
         "For a book with no cover, or one flagged as a junk cover: fetches the cover for the book's own ISBN "
         "(the local Open Library database's cover id first when one is set up, then Open Library by ISBN, then "
@@ -1198,6 +1211,7 @@ def _is_under(path: str, root: str) -> bool:
 class PathTagsStep(Step):
     key = "path_tags"
     label = "Fill empty fields from the folder path"
+    dry_run_safe = True  # reads folder names and (to corroborate) sibling EPUBs' metadata
     description = (
         "Fills EMPTY fields from the folders the file sits in, read against the library root chosen in "
         "File > Rename / Export / Move (Move into folders; this step is its reverse). Needs a library "
@@ -1280,6 +1294,7 @@ class RenameStep(Step):
     )
     position = "last"
     default_enabled = False
+    dry_run_safe = False  # saves the book (ensure_saved) and renames the file
 
     def __init__(self, pattern: str = "", default_enabled: bool | None = None, history=None, sample=None):
         # Off by default, like Move into folders: having used a rename
@@ -1327,6 +1342,7 @@ class MoveIntoFoldersStep(Step):
     )
     position = "last"
     default_enabled = False
+    dry_run_safe = False  # saves the book (ensure_saved), makes folders and moves (or copies and trashes) the file
 
     def __init__(self, pattern: str = "", default_enabled: bool | None = None, history=None, sample=None):
         # While the recipe's pattern is empty it follows the most recent

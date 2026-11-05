@@ -1,5 +1,17 @@
 # Changelog
 
+## 2026-11-05#01 -- `redact -n` (dry run), and Undo keeps 50 steps
+
+- **redactor_common 2026-11-05-01** (was 2026-11-04-02): the shared Redact engine gets a dry run, and Undo's depth is
+  one family number.
+- **`epubredactor redact -n` / `--dry-run`** shows what Redact would change and saves nothing. The steps that only
+  work on the book in memory run as usual (repairs, table of contents, scans, the folder-path step, the lookups and
+  the cover), and the report lists their changes under a DRY RUN line. Rename by pattern and Move into folders need
+  the saved file and are left out, named in the run notes. No History entry, no rename log and no `--trash-dir`
+  folder is written. Each step now says whether it is safe for a dry run (`dry_run_safe`); a test pins the list.
+- **Undo keeps your last 50 changes** (was 5): typed side-panel edits are undo steps of their own, and 5 ran out
+  fast. The number comes from redactor_common, so every Redactor has the same one.
+
 ## 2026-11-04#04 -- redactor_common 2026-11-04-02, and tests in the repo's own venv
 
 - **redactor_common 2026-11-04-02** (was 2026-10-25-01), the tag the other Redactors use: the shared lookups

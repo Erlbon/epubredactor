@@ -15,7 +15,7 @@ Editing model:
   - Nothing touches disk until you click Save. Save Changed overwrites
     originals; Save As Copies writes to a folder you choose so your
     originals are never touched.
-  - Undo (last 5 changes) covers in-memory edits only -- see
+  - Undo (last 50 changes) covers in-memory edits only -- see
     core/undo.py for why physical file operations (Rename/Export, Save)
     are deliberately excluded.
 
@@ -80,7 +80,7 @@ from redactor_common.core.error_summary import summarize_errors
 from redactor_common.core.folder_refresh import find_new_files_in_loaded_folders
 from redactor_common.core.os_utils import reveal_in_file_manager
 from redactor_common.core.save_errors import describe_save_error
-from redactor_common.core.undo import UndoManager
+from redactor_common.core.undo import DEFAULT_MAX_ENTRIES, UndoManager
 from redactor_common.gui.action_factory import make_action
 from redactor_common.gui.folder_options import (
     add_include_subfolders_checkbox, attach_include_subfolders, include_subfolders_slot,
@@ -232,7 +232,7 @@ COLUMN_KEYS = ["filename", "path", "status", *[key for key, _label, _ml in FIELD
 STATUS_CELL_COLORS = {"OK": None, "ISSUES": DIRTY_COLOR, "DRM": DRM_COLOR, "INVALID": ERROR_COLOR}
 JUNK_COVER_COLOR = QColor("#f3d9fa")  # soft magenta -- distinct from the shared status colors
 COVER_ICON_SIZE = QSize(24, 32)
-UNDO_MAX_ENTRIES = 5
+UNDO_MAX_ENTRIES = DEFAULT_MAX_ENTRIES  # the family's one undo depth (redactor_common.core.undo; 50 since 2026-11-05)
 UNDO_PROGRESS_AFTER = 300  # an undo/redo snapshot or restore over this many books shows a progress dialog
 CONTEXT_COVER_CHECK_MAX = 200  # above this many selected books the right-click menu does not fingerprint covers
 ROW_REFLOW_PROGRESS_THRESHOLD = 1500  # re-fitting row heights over this many rows runs row by row under a dialog

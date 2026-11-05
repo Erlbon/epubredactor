@@ -11,6 +11,10 @@ recipe; --enable / --disable / --threshold adjust it for this run only. The offl
 databases and the library root come from the app's settings. A cover that needs drawing (the "regenerate a
 junk cover" part of the cover step) needs the window's renderer and is skipped from the command line. Running
 the recipe and the report are the shared ones in redactor_common.cli.commands.
+
+-n / --dry-run shows what would change and saves nothing: only the steps marked dry_run_safe run (on the
+in-memory copy of each book), the save, rename and move are left out (named in the report's notes), and no
+History entry, rename log or --trash-dir folder is written.
 """
 
 from __future__ import annotations
@@ -36,7 +40,8 @@ def add_redact_parser(sub) -> None:
     parser = sub.add_parser(
         "redact", help="run the Redact recipe",
         description="Run the Redact recipe on the EPUB files. Each changed book is saved in place and its original goes "
-                    "to the Recycle Bin (or --trash-dir). Guesses below the confidence threshold are listed, not applied.",
+                    "to the Recycle Bin (or --trash-dir). Guesses below the confidence threshold are listed, not applied. "
+                    "-n shows what would change and saves nothing.",
     )
     parser.add_argument("paths", nargs="*", metavar="PATH", help="EPUB files, folders or wildcards")
     parser.add_argument("-R", "--no-recurse", action="store_true", help="for a folder, look only at the files directly in it")
@@ -83,6 +88,8 @@ def run_redact(args: argparse.Namespace, out: Output) -> int:
     env.begin()
 
     def after_run() -> list[str]:
+        if args.dry_run:  # nothing was saved, renamed or moved: no rename log, no History moves
+            return env.notes_text().splitlines()
         env.flush_log()
         # No rename log here (no Undo Last Rename from the command line), so the History hook is called
         # directly: each book's Redact entry was written at the path it was saved at, and follows the
@@ -94,4 +101,5 @@ def run_redact(args: argparse.Namespace, out: Output) -> int:
         books, recipe_for_run(recipe), run_catalogue(rename_pattern, path_pattern),
         make_context=lambda book: EpubCtx(book, env), describe=lambda book: os.path.basename(book.path),
         finalize=save_finalize, finalize_label="Save", path_of=lambda book: book.path, out=out, after_run=after_run,
+        dry_run=args.dry_run,
     )

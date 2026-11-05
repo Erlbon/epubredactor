@@ -411,7 +411,7 @@ them in one go.
   with its own checkbox. Metadata changes are ordinary in-memory edits;
   a Filename match performs an actual on-disk rename (same collision-safe
   mechanics as Rename/Export).
-- **Undo** — steps back through your last 5 in-memory edits (single-cell
+- **Undo** — steps back through your last 50 in-memory edits (single-cell
   edits, bulk edits, cover changes, ISBN/Calibre lookups, metadata
   search/replace, parsed-filename or scanned-content metadata applies).
   Deliberately does **not** cover physical file operations (Rename/Export,
@@ -480,7 +480,7 @@ is available from the command line; the commands above are what is.
 | `--json` | Print one JSON document on stdout instead of text (see "JSON output"). Nothing else goes to stdout. |
 | `-q`, `--quiet` | No progress lines and no warnings on stderr (errors are still shown). |
 | `-o FILE`, `--output FILE` | Write the result (the text, or with `--json` the JSON document) to FILE instead of stdout. The file is complete when the program exits. This is the reliable way for a script to read a result. |
-| `-n`, `--dry-run` | On the commands that change files (`set`, `rename`, `move`, `convert`, and `validate --fix`): show what would happen and change nothing. |
+| `-n`, `--dry-run` | On the commands that change files (`set`, `rename`, `move`, `convert`, `redact`, and `validate --fix`): show what would happen and change nothing. |
 | `-h`, `--help` | Help for the program or for one command. |
 | `--version` | The version (top level only). |
 
@@ -598,13 +598,15 @@ stops with exit code 1 and says so.
 
 ### redact
 
-`epubredactor redact [PATH...] [--recipe FILE] [--enable STEP] [--disable STEP] [--threshold N] [--trash-dir FOLDER] [--list-steps]`
+`epubredactor redact [PATH...] [--recipe FILE] [--enable STEP] [--disable STEP] [--threshold N] [--trash-dir FOLDER] [-n] [--list-steps]`
 
 Runs the Redact recipe on the books, the same steps as Edit > Redact: repair, clean up, tags from the path
 and filename, lookups on Open Library, ISFDB and Google Books, cover, rename, move into folders. Each changed book
 is saved in place and its original goes to the Recycle Bin (or `--trash-dir`). Guesses below the confidence
-threshold are listed under "needs review" and not applied. There is no `--dry-run`: use `info` and `validate`
-first, and `--disable` for the steps you do not want. The cover step replaces a cover only with a better one it
+threshold are listed under "needs review" and not applied. `-n` / `--dry-run` shows what would change and saves
+nothing: the steps that only work on the book in memory run (repairs, scans, lookups, cover), the report lists their
+changes under a DRY RUN line, and `rename` and `move_into_folders` (which need the saved file) are left out and named
+in the run notes. No History entry is recorded and no `--trash-dir` folder is made. The cover step replaces a cover only with a better one it
 finds (it measures the sizes itself); a cover that has to be drawn (regenerating a junk cover) needs the window and
 is skipped from the command line.
 
@@ -615,6 +617,7 @@ is skipped from the command line.
 | `--disable STEP` | Turn a step off for this run (repeatable). |
 | `--threshold N` | Confidence needed to apply a guess: a fraction `0`-`1` (`0.9`, also `1`), or a percentage with at least two digits (`90`, `90%`, `100`); a number above 1 and below 5 such as `1.5` is refused as ambiguous. |
 | `--trash-dir FOLDER` | Move originals into this folder (created if needed) instead of the Recycle Bin, for a machine or a task that has none. |
+| `-n`, `--dry-run` | Show what would change and save nothing (see above). |
 | `--list-steps` | Show the steps and whether the recipe has each on, then stop (no `PATH` needed). |
 
 Steps: `validate_fix`, `dedupe_manifest_ids`, `rebuild_manifest`, `repair_navigation`, `generate_toc`,
@@ -676,7 +679,7 @@ Exit code 1 when a book still has page furniture after the command (found but no
 | `set` | `path`, `status`, `changes` (field to `{old, new}`), `message` | `files`, `failed`, `dry_run` |
 | `rename`, `move` | `path`, `status`, `new_path`, `message` | `files`, `failed`, `dry_run`, and `pattern` or `root` |
 | `convert` | `path`, `status`, `new_path`, `message` | `files`, `failed`, `dry_run` |
-| `redact` | `file`, `path`, `status`, `applied`, `needs_review` (step, value, confidence, reason), `failures`, `notes`, `skipped`, `not_saved` | `files`, `failed`, `needs_review`, `cancelled`, `confidence_threshold`, `run_notes` |
+| `redact` | `file`, `path`, `status`, `applied`, `needs_review` (step, value, confidence, reason), `failures`, `notes`, `skipped`, `not_saved` | `files`, `failed`, `needs_review`, `cancelled`, `confidence_threshold`, `run_notes`, `dry_run` |
 | `redact --list-steps` | `step`, `label`, `enabled` | `confidence_threshold` |
 | `validate` | `path`, `status`, `problem`, `issues` (code, severity, message, fixable), `fixed`, `issues_after`, `message` | `files`, `problems`, `fix`, `dry_run` |
 | `headers` | without `--fix`: `path`, `status` (`found`, `clean`, `failed`), `headers`, `removed`, `joined`, `hyphenated`, `confidence`, `headings`, `examples`, `message`; with `--fix` the same rows as `redact` | `files`, `found`, `failed`, `fix`, `dry_run` (with `--fix` the `redact` summary) |
