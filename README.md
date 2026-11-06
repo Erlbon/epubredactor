@@ -741,8 +741,9 @@ could be a prompt in the window is a flag here or a skipped file in the report.
 ## Running from source (any OS with Python)
 
 ```
-pip install -r requirements.txt
-python main.py
+python ../redactor-build-tools/devenv/venv_sync.py .   # this repo's own .venv at the redactor_common pin (never pip
+                                                       # install -r requirements.txt into the shared Python)
+.venv\Scripts\python main.py                           # .venv/bin/python on Linux/macOS
 ```
 
 ## Building a standalone Windows .exe
@@ -752,8 +753,11 @@ the OS it runs on).
 
 1. Install Python 3.10+ from python.org (check "Add to PATH" during install).
 2. Copy this whole folder to the Windows machine (including the `assets/`
-   folder — it holds the app icon).
-3. Double-click `build_exe.bat`, or run it from a command prompt.
+   folder — it holds the app icon), with
+   [redactor-build-tools](https://github.com/Erlbon/redactor-build-tools)
+   next to it.
+3. Double-click `build_exe.bat`, or run it from a command prompt. It makes
+   or refreshes this repo's own `.venv` (`venv_sync.py`) and builds with it.
 4. When it finishes, your standalone app is at `dist\epubredactor.exe`,
    already carrying the icon. That one file can be copied anywhere and run
    with no Python install needed.

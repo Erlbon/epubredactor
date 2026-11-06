@@ -1,5 +1,11 @@
 # Changelog
 
+## 2026-11-06#02 -- build_exe.bat builds with this repo's own .venv
+
+- **`build_exe.bat` builds with this repo's own `.venv`** (made at the redactor_common pin by
+  `..\redactor-build-tools\devenv\venv_sync.py`) instead of installing the requirements into the shared Python, which
+  breaks the other Redactor apps' pins. README's run and build steps say the same. No change to the app.
+
 ## 2026-11-06#01 -- the send2ereader address is a link
 
 - **Send to eReader:** the send2ereader project address in the dialog's intro now opens in your browser when clicked,
