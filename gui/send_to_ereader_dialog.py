@@ -24,6 +24,7 @@ import os
 import webbrowser
 from urllib.parse import urlparse
 
+from PyQt6.QtCore import Qt
 from PyQt6.QtWidgets import (
     QComboBox,
     QDialog,
@@ -56,14 +57,17 @@ class SendToEreaderDialog(OwnedDialog):
     def _build_ui(self) -> None:
         layout = QVBoxLayout(self)
 
-        info = QLabel(
+        self.info_label = info = QLabel(
             "Uses a send2ereader-style service (self-hostable: "
-            "github.com/daniel-j/send2ereader) to send books to your e-reader over "
+            '<a href="https://github.com/daniel-j/send2ereader">github.com/daniel-j/send2ereader</a>) '
+            "to send books to your e-reader over "
             "wireless. send2ereader has no documented upload API, so this app can't "
             "safely automate the transfer -- pick a server below, and this opens it "
             "in your browser plus the book's folder, ready to drag in."
         )
         info.setWordWrap(True)
+        info.setTextFormat(Qt.TextFormat.RichText)
+        info.setOpenExternalLinks(True)  # the project link opens in the system browser
         layout.addWidget(info)
 
         server_row = QHBoxLayout()

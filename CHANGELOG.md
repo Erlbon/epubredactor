@@ -1,5 +1,10 @@
 # Changelog
 
+## 2026-11-06#01 -- the send2ereader address is a link
+
+- **Send to eReader:** the send2ereader project address in the dialog's intro now opens in your browser when clicked,
+  instead of being plain text (every web address in Help, About and settings text is a link).
+
 ## 2026-11-05#02 -- the Linux test run passes again
 
 - **A test no longer assumes Windows' file order.** The folder scan sorts the way the system does: Windows ignores

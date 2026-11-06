@@ -167,3 +167,14 @@ def test_send_to_ereader_only_opens_http(monkeypatch):
     import gui.send_to_ereader_dialog as d
     src = open(d.__file__, encoding="utf-8").read()
     assert 'urlparse(server).scheme.lower() in ("http", "https")' in src
+
+
+def test_send_to_ereader_project_link_opens_in_the_browser():
+    """Every URL shown in the UI is a clickable link (Erlend, 2026-11-06)."""
+    from PyQt6.QtCore import Qt
+    from gui.send_to_ereader_dialog import SendToEreaderDialog
+    dlg = SendToEreaderDialog([])
+    label = dlg.info_label
+    assert '<a href="https://github.com/daniel-j/send2ereader">' in label.text()
+    assert label.openExternalLinks() and label.textFormat() == Qt.TextFormat.RichText
+    dlg.deleteLater()
