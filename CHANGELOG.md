@@ -1,5 +1,9 @@
 # Changelog
 
+## 2026-11-19#01 -- redactor_common 2026-11-18-01
+
+- Moved to the family's newest shared code (from 2026-11-05-01), so this release is built on the same pin as its siblings. What it brings here: **Open Folder no longer runs forever** on a folder tree with a junction that loops back on itself; menu items with a tick behave right again; the column-header menu's top entries can be on/off switches. No other change to the app.
+
 ## 2026-11-06#02 -- build_exe.bat builds with this repo's own .venv
 
 - **`build_exe.bat` builds with this repo's own `.venv`** (made at the redactor_common pin by
