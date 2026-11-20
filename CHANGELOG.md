@@ -1,5 +1,10 @@
 # Changelog
 
+## 2026-11-20#01 -- the Linux download is back
+
+- **The release has a Linux download again.** Every release since 2026-10-18 shipped without one: the Linux build's test run crashed. A window's "wait until I am on screen, then reopen the last session" step ran on a timer that outlived the window. In the tests, a window that was never shown reopened a session into a later test 2 seconds on and failed there, and PyQt ends the program on an error in a timer. The wait now dies with its window, and the tests delete every window they leave behind. Found with gdb in the same Linux build image.
+- In the app itself: closing the window within its first 2 seconds can no longer reopen the last session afterwards.
+
 ## 2026-11-19#01 -- redactor_common 2026-11-18-01
 
 - Moved to the family's newest shared code (from 2026-11-05-01), so this release is built on the same pin as its siblings. What it brings here: **Open Folder no longer runs forever** on a folder tree with a junction that loops back on itself; menu items with a tick behave right again; the column-header menu's top entries can be on/off switches. No other change to the app.

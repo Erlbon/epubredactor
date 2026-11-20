@@ -270,3 +270,25 @@ def test_session_restore_paints_before_and_after_and_waits_for_the_window(monkey
     monkeypatch.setattr(hidden, "_restore_last_session", lambda: waited.append("restore"))
     hidden._restore_last_session_painted()  # not visible yet: it waits instead of restoring
     assert waited == []
+
+
+def test_a_waiting_restore_dies_with_its_window(monkeypatch):
+    # The wait used a plain singleShot(lambda), which outlived the window and restored a session into a later
+    # test 2 s on; PyQt aborted on the error (the Linux release build, 2026-10-18 to 2026-11-19).
+    import time
+
+    from PyQt6.QtCore import QCoreApplication, QEvent
+    from PyQt6.QtWidgets import QApplication
+
+    hidden = mw.MainWindow()
+    restored = []
+    monkeypatch.setattr(hidden, "_restore_last_session", lambda: restored.append("restore"))
+    hidden._restore_last_session_painted()
+    retry = hidden._restore_retry
+    assert retry.parent() is hidden and retry.isActive()
+    hidden.deleteLater()
+    QCoreApplication.sendPostedEvents(None, QEvent.Type.DeferredDelete)
+    end = time.monotonic() + 0.3
+    while time.monotonic() < end:
+        QApplication.processEvents()
+    assert restored == []

@@ -462,6 +462,8 @@ class MainWindow(QMainWindow):
         self._build_ui()
         self.setAcceptDrops(True)
         self._refresh_status()
+        self._restore_retry = None  # a QTimer once needed, see _restore_last_session_painted
+        self._restore_waited = 0
         QTimer.singleShot(0, self._restore_last_session_painted)
         # _show_beta_warning is intentionally not scheduled for now: it
         # could steal focus from an "include subfolders?" prompt shown by
@@ -477,7 +479,16 @@ class MainWindow(QMainWindow):
         stayed white until it was resized (2026-10-18: seen with a saved session of books on D:). Waits up to
         about 2 s for the window to be visible."""
         if not self.isVisible() and waited < 40:
-            QTimer.singleShot(50, lambda: self._restore_last_session_painted(waited + 1))
+            # On a timer the window owns, so the retry dies with the window. A plain singleShot(lambda) kept a closed
+            # window alive and ran its restore up to 2 s later, in whatever came next: in the tests a window never
+            # shown restored a session into the following test's fake books, the TypeError escaped a timer slot and
+            # PyQt aborted the run (the Linux release build failed on every release from 2026-10-18 to 2026-11-19).
+            if self._restore_retry is None:
+                self._restore_retry = QTimer(self)
+                self._restore_retry.setSingleShot(True)
+                self._restore_retry.timeout.connect(lambda: self._restore_last_session_painted(self._restore_waited))
+            self._restore_waited = waited + 1
+            self._restore_retry.start(50)
             return
         self.repaint()  # the first paint happens now, before anything switches painting off
         try:

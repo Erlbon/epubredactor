@@ -25,6 +25,25 @@ def _isolated_save_log(monkeypatch, tmp_path):
 
 
 @pytest.fixture(autouse=True)
+def _no_windows_left_behind():
+    """Deletes every window a test left open, on the GUI thread, before the next test starts. Tests create a
+    MainWindow() and drop it; it used to live on until the garbage collector got to it, and meanwhile its timers ran
+    in later tests (a never-shown window restored a session into the next test's fake books 2 s on, and PyQt aborted
+    the run on the TypeError: the Linux release build, 2026-10-18 to 2026-11-19). deleteLater, not close(): a close
+    would run closeEvent (save prompts, session saving) after the test's own patches are gone."""
+    yield
+    from PyQt6.QtCore import QCoreApplication, QEvent
+    from PyQt6.QtWidgets import QApplication
+
+    app = QApplication.instance()
+    if app is None:
+        return
+    for widget in app.topLevelWidgets():
+        widget.deleteLater()
+    QCoreApplication.sendPostedEvents(None, QEvent.Type.DeferredDelete)
+
+
+@pytest.fixture(autouse=True)
 def _non_blocking_message_boxes(monkeypatch):
     """QMessageBox.information/warning/critical are modal and never
     return under the offscreen test platform -- two tests
