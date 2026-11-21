@@ -1,5 +1,9 @@
 # Changelog
 
+## 2026-11-21#01 -- redactor_common 2026-11-21-02
+
+- Moved to the family's newest shared code (from 2026-11-18-01), so this app is on the same pin as its siblings. What it brings: the shared notes and folder-cover code also reads and writes folders whose names end in a dot. No other change to the app.
+
 ## 2026-11-20#01 -- the Linux download is back
 
 - **The release has a Linux download again.** Every release since 2026-10-18 shipped without one: the Linux build's test run crashed. A window's "wait until I am on screen, then reopen the last session" step ran on a timer that outlived the window. In the tests, a window that was never shown reopened a session into a later test 2 seconds on and failed there, and PyQt ends the program on an error in a timer. The wait now dies with its window, and the tests delete every window they leave behind. Found with gdb in the same Linux build image.
