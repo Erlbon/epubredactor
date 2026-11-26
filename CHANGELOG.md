@@ -1,5 +1,26 @@
 # Changelog
 
+## 2026-11-26#02 -- Check for Updates installs the new version itself; a Windows installer
+
+- **Help > Check for Updates installs the update** instead of only opening the download page. The app is on the
+  Redactor family's update framework (redactor_common docs/update-framework.md): every release carries an
+  `update-manifest.json` naming each download with its size and checksum, and every copy says how it was put on the
+  PC. The portable `epubredactor.exe` replaces itself (the old one is kept as `epubredactor.exe.old` until the next
+  start) and starts again; an installed copy runs the new installer silently and starts again. When it cannot update,
+  it says why, with a Copy details button, and still offers the download page.
+- **A Windows installer**, `epubredactor-setup.exe`: per user, no administrator rights, into
+  `%LOCALAPPDATA%\Programs\The EPUB Redactor`, with a Start menu entry. The one-file `epubredactor.exe` stays the
+  portable download.
+- **A copy on an older version must be updated by hand once**: download this release from the release page. Its
+  Check for Updates cannot read the new releases' manifest (decided for the whole family: no bridge for old copies).
+- The command line has `epubredactor --check-update [--release-tag vX]` (prints what this copy would do, as JSON;
+  changes nothing) and `--update` (does it without a window), for the release gate.
+- Releases are now made with redactor_common's release tool (`pyproject.toml`), which builds the exe, the installer
+  and the manifest, publishes a pre-release, checks the update from the previous release, and only then makes it
+  Latest. The GitHub workflow no longer builds the Windows exe (its upload would replace the file the manifest
+  pins); it adds only the Linux download, when the release is published. The Linux build cannot replace itself: it
+  says so and opens the release page.
+
 ## 2026-11-26#01 -- the Delete key asks what you mean
 
 - **The Delete key asks: Remove from List, Delete Files (Recycle Bin) or Cancel.** Before, Delete only took the book off the list and left the file on disk, which is not what most people expect. Remove from List is the default button, so Delete then Enter never deletes a file. Choosing Delete Files sends the files to the Recycle Bin at once (no second question). File > Remove from List and File > Delete Files (Recycle Bin) still act at once without asking; Shift+Delete is still Delete Files.
