@@ -28,3 +28,4 @@ epubredactor_updates.json
 
 # Each repo tests in its own venv (redactor-build-tools/devenv/venv_sync.py)
 .venv/
+.venv-build/
