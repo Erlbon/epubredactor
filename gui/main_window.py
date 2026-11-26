@@ -119,6 +119,7 @@ from redactor_common.gui.standard_menus import (
     build_standard_menu_bar,
     get_action_registry,
     look_up_submenu,
+    remove_or_delete_action,
     set_apply_count,
     standard_edit_items,
     standard_file_items,
@@ -127,6 +128,7 @@ from redactor_common.gui.standard_menus import (
     standard_view_items,
     with_aliases,
 )
+from redactor_common.gui.remove_or_delete import DELETE, REMOVE, ask_remove_or_delete
 from redactor_common.gui.overwrite_review_dialog import resolve_overwrite_conflicts
 from redactor_common.gui.colors import (
     DIRTY_COLOR, ERROR_COLOR, SAVE_FAILED_COLOR, DRM_COLOR, HIGHLIGHT_TEXT_COLOR,
@@ -909,6 +911,9 @@ class MainWindow(QMainWindow):
             ],
             tools=tools_items,
             help=help_items,
+            # The Delete key asks Remove from List or Delete Files (Erlend, 2026-11-26): Remove from
+            # List alone left the file on disk, which is not what most people expect from Delete.
+            hidden=[remove_or_delete_action(self.on_delete_key)],
         )
         build_standard_menu_bar(self, spec)
         actions = get_action_registry(self)
@@ -1169,7 +1174,7 @@ class MainWindow(QMainWindow):
             MenuAction("send_ereader", "eReader (Wireless)…", self.open_send_to_ereader_dialog),
         ]))
         items.append(Separator())
-        items.append(self.delete_files_act)  # Remove from List: File menu (Delete key) only
+        items.append(self.delete_files_act)  # Remove from List: File menu only (the Delete key asks which)
         return items
 
     def _show_table_context_menu(self, pos) -> None:
@@ -2892,10 +2897,28 @@ class MainWindow(QMainWindow):
         self._rebuild_table()
         self._refresh_status()
 
-    def delete_files(self) -> None:
+    def on_delete_key(self) -> None:
+        """The Delete key: asks whether the selected books are to be removed
+        from the list (the files stay) or sent to the Recycle Bin. Remove from
+        List is the default button, so Delete then Enter never deletes a file.
+        The menu items act at once; this question is only for the key."""
+        selected = self._books_for_rows(self._selected_rows(), exclude_errors=False)
+        if not selected:
+            self.status.showMessage("Delete: select the books first.", 6000)
+            return
+        choice = ask_remove_or_delete(
+            self, len(selected), names=[os.path.basename(b.path) for b in selected], noun="book",
+        )
+        if choice == REMOVE:
+            self.remove_selected()
+        elif choice == DELETE:
+            self.delete_files(confirm=False)  # the question above already asked
+
+    def delete_files(self, confirm: bool = True) -> None:
         """Sends the selected books' files to the Recycle Bin (recoverable,
         not a permanent delete) and removes them from the list. Requires
-        the send2trash package (in requirements.txt)."""
+        the send2trash package (in requirements.txt). `confirm=False` skips
+        the Yes/No question (the Delete key's own question already asked)."""
         to_delete = self._books_for_rows(self._selected_rows(), exclude_errors=False)
         if not to_delete:
             QMessageBox.information(self, "No books selected", "Select at least one book to delete.")
@@ -2909,20 +2932,21 @@ class MainWindow(QMainWindow):
             )
             return
 
-        preview = "\n".join(f"- {os.path.basename(b.path)}" for b in to_delete[:10])
-        if len(to_delete) > 10:
-            preview += f"\n...and {len(to_delete) - 10} more"
-        reply = QMessageBox.question(
-            self,
-            "Delete Files (Recycle Bin)?",
-            f"Send {len(to_delete)} file(s) to the Recycle Bin?\n\n{preview}\n\n"
-            "This removes them from disk (recoverable from the Recycle Bin) "
-            "and from this list.",
-            QMessageBox.StandardButton.Yes | QMessageBox.StandardButton.No,
-            QMessageBox.StandardButton.No,
-        )
-        if reply != QMessageBox.StandardButton.Yes:
-            return
+        if confirm:
+            preview = "\n".join(f"- {os.path.basename(b.path)}" for b in to_delete[:10])
+            if len(to_delete) > 10:
+                preview += f"\n...and {len(to_delete) - 10} more"
+            reply = QMessageBox.question(
+                self,
+                "Delete Files (Recycle Bin)?",
+                f"Send {len(to_delete)} file(s) to the Recycle Bin?\n\n{preview}\n\n"
+                "This removes them from disk (recoverable from the Recycle Bin) "
+                "and from this list.",
+                QMessageBox.StandardButton.Yes | QMessageBox.StandardButton.No,
+                QMessageBox.StandardButton.No,
+            )
+            if reply != QMessageBox.StandardButton.Yes:
+                return
 
         deleted: list[EpubBook] = []
         errors: list[tuple[str, str]] = []

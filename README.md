@@ -208,6 +208,9 @@ them in one go.
 - **Delete Files (Recycle Bin)** (File menu, Shift+Delete) — sends files to the Recycle Bin (recoverable, not a
   permanent delete), with a confirmation prompt listing what's about to
   go; the status bar confirms how many went.
+- **The Delete key** asks what you mean: **Remove from List** (the default; the
+  files stay on disk), **Delete Files (Recycle Bin)** or **Cancel**. The two
+  File menu items act at once without this question.
 - **Refresh List** — re-scans the folders your loaded books live in for
   new files, then reloads everything fresh from disk (discarding any
   unsaved in-memory edits, with confirmation first). Always tells you
@@ -1075,7 +1078,7 @@ Keyboard shortcuts:
 | File > Save All | Ctrl+S or Ctrl+Shift+A |
 | File > Rename File | F2 |
 | File > Rename / Export / Move | Ctrl+E |
-| File > Remove from List | Delete |
+| Remove from List or Delete Files (asks which) | Delete |
 | File > Delete Files (Recycle Bin) | Shift+Delete |
 | Edit > Undo / Redo | Ctrl+Z / Ctrl+Y |
 | Edit > Apply to N Selected | Ctrl+Enter |

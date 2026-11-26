@@ -1,5 +1,10 @@
 # Changelog
 
+## 2026-11-26#01 -- the Delete key asks what you mean
+
+- **The Delete key asks: Remove from List, Delete Files (Recycle Bin) or Cancel.** Before, Delete only took the book off the list and left the file on disk, which is not what most people expect. Remove from List is the default button, so Delete then Enter never deletes a file. Choosing Delete Files sends the files to the Recycle Bin at once (no second question). File > Remove from List and File > Delete Files (Recycle Bin) still act at once without asking; Shift+Delete is still Delete Files.
+- Moved to redactor_common 2026-11-26-02 (from 2026-11-21-02), which has this question. Its other changes since then are music lookups (Discogs, MusicBrainz) and the shared Parse dialog.
+
 ## 2026-11-21#01 -- redactor_common 2026-11-21-02
 
 - Moved to the family's newest shared code (from 2026-11-18-01), so this app is on the same pin as its siblings. What it brings: the shared notes and folder-cover code also reads and writes folders whose names end in a dot. No other change to the app.
