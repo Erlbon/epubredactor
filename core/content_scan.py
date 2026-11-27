@@ -40,6 +40,9 @@ DEFAULT_MAX_CHARS = 20000
 # Matches found only in the back matter are a little less trustworthy
 # (an "about the author" page can mention other books and publishers).
 _BACK_MATTER_FACTOR = 0.9
+# An ISBN found only at the back is as likely another book's ("Also by ...", "More from the publisher"): it never
+# reaches the 0.9 auto-apply threshold, so it lands in Needs review.
+_BACK_MATTER_ISBN_CAP = 0.8
 
 _NS = {"opf": "http://www.idpf.org/2007/opf"}
 _XML_DECL_RE = re.compile(r"^\s*<\?xml[^>]*\?>")
@@ -581,8 +584,10 @@ def _merge_back(front: ContentScanResult, back: ContentScanResult) -> None:
             continue
         for key in group:
             if getattr(back, key):
-                _set(front, key, getattr(back, key), back.confidence[key] * _BACK_MATTER_FACTOR,
-                     back.source_snippets[key])
+                confidence = back.confidence[key] * _BACK_MATTER_FACTOR
+                if key == "isbn":
+                    confidence = min(confidence, _BACK_MATTER_ISBN_CAP)
+                _set(front, key, getattr(back, key), confidence, back.source_snippets[key])
     for role, names in back.contributors.items():
         if role not in front.contributors:
             front.contributors[role] = names

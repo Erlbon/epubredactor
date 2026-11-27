@@ -1,5 +1,29 @@
 # Changelog
 
+## 2026-11-27#05 -- Redact and the scan tools no longer drop pictures, titles, text or authors
+
+- **Remove Running Headers keeps pictures and link targets.** A paragraph holding only a picture, or a page anchor
+  that the page list or a link points at, is no longer swept away as an "empty paragraph" beside a header. When a
+  header or a rejoined paragraph goes, its id moves to the paragraph next to it, so links keep working.
+- **Remove Running Headers keeps story and section titles.** A title that reads like the running header is kept when
+  it is the first paragraph of its document or comes right after a heading or a rule.
+- **Words joined across a page-end hyphen are listed** in the Remove Running Headers preview, so a real compound
+  such as "well-known" can be spotted. A word that already holds a hyphen ("mother-in-law") keeps it.
+- **Strip HTML from Description no longer cuts text after a "<".** "x<y" or "<3" in a plain description is left
+  alone, and in an HTML description a stray "<" stays as it is. Comments, styles and scripts are left out of the
+  result instead of being copied into it.
+- **Redact no longer splits "Simon & Schuster" into two authors.** Its "Fix validation issues" step leaves "A & B"
+  authors to Clean Up Authors, which knows company names.
+- **An ISBN found only at the back of a book goes to Needs review.** It is often another book's ("Also by ..."),
+  so Redact no longer applies it, and the lookups and cover that follow from it, on its own.
+- **The lookup no longer builds a date from two editions.** A month and day are taken only together with their own
+  year.
+- **Redact's temporary file stays in the book's folder** when the folder path is very long.
+- **Rebuild Manifest no longer removes a chapter whose file name differs only in accents' encoding or in case**
+  (books made with macOS tools).
+- **A damaged page inside a book is skipped** by the page reader and the running-header scan instead of causing an
+  error.
+
 ## 2026-11-27#04 -- saving no longer damages covers, dates or metadata the app does not show
 
 - **Setting or removing a cover never touches the cover page.** Many books point their cover at the cover page

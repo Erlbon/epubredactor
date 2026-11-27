@@ -134,6 +134,9 @@ class PageHeadersDialog(OwnedDialog):
         plan = self._plans[self._rows[rows[0].row()]]
         lines = [plan.summary(), "", "Repeating headings: " + ", ".join(plan.headings[:8]) + (" …" if len(plan.headings) > 8 else ""), ""]
         lines += plan.examples
+        if plan.hyphen_words:
+            lines += ["", "Words joined across a page-end hyphen (a real compound such as \"well-known\" loses its hyphen; untick the book to keep them):"]
+            lines += plan.hyphen_words[:40] + ([f"... and {len(plan.hyphen_words) - 40} more"] if len(plan.hyphen_words) > 40 else [])
         self.examples.setPlainText("\n".join(lines))
 
     @staticmethod

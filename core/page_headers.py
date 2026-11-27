@@ -48,7 +48,14 @@ CAPITALS_SHARE = 0.8  # of a header's letters that are capitals, when it is prin
 SIMILAR_HEADING = 0.85  # how alike an OCR-damaged heading is to a proved one
 EXAMPLES = 6
 
-_PARAGRAPH = re.compile(r"<p\b[^>]*?(?<!/)>(.*?)</p\s*>", re.S | re.I)
+_PARAGRAPH = re.compile(r"(<p\b[^>]*?(?<!/)>)(.*?)</p\s*>", re.S | re.I)
+# what makes a paragraph with no text still worth keeping: a picture or other media, or an anchor a link points at
+_MEDIA = re.compile(r"<(?:\w+:)?(?:img|image|svg|object|embed|video|audio|iframe|picture|canvas|math|table)\b", re.I)
+_ANCHOR_ATTR = re.compile(r"\s(?:id|name|epub:type)\s*=", re.I)
+_TAG_WITH_ATTRS = re.compile(r"<((?:\w+:)?\w+)\b([^>]*)>", re.S)
+_ATTR = re.compile(r"""([\w:.-]+)\s*=\s*("[^"]*"|'[^']*')""")
+_CARRIED_ATTRS = ("id", "name", "epub:type", "title", "role")
+_HEADING_OR_RULE = re.compile(r"<(?:h[1-6]|hr)\b", re.I)
 _TAG = re.compile(r"<[^>]+>")
 _NUMBER_FIRST = re.compile(r"(\d{1,4})\s+(\D.{2,%d})" % MAX_HEADING_CHARS, re.S)
 _NUMBER_LAST = re.compile(r"(\D.{2,%d}?)\s+(\d{1,4})" % MAX_HEADING_CHARS, re.S)
@@ -69,6 +76,7 @@ class Block:
     end: int
     inner: str
     text: str
+    open_tag: str = ""  # the paragraph's own <p ...> tag
 
 
 @dataclass
@@ -78,6 +86,7 @@ class DocPlan:
     removed: list[tuple[str, str]] = field(default_factory=list)  # (kind, text)
     joins: int = 0
     hyphen_joins: int = 0
+    hyphen_words: list[str] = field(default_factory=list)  # "well-known -> wellknown": hyphens that were dropped
 
 
 @dataclass
@@ -99,6 +108,11 @@ class PageFurniturePlan:
     @property
     def hyphen_joins(self) -> int:
         return sum(d.hyphen_joins for d in self.docs)
+
+    @property
+    def hyphen_words(self) -> list[str]:
+        """Every word made whole by dropping a page-end hyphen, for a look at real compounds ("well-known")."""
+        return [w for d in self.docs for w in d.hyphen_words]
 
     @property
     def changed(self) -> bool:
@@ -128,7 +142,38 @@ def _clean(text: str) -> str:
 
 
 def paragraph_blocks(text: str) -> list[Block]:
-    return [Block(m.start(), m.end(), m.group(1), _clean(m.group(1))) for m in _PARAGRAPH.finditer(text)]
+    return [Block(m.start(), m.end(), m.group(2), _clean(m.group(2)), m.group(1)) for m in _PARAGRAPH.finditer(text)]
+
+
+def _has_media(block: Block) -> bool:
+    return bool(_MEDIA.search(block.inner))
+
+
+def _truly_empty(block: Block) -> bool:
+    """No text, no picture or other media, and no id / name / epub:type a link or the page list could point at."""
+    return not block.text and not _has_media(block) and not _ANCHOR_ATTR.search(block.open_tag + block.inner)
+
+
+def _anchors(block: Block, inner_too: bool = True) -> str:
+    """Empty stand-ins for every anchor (id, name, epub:type) the paragraph carries, so a paragraph that goes does not
+    take a link target or a page-list entry with it. `inner_too=False` looks only at the <p> tag itself (the inside of
+    a joined paragraph is kept as it is)."""
+    out = []
+    for m in _TAG_WITH_ATTRS.finditer(block.open_tag + (block.inner if inner_too else "")):
+        tag = m.group(1)
+        if tag.startswith("/"):
+            continue
+        attrs = {k: v for k, v in _ATTR.findall(m.group(2))}
+        kept = [(k, attrs[k]) for k in _CARRIED_ATTRS if k in attrs]
+        if not any(k in ("id", "name", "epub:type") for k, _v in kept):
+            continue
+        name = "a" if tag.lower() == "a" else "span"
+        if name == "span":
+            kept = [(k, v) for k, v in kept if k != "name"]
+            if not kept or not any(k in ("id", "epub:type") for k, _v in kept):
+                continue
+        out.append(f"<{name}" + "".join(f" {k}={v}" for k, v in kept) + f"></{name}>")
+    return "".join(out)
 
 
 def _norm_heading(text: str) -> str:
@@ -244,12 +289,23 @@ def _prove(candidates: list[_Candidate]) -> tuple[list[_Candidate], set[str], se
 # --- editing the documents -------------------------------------------------------------------------------------
 
 
-def _join(a_inner: str, b_inner: str) -> tuple[str, bool]:
-    """(the joined paragraph's inner HTML, whether a hyphen was dropped)."""
-    hyphen = re.search(r"([^\W\d_])-(\s*(?:</[^>]+>\s*)*)$", a_inner)
+def _join(a_inner: str, b_inner: str) -> tuple[str, bool, str]:
+    """(the joined paragraph's inner HTML, whether the join was at a hyphen, and -- when the hyphen was dropped -- a
+    line naming the word, "well-known -> wellknown", so a real compound can be spotted in the plan).
+
+    A hyphen at a page end is nearly always a word cut by the typesetter ("ex-" + "hausted"), so it goes; but the text
+    cannot tell that from a compound ("well-" + "known"), so every dropped hyphen is listed. A first part that already
+    holds a hyphen ("mother-in-" + "law") is a compound: its hyphen stays."""
+    hyphen = re.search(r"([^\W\d_]+(?:-[^\W\d_]+)*)-(\s*(?:</[^>]+>\s*)*)$", a_inner)
     if hyphen:
-        return a_inner[: hyphen.start()] + hyphen.group(1) + hyphen.group(2) + b_inner.lstrip(), True
-    return a_inner.rstrip() + " " + b_inner.lstrip(), False
+        first = hyphen.group(1)
+        rest = _clean(b_inner).split()
+        second = re.match(r"[^\W\d_]*", rest[0]).group(0) if rest else ""
+        if "-" in first:
+            return a_inner[: hyphen.end(1)] + "-" + hyphen.group(2) + b_inner.lstrip(), True, ""
+        joined = a_inner[: hyphen.start()] + first + hyphen.group(2) + b_inner.lstrip()
+        return joined, True, f"{first}-{second} -> {first}{second}"
+    return a_inner.rstrip() + " " + b_inner.lstrip(), False, ""
 
 
 _CHAPTER_MARKER = re.compile(r"(chapter|part|book|section)\b.*|[IVXLC]{1,7}\.?|\d{1,3}\.?", re.I)
@@ -265,6 +321,17 @@ def _after_chapter_marker(blocks: list[Block], index: int, removed: dict[int, st
     return False
 
 
+def _opens_a_section(text: str, blocks: list[Block], index: int, removed: dict[int, str]) -> bool:
+    """True when the paragraph opens a section, so a line that reads like the running header is the section's own
+    title (a story collection whose running header is the story title): it is the first paragraph with text in its
+    document, or a heading or a rule (<hr>) stands between it and the paragraph with text before it. Paragraphs
+    being removed do not count as text."""
+    for i in range(index - 1, -1, -1):
+        if blocks[i].text and i not in removed:
+            return bool(_HEADING_OR_RULE.search(text, blocks[i].end, blocks[index].start))
+    return True
+
+
 def _printed_like_a_header(raw: str, printed: set[str]) -> bool:
     if _capitals_share(raw) >= CAPITALS_SHARE:
         return True
@@ -273,45 +340,66 @@ def _printed_like_a_header(raw: str, printed: set[str]) -> bool:
 
 def _rewrite_document(text: str, blocks: list[Block], remove: dict[int, str], join_sentences: bool = True) -> tuple[str, DocPlan]:
     plan = DocPlan(path="", new_text=text)
+    # a header paragraph that also holds a picture is not only a header: it stays
+    remove = {b: kind for b, kind in remove.items() if not _has_media(blocks[b])}
     inner = {b: blk.inner for b, blk in enumerate(blocks)}
     texts = {b: blk.text for b, blk in enumerate(blocks)}
     dropped: set[int] = set()
     for b, kind in remove.items():
         dropped.add(b)
         plan.removed.append((kind, blocks[b].text))
-    # the empty paragraphs right beside a removed header belong to the page break
+    # the empty paragraphs right beside a removed header belong to the page break (a picture or an anchor is not empty)
     for b in sorted(remove):
         for step in (-1, 1):
             n, i = 0, b + step
-            while 0 <= i < len(blocks) and n < MAX_EMPTY_AROUND and (not texts[i] or i in dropped):
-                if not texts[i] and i not in dropped:
+            while 0 <= i < len(blocks) and n < MAX_EMPTY_AROUND and (_truly_empty(blocks[i]) or i in dropped):
+                if i not in dropped:
                     dropped.add(i)
                     plan.removed.append((KIND_EMPTY, ""))
                     n += 1
                 i += step
-    # put the sentences a page break cut back together
+    # put the sentences a page break cut back together; the anchors of a removed header move to the next kept
+    # paragraph (where the page now starts), those of a joined paragraph to the join point
     removed_at = sorted(remove)
     previous_kept: int | None = None
+    last_kept: int | None = None
+    pending = ""
     for b in range(len(blocks)):
         if b in dropped:
+            pending += _anchors(blocks[b])
             continue
+        if pending:
+            inner[b] = pending + inner[b]
+            pending = ""
         if not texts[b]:
+            last_kept = b
             continue
         cut_between = join_sentences and previous_kept is not None and any(previous_kept < r < b for r in removed_at)
         if cut_between and not _ENDS_A_SENTENCE.search(texts[previous_kept]) and texts[b][0].islower():
-            joined, hyphen = _join(inner[previous_kept], inner[b])
+            joined, hyphen, word = _join(inner[previous_kept], _anchors(blocks[b], inner_too=False) + inner[b])
             inner[previous_kept] = joined
             texts[previous_kept] = _clean(joined)
             dropped.add(b)
             plan.joins += 1
             plan.hyphen_joins += hyphen
+            if word:
+                plan.hyphen_words.append(word)
             continue
-        previous_kept = b
+        previous_kept = last_kept = b
+    tail_anchors = ""  # nothing kept after the last removed paragraph: its anchors go to the last kept one
+    if pending:
+        if last_kept is not None:
+            inner[last_kept] += pending
+        else:
+            tail_anchors = pending
     out, cursor = [], 0
+    last_dropped = max(dropped) if dropped else -1
     for b, blk in enumerate(blocks):
         out.append(text[cursor: blk.start])
         cursor = blk.end
         if b in dropped:
+            if b == last_dropped and tail_anchors:
+                out.append(tail_anchors)
             continue
         if inner[b] != blk.inner:
             open_tag_end = text.index(">", blk.start) + 1
@@ -363,7 +451,10 @@ def find_page_furniture(book: EpubBook, join_sentences: bool = True) -> PageFurn
             fits = bool(before) and before[-1] < c.number and (c.number < after[0] if after else c.number - before[-1] <= MAX_NUMBER_STEP)
             if fits and _printed_like_a_header(c.raw, printed):
                 remove.setdefault(c.doc, {})[c.block] = c.kind
-        elif c.kind == KIND_TITLE and c.text in printed and not _after_chapter_marker(parsed[c.doc][1], c.block, remove.get(c.doc, {})):
+        elif c.kind == KIND_TITLE and c.text in printed:
+            blocks, removed_here = parsed[c.doc][1], remove.get(c.doc, {})
+            if _after_chapter_marker(blocks, c.block, removed_here) or _opens_a_section(documents[c.doc][1], blocks, c.block, removed_here):
+                continue
             remove.setdefault(c.doc, {})[c.block] = c.kind
         elif c.kind == KIND_NUMBER:
             before = [order[k].number for k in proved_keys if k < key]

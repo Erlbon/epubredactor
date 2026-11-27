@@ -46,7 +46,7 @@ def add_headers_parser(sub) -> None:
 def _row(book, plan) -> dict:
     return {
         "path": book.path, "status": "", "headers": plan.headers, "removed": plan.removed, "joined": plan.joins,
-        "hyphenated": plan.hyphen_joins, "confidence": plan.confidence if plan.changed else None,
+        "hyphenated": plan.hyphen_joins, "hyphen_words": plan.hyphen_words, "confidence": plan.confidence if plan.changed else None,
         "headings": plan.headings, "examples": plan.examples, "message": "",
     }
 
@@ -60,7 +60,7 @@ def run_headers(args: argparse.Namespace, out: Output) -> int:
     for index, book in enumerate(books, start=1):
         out.progress(index, len(books), book.path)
         if book.load_error:
-            row = {"path": book.path, "status": "failed", "headers": 0, "removed": 0, "joined": 0, "hyphenated": 0,
+            row = {"path": book.path, "status": "failed", "headers": 0, "removed": 0, "joined": 0, "hyphenated": 0, "hyphen_words": [],
                    "confidence": None, "headings": [], "examples": [], "message": book.load_error}
             failed += 1
         else:

@@ -15,6 +15,8 @@ already parses book content documents), so it's fully unit-testable.
 
 from __future__ import annotations
 
+import re
+
 import lxml.etree
 import lxml.html
 
@@ -25,15 +27,57 @@ import lxml.html
 # "AB" mashed together the way a naive .text_content() would produce.
 _BLOCK_TAGS = {"p", "div", "br", "li", "tr", "h1", "h2", "h3", "h4", "h5", "h6", "blockquote"}
 
+# Elements whose content is not text a reader sees: dropped with what is inside them (their tail text stays).
+_SKIP_TAGS = {"style", "script", "head", "title", "noscript", "template"}
+
+# The tags a description written in HTML actually uses. Text counts as HTML only when it holds one of them (or a
+# comment); any other "<" is an ordinary character ("x<y", "5 < 10", "<3") and is escaped before parsing, so the
+# parser never swallows the text after it as a tag. An attribute must have a value, so "if a<b and c>d" is not a
+# <b> tag.
+_KNOWN_TAG = re.compile(
+    r"<\s*/?\s*(?:p|div|span|br|hr|b|i|u|s|em|strong|small|big|sub|sup|font|center|a|img|ul|ol|li|dl|dt|dd|"
+    r"h[1-6]|blockquote|q|cite|code|pre|strike|del|ins|table|thead|tbody|tfoot|tr|td|th|section|article|header|"
+    r"footer|style|script|head|title|body|html|noscript|template)"
+    r"""(?:\s+[\w:.-]+\s*=\s*(?:"[^"]*"|'[^']*'|[^\s"'<>]+))*\s*/?\s*>""",
+    re.I,
+)
+_COMMENT = re.compile(r"<!--.*?-->|<\?.*?\?>", re.S)
+
+
+def _escape_stray_lt(text: str) -> str | None:
+    """`text` with every "<" that does not open a known tag or a comment turned into "&lt;"; None when the text holds
+    no known tag at all (it is not HTML)."""
+    if not _KNOWN_TAG.search(text):
+        return None
+    out, cursor = [], 0
+    for m in re.finditer("<", text):
+        if m.start() < cursor:
+            continue
+        out.append(text[cursor: m.start()])
+        tag = _KNOWN_TAG.match(text, m.start()) or _COMMENT.match(text, m.start())
+        if tag:
+            out.append(tag.group(0))
+            cursor = tag.end()
+        else:
+            out.append("&lt;")
+            cursor = m.start() + 1
+    out.append(text[cursor:])
+    return "".join(out)
+
 
 def _extract_paragraphs(text: str) -> list[str]:
     """Walks the parsed HTML tree in document order, collecting text
     and inserting a paragraph break after each block-level element,
     then collapses each paragraph's own internal whitespace (including
     any newlines that were already in the source) down to single
-    spaces. Returns [] if nothing parseable was found."""
+    spaces. Comments, processing instructions and style/script content
+    are skipped (their tail text is kept). Returns [] if the text holds
+    no known HTML tag or nothing parseable was found."""
+    escaped = _escape_stray_lt(text)
+    if escaped is None:
+        return []
     try:
-        doc = lxml.html.fromstring(f"<div>{text}</div>")
+        doc = lxml.html.fromstring(f"<div>{escaped}</div>")
     except (lxml.etree.ParserError, ValueError):
         return []
 
@@ -43,9 +87,10 @@ def _extract_paragraphs(text: str) -> list[str]:
         if el.text:
             pieces.append(el.text)
         for child in el:
-            walk(child)
-            if child.tag in _BLOCK_TAGS:
-                pieces.append("\n\n")
+            if isinstance(child.tag, str) and child.tag.lower() not in _SKIP_TAGS:
+                walk(child)
+                if child.tag in _BLOCK_TAGS:
+                    pieces.append("\n\n")
             if child.tail:
                 pieces.append(child.tail)
 

@@ -271,7 +271,7 @@ def test_front_wins_and_back_fills_gaps_with_discount():
     assert r.publisher == "Front Press"
     assert r.confidence["publisher"] == 0.7
     assert r.isbn == "9780141439518"
-    assert r.confidence["isbn"] == 0.9   # 1.0 * back-matter factor
+    assert r.confidence["isbn"] == 0.8   # a back-matter ISBN is capped below the auto-apply threshold
     assert r.contributors["translator"] == ["Jane Smith"]
     assert r.confidence["translator"] == 0.54
 

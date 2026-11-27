@@ -263,7 +263,7 @@ def test_redact_records_one_redact_entry_per_book(tmp_path, env, history_on):
     [entry] = entries()
     assert entry.kind == "redact" and entry.status == "ok" and entry.path == path
     assert entry.changes["Description"] == ("<p>Hi</p>", "Hi")
-    assert entry.changes["Author(s)"] == ("Ann & Bob", "Ann; Bob")
+    assert "Author(s)" not in entry.changes  # Redact leaves the "A & B" split to Clean Up Authors
     assert history.apply_restore(path, Journal.restore_values(entry)[0]) == ""
     assert EpubBook(path).metadata.description == "<p>Hi</p>"
 

@@ -128,9 +128,10 @@ TOC_FALLBACK_CONFIDENCE = 0.3
 # The validator fixes Redact applies on its own. LANGUAGE_MISSING is
 # left out on purpose: its fix writes "en" without looking at the book, and
 # so is EPUB2_ATTRIBUTES_IN_EPUB3, which drops attributes EPUB 3 has no
-# place for.
+# place for, and AUTHORS_AMPERSAND, which would split "Simon & Schuster"
+# (the Clean Up Authors step splits "A & B" with a guard for such names).
 SAFE_FIX_CODES = {
-    "PRIMARY_ID_MISSING", "AUTHORS_AMPERSAND", "DANGLING_SPINE_ITEMREF", "DANGLING_REFINES",
+    "PRIMARY_ID_MISSING", "DANGLING_SPINE_ITEMREF", "DANGLING_REFINES",
 }
 
 _SECTION_TITLE_RE = re.compile(r"^(Section \d+|Cover)$")
@@ -284,10 +285,12 @@ def _retry_transient(fn: Callable, exc_type: type, only_if: Callable[[Exception]
 
 def _unused_sibling(original: str) -> str:
     """A not-yet-existing file name next to `original` for the new copy
-    (same folder, so the final swap is an atomic rename)."""
-    stem, ext = os.path.splitext(original)
+    (same folder, so the final swap is an atomic rename). Only the file
+    name is shortened, never the folder part."""
+    folder, name = os.path.split(original)
+    stem, ext = os.path.splitext(name)
     while True:
-        candidate = f"{stem[:200]}.redact-{uuid.uuid4().hex[:8]}{ext or '.epub'}"
+        candidate = os.path.join(folder, f"{stem[:200]}.redact-{uuid.uuid4().hex[:8]}{ext or '.epub'}")
         if not os.path.lexists(candidate):
             return candidate
 
@@ -522,9 +525,10 @@ class ValidateFixStep(Step):
     label = "Fix validation issues"
     dry_run_safe = True  # fixes and the stamp go into the in-memory book; record_validation() only reads the zip
     description = (
-        "Applies the fixes Validate / Fix Issues offers: repairs a broken unique-identifier, splits "
-        "'A & B' into two authors, drops spine entries that point at nothing. (The 'set a missing "
-        "language to en' fix is not used; the language step guesses from the text instead.)"
+        "Applies the fixes Validate / Fix Issues offers: repairs a broken unique-identifier, drops "
+        "spine entries that point at nothing. (The 'set a missing language to en' fix is not used; the "
+        "language step guesses from the text instead. Nor is the 'A & B' author split: Clean Up "
+        "Authors does that, and leaves names such as 'Simon & Schuster' alone.)"
     )
 
     def run(self, ctx: EpubCtx) -> StepResult:
@@ -868,7 +872,14 @@ class MetadataLookupStep(Step):
             if found is None:
                 continue
             candidate, match_confidence, reason = found
-            added = {k: v for k, v in candidate.as_dict().items() if k in remaining and v}
+            offered = candidate.as_dict()
+            added = {k: v for k, v in offered.items() if k in remaining and v}
+            # A month and day belong to their year: take them only from a candidate whose year is the year the
+            # book gets (another edition's "2011-03-14" must not turn a 1965 into 1965-03-14).
+            year = str(fill.get("pub_year") or added.get("pub_year") or "").strip()
+            if not year or str(offered.get("pub_year") or "").strip() != year:
+                added.pop("pub_month", None)
+                added.pop("pub_day", None)
             # A series number belongs to ITS series: with a series already set, take the number only
             # when the match is that same series.
             if "series_index" in added and "series" not in added and _norm_text(meta.series) != _norm_text(candidate.series):

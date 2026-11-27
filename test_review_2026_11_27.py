@@ -506,3 +506,227 @@ def test_card51_temp_file_is_synced_and_read_back_before_the_replace(tmp_path, m
         book.save()
     assert open(path, "rb").read() == before
     assert not (tmp_path / "s.epub.tmp_write").exists()
+
+
+# --- batch 3: Redact and scans -----------------------------------------------------------------------------------
+
+def _scan_p(text, attrs=""):
+    return f"<p{attrs}>{text}</p>"
+
+
+def _headers_book(tmp_path, pages, name="h.epub"):
+    from test_redact_steps import make_epub
+
+    return make_epub(str(tmp_path / name), pages=pages)
+
+
+def _doc_paragraphs(book, doc):
+    from core.page_headers import paragraph_blocks
+
+    return [b.text for b in paragraph_blocks(book.read_archive_file(doc).decode("utf-8"))]
+
+
+# Card 3: the empty-paragraph sweep took image-only paragraphs and anchors; removed headers took their ids along.
+def test_card3_pictures_and_anchors_beside_a_header_stay_and_header_ids_move(tmp_path):
+    from core.epub_metadata import EpubBook
+    from core.page_headers import apply_page_furniture, find_page_furniture
+
+    body = []
+    for n in range(10, 18):
+        body += [
+            _scan_p("The expedition set out into the jungle and the heat was"),
+            _scan_p("<span>&#160;</span>"),  # a truly empty paragraph: it still goes
+            _scan_p(f"{n} THE LOST MINE", f' id="pg{n}"'),
+            _scan_p('<img src="plate.jpg" alt=""/>', ' class="plate"'),
+            _scan_p(f'<a id="note{n}"/>'),
+            _scan_p("terrible before the night was over."),
+        ]
+    path = _headers_book(tmp_path, [("a.xhtml", "".join(body))])
+    book = EpubBook(path)
+    plan = find_page_furniture(book)
+    assert plan.changed
+    apply_page_furniture(book, plan)
+    out = book.read_archive_file("OEBPS/a.xhtml").decode("utf-8")
+    assert out.count('src="plate.jpg"') == 8
+    for n in range(10, 18):
+        assert f'id="pg{n}"' in out and f'id="note{n}"' in out
+        assert f"{n} THE LOST MINE" not in out
+    assert "&#160;" not in out
+    texts = [t for t in _doc_paragraphs(book, "OEBPS/a.xhtml") if t]
+    assert texts == ["The expedition set out into the jungle and the heat was terrible before the night was over."] * 8
+
+
+def test_card3_a_joined_paragraph_keeps_its_id(tmp_path):
+    from core.page_headers import Block, _rewrite_document, paragraph_blocks
+
+    text = '<p>and the rain would</p><p>12 THE LOST MINE</p><p id="p13">come at night.</p>'
+    blocks = paragraph_blocks(text)
+    assert isinstance(blocks[0], Block)
+    new, plan = _rewrite_document(text, blocks, {1: "header with page number (left)"})
+    assert plan.joins == 1 and 'id="p13"' in new and "12 THE LOST MINE" not in new
+    assert [b.text for b in paragraph_blocks(new)] == ["and the rain would come at night."]
+
+
+# Card 4: a story title equal to the running header was removed when no "CHAPTER n" line stood before it.
+def test_card4_a_story_title_that_opens_a_document_or_follows_a_rule_stays(tmp_path):
+    from core.epub_metadata import EpubBook
+    from core.page_headers import apply_page_furniture, find_page_furniture
+
+    title = "THE RIVER CROSSING"
+    pages, page = [], 3
+    for story in range(3):
+        body = [_scan_p(title)]
+        for _i in range(4):
+            body += [_scan_p("The water rose and they waited on the bank until"), _scan_p(f"{title} {page}"),
+                     _scan_p("the morning came at last.")]
+            page += 2
+        # inside the last story a section break, then the title again (a second part)
+        if story == 2:
+            body += ["<hr/>", _scan_p(title), _scan_p("The second crossing began quietly."), _scan_p(title + " " + str(page)),
+                     _scan_p(title), _scan_p("A running header without its number, mid-text, still goes.")]
+        pages.append((f"s{story}.xhtml", "".join(body)))
+    book = EpubBook(_headers_book(tmp_path, pages))
+    plan = find_page_furniture(book)
+    assert plan.changed
+    apply_page_furniture(book, plan)
+    for story in range(3):
+        assert _doc_paragraphs(book, f"OEBPS/s{story}.xhtml")[0] == title
+    last = _doc_paragraphs(book, "OEBPS/s2.xhtml")
+    after_rule = last[last.index("The second crossing began quietly.") - 1]
+    assert after_rule == title
+    assert last.count(title) == 2  # the opening title and the one after the rule; the bare header mid-text went
+
+
+# Card 55: "well-" + "known" became "wellknown" and nothing said so.
+def test_card55_hyphen_joins_are_listed_and_a_hyphenated_compound_keeps_its_hyphen():
+    from core.page_headers import _rewrite_document, paragraph_blocks
+
+    text = ("<p>She was a well-</p><p>12 THE LOST MINE</p><p>known face, and her mother-in-</p>"
+            "<p>13 THE LOST MINE</p><p>law was not.</p>")
+    new, plan = _rewrite_document(text, paragraph_blocks(text), {1: "left", 3: "right"})
+    assert [b.text for b in paragraph_blocks(new)] == ["She was a wellknown face, and her mother-in-law was not."]
+    assert plan.hyphen_joins == 2 and plan.hyphen_words == ["well-known -> wellknown"]
+
+
+# Cards 8 and 31: a stray "<" swallowed the text after it; comments, style and script text leaked into the result.
+@pytest.mark.parametrize("text", ["He said x<y.", "if a<b and c>d then x", "I <3 it\nreally", "5 < 10"])
+def test_card8_text_without_a_known_tag_is_untouched(text):
+    from core.description_html import has_html_markup, strip_html
+
+    assert strip_html(text) == text and not has_html_markup(text)
+
+
+@pytest.mark.parametrize("text, expected", [
+    ("<p>if a<b and c>d then x</p>", "if a<b and c>d then x"),
+    ("<p>A <b>bold</b> claim: x<y.</p>", "A bold claim: x<y."),
+    ("<p>Hi</p><!-- tracking id 123 --><p>there</p>", "Hi\n\nthere"),
+    ("<style>p{color:red}</style><p>Text</p>", "Text"),
+    ("<p>One</p><script>var a = 1 < 2;</script> after", "One\n\nafter"),
+])
+def test_card8_card31_html_keeps_stray_lt_and_drops_comments_style_script(text, expected):
+    from core.description_html import strip_html
+
+    assert strip_html(text) == expected
+
+
+# Card 7: Redact's validator fix split "Simon & Schuster" into two authors.
+def test_card7_redact_validate_fix_leaves_a_company_author_alone(tmp_path):
+    from core.redact_steps import SAFE_FIX_CODES
+    from test_redact_steps import Trash, make_epub, only, quiet_lookups, run
+    from core.redact_steps import RedactEnv
+    from core.epub_metadata import EpubBook
+
+    assert "AUTHORS_AMPERSAND" not in SAFE_FIX_CODES
+    path = make_epub(str(tmp_path / "s.epub"), authors=("Simon &amp; Schuster",))
+    env = RedactEnv(trash=Trash(str(tmp_path) + "-bin"), lookups=quiet_lookups(), make_cover=lambda *a: b"")
+    run([EpubBook(path)], env, only("validate_fix"))
+    assert EpubBook(path).metadata.authors == ["Simon & Schuster"]
+
+
+# Card 9: an ISBN found only in the back matter reached the 0.9 auto-apply threshold.
+def test_card9_a_back_matter_isbn_lands_below_the_threshold():
+    from core.content_scan import guess_metadata_from_text
+
+    scan = guess_metadata_from_text("Chapter One. It was a dark night.", "Also by Jane Doe: The Other Book, ISBN 978-0-306-40615-7")
+    assert scan.isbn == "9780306406157" and scan.confidence["isbn"] < 0.9
+    front = guess_metadata_from_text("Copyright 2001. ISBN 978-0-306-40615-7", "")
+    assert front.confidence["isbn"] >= 0.9  # a front-matter ISBN is still certain
+
+
+# Card 32: one source's year was joined with another edition's month and day.
+def test_card32_month_and_day_only_come_with_their_year(tmp_path, monkeypatch):
+    from types import SimpleNamespace
+
+    from core.epub_metadata import EpubBook
+    from core.redact_steps import MetadataLookupStep
+
+    class Cand:
+        def __init__(self, **kw):
+            self.series = ""
+            self._d = kw
+
+        def as_dict(self):
+            return dict(self._d)
+
+    def make(first, second):
+        monkeypatch.setattr(MetadataLookupStep, "_isfdb_source", lambda self, ctx, isbn, problems: (first, 0.95, "ISFDB"))
+        monkeypatch.setattr(MetadataLookupStep, "_local_source", lambda self, ctx, isbn, problems: (second, 0.95, "OL"))
+        monkeypatch.setattr(MetadataLookupStep, "_online_source", lambda self, ctx, isbn, problems: None)
+        path = _make_book(tmp_path / "y.epub", _UUID + "<dc:creator>A B</dc:creator>")
+        ctx = SimpleNamespace(work=EpubBook(path), env=None)
+        return dict(MetadataLookupStep().run(ctx).value)
+
+    fields = make(Cand(pub_year="1965"), Cand(pub_year="2011", pub_month="03", pub_day="14", publisher="P"))
+    assert fields["pub_year"] == "1965" and "pub_month" not in fields and "pub_day" not in fields
+    assert fields["publisher"] == "P"
+    fields = make(Cand(pub_year="1965"), Cand(pub_year="1965", pub_month="03", pub_day="14"))
+    assert (fields["pub_year"], fields["pub_month"], fields["pub_day"]) == ("1965", "03", "14")
+
+
+# Card 38: the temp name was cut on the whole path, so a long folder put the temp file in a parent folder.
+def test_card38_temp_file_stays_in_the_books_folder(tmp_path):
+    import os
+
+    from core.redact_steps import _unused_sibling
+
+    folder = os.path.join(str(tmp_path), "f" * 230)  # never created: only the name is built
+    original = os.path.join(folder, "n" * 250 + ".epub")
+    temp = _unused_sibling(original)
+    assert os.path.dirname(temp) == folder and temp.endswith(".epub") and ".redact-" in temp
+
+
+# Card 52: a zip name in NFD (macOS) or another case than the href counted as missing; Rebuild Manifest dropped it.
+def test_card52_nfd_or_case_different_zip_names_are_not_missing(tmp_path):
+    import unicodedata
+
+    from core.epub_metadata import EpubBook
+
+    nfc = unicodedata.normalize("NFC", "café.xhtml")
+    nfd = unicodedata.normalize("NFD", nfc)
+    assert nfc != nfd
+    items = (f'<item id="c" href="{nfc}" media-type="application/xhtml+xml"/>'
+             '<item id="d" href="Chap2.xhtml" media-type="application/xhtml+xml"/>'
+             '<item id="gone" href="gone.xhtml" media-type="application/xhtml+xml"/>')
+    page = _PAGE.format("<p>text</p>").encode()
+    path = _make_book(tmp_path / "u.epub", _UUID, items=items,
+                      spine='<itemref idref="c"/><itemref idref="d"/><itemref idref="gone"/>',
+                      files={f"OEBPS/{nfd}": page, "OEBPS/chap2.xhtml": page})
+    book = EpubBook(path)
+    assert [i for i, _h in book.find_missing_manifest_files()] == ["gone"]
+    assert book.rebuild_manifest() == ["gone.xhtml"]
+    spine = [r.get("idref") for r in book._opf_tree.getroot().iter("{http://www.idpf.org/2007/opf}itemref")]
+    assert spine == ["ch1", "c", "d"]
+
+
+# Card 73: a damaged deflate stream raised zlib.error out of the page readers and the header scan.
+def test_card73_a_damaged_deflate_stream_reads_as_unreadable(tmp_path):
+    from core.epub_metadata import EpubBook
+    from core.page_headers import find_page_furniture
+
+    path = _make_book(tmp_path / "z.epub", _UUID, deflate=True)
+    _damage_entry(path, "OEBPS/ch1.xhtml")
+    book = EpubBook(path)
+    assert book.read_text_page("OEBPS/ch1.xhtml") is None
+    assert book.read_resource("OEBPS/ch1.xhtml") is None
+    assert book.read_archive_file("OEBPS/ch1.xhtml") is None
+    assert not find_page_furniture(book).changed

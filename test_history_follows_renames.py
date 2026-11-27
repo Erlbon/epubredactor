@@ -74,10 +74,10 @@ def test_redact_entry_is_written_where_saved_and_follows_rename_and_move(tmp_pat
     app_settings.save_history_enabled(True)
     root = tmp_path / "lib"
     root.mkdir()
-    path = make_epub(str(tmp_path / "orig.epub"), authors=("Ann &amp; Bob",))
+    path = make_epub(str(tmp_path / "orig.epub"), description="&lt;p&gt;Hi&lt;/p&gt;")
     env.rename_log = mw._rename_log()  # the GUI's log (conftest builds it with the app's factory)
     env.library_root = str(root)
-    recipe = only("validate_fix", "rename", "move_into_folders", options={"rename": {"pattern": "%title%"}})
+    recipe = only("strip_description_html", "rename", "move_into_folders", options={"rename": {"pattern": "%title%"}})
     run([EpubBook(path)], env, recipe)
     [entry] = history.get_journal().entries()
     assert entry.kind == "redact" and entry.original_path == path  # written at the path the save happened

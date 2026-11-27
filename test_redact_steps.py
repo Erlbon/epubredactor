@@ -192,10 +192,10 @@ def test_default_recipe_repairs_a_damaged_book_in_place(tmp_path, env, trash):
     assert entry.status is FileStatus.CHANGED, report.to_text()
     fixed = load(path)
     codes = {i.code for i in fixed.validation_issues}
-    assert not codes & {"DUPLICATE_MANIFEST_ID", "AUTHORS_AMPERSAND"}
+    assert "DUPLICATE_MANIFEST_ID" not in codes
     # gone.xhtml was dropped; only the remote item (which the validator also calls "missing") remains
     assert [h for _i, h in fixed.find_missing_manifest_files()] == ["http://example.com/x.mp3"]
-    assert fixed.metadata.authors == ["Ann", "Bob"]
+    assert fixed.metadata.authors == ["Ann & Bob"]  # the validator's split is not used: Clean Up Authors decides
     assert fixed.metadata.description == "Hi"
     assert fixed.find_broken_guide_references() == []
     with zipfile.ZipFile(path) as zf:

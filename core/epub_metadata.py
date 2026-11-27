@@ -51,6 +51,7 @@ import mimetypes
 import os
 import posixpath
 import re
+import unicodedata
 import uuid
 import zipfile
 import zlib
@@ -946,7 +947,7 @@ class EpubBook:
                 if zf.getinfo(archive_path).file_size > max_bytes:
                     return None
                 raw = zf.read(archive_path)
-        except (KeyError, OSError, zipfile.BadZipFile, RuntimeError):
+        except (KeyError, OSError, zipfile.BadZipFile, RuntimeError, zlib.error, EOFError):  # zlib/EOF: a damaged entry
             return None
         text = raw.decode("utf-8", errors="replace")
         text = re.sub(r"^\s*<\?xml[^>]*\?>", "", text)
@@ -970,7 +971,7 @@ class EpubBook:
                     return None
                 with zf.open(info) as fh:
                     data = fh.read(max_bytes + 1)
-        except (KeyError, OSError, zipfile.BadZipFile, RuntimeError):
+        except (KeyError, OSError, zipfile.BadZipFile, RuntimeError, zlib.error, EOFError):  # zlib/EOF: a damaged entry
             return None
         return None if len(data) > max_bytes else data
 
@@ -1462,15 +1463,27 @@ class EpubBook:
         items already found): (item_id, href) for every manifest item
         whose file doesn't actually exist in the archive. Shared by
         _validate() and the public find_missing_manifest_files(), so
-        there's exactly one place this matching logic lives."""
+        there's exactly one place this matching logic lives.
+
+        A file whose zip name differs from the href only in Unicode form
+        (macOS tools store "é" decomposed, NFD) or in case is there, not
+        missing: Rebuild Manifest would otherwise drop a real chapter."""
         missing = []
+        loose: tuple[set[str], set[str]] | None = None
         for item in manifest_items:
             href = item.get("href")
             if not href:
                 continue
             archive_path = href_to_archive_path(opf_dir, href)
-            if archive_path not in names:
-                missing.append((item.get("id") or "", href))
+            if archive_path in names:
+                continue
+            if loose is None:
+                nfc = {unicodedata.normalize("NFC", n) for n in names}
+                loose = (nfc, {n.casefold() for n in nfc})
+            wanted = unicodedata.normalize("NFC", archive_path)
+            if wanted in loose[0] or wanted.casefold() in loose[1]:
+                continue
+            missing.append((item.get("id") or "", href))
         return missing
 
     def find_missing_manifest_files(self) -> list[tuple[str, str]]:
@@ -1784,7 +1797,7 @@ class EpubBook:
         try:
             with zipfile.ZipFile(self.path, "r") as zf:
                 return zf.read(archive_path)
-        except (zipfile.BadZipFile, KeyError, OSError):
+        except (zipfile.BadZipFile, KeyError, OSError, RuntimeError, zlib.error, EOFError):  # a damaged entry reads as missing
             return None
 
     def stage_image_replacement(self, archive_path: str, new_bytes: bytes) -> None:
