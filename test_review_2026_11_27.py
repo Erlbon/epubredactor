@@ -1137,3 +1137,177 @@ def test_card58_cancel_kills_the_whole_process_tree(tmp_path):
     size = beat.stat().st_size
     time.sleep(0.6)
     assert beat.stat().st_size == size, "the grandchild is still writing"
+
+
+# --- batch 5: main window and dialogs ------------------------------------------------------------
+
+def _window_with(tmp_path, names, metadata=_UUID):
+    from core.epub_metadata import EpubBook
+    from gui import main_window as mw
+
+    window = mw.MainWindow()
+    window.books = [EpubBook(_make_book(tmp_path / name, metadata)) for name in names]
+    window._rebuild_table()
+    return window
+
+
+# Card 10: Undo wrote back the old "unsaved" flag.
+def test_card10_undo_after_a_save_leaves_the_book_unsaved(tmp_path, qapp):
+    window = _window_with(tmp_path, ["a.epub"])
+    book = window.books[0]
+    window._push_undo("Edit Title", [book])
+    book.apply_metadata({"title": "New"})
+    book.save()
+    assert not book.dirty
+    window.on_undo()
+    assert book.metadata.title == "Book" and book.dirty
+    window.on_redo()  # back to what the file holds
+    assert book.metadata.title == "New" and not book.dirty
+
+
+def test_card10_undo_keeps_a_staged_repair_unsaved_and_a_plain_undo_is_clean(tmp_path, qapp):
+    from core.epub_metadata import EpubBook
+    from gui.main_window import MainWindow
+
+    path = _make_book(tmp_path / "o.epub", _UUID, files={"OEBPS/stray.txt": b"x"})
+    book = EpubBook(path)
+    snap = MainWindow._snapshot_book(book)
+    book.apply_metadata({"title": "New"})
+    MainWindow._restore_book(book, snap)
+    assert not book.dirty  # back to exactly what the file holds
+
+    snap = MainWindow._snapshot_book(book)
+    book.apply_metadata({"title": "New"})
+    assert book.remove_orphaned_files(["OEBPS/stray.txt"])
+    MainWindow._restore_book(book, snap)
+    assert book.metadata.title == "Book" and book.dirty  # the staged removal still has to be saved
+
+
+def test_card10_undo_keeps_removed_running_headers(tmp_path, qapp):
+    from core.epub_metadata import EpubBook
+    from gui.main_window import MainWindow
+
+    book = EpubBook(_make_book(tmp_path / "h.epub", _UUID))
+    snap = MainWindow._snapshot_book(book)
+    book.apply_metadata({"title": "New"})
+    book.stage_content_replacement("OEBPS/ch1.xhtml", b"<html/>")
+    MainWindow._restore_book(book, snap)
+    assert book._image_replacements == {"OEBPS/ch1.xhtml": b"<html/>"} and book.dirty
+
+
+# Card 14: Author Sort -> Author(s) dropped co-authors, ticked by default.
+def test_card14_author_sort_with_fewer_names_starts_unticked(qapp):
+    from types import SimpleNamespace
+
+    from gui.author_sort_dialog import AuthorSortDialog
+
+    def fake(name, authors, sort):
+        return SimpleNamespace(path=name, load_error=None,
+                               metadata=SimpleNamespace(authors_str=authors, author_sort_str=sort))
+
+    books = [fake("a.epub", "Frank Herbert; Brian Herbert", "Herbert, Frank"),
+             fake("b.epub", "Jane Doe", "Smith, Ann")]
+    dialog = AuthorSortDialog(books)
+    dialog.direction_combo.setCurrentIndex(1)  # Author Sort -> Author(s)
+    assert not dialog._checkboxes[0].isChecked()
+    assert dialog._checkboxes[1].isChecked()
+    assert dialog.accepted_changes() == {1: "Ann Smith"}
+    assert "unticked" in dialog.status_label.text()
+
+
+# Card 17: editing a Description cell in Clip/Ellipsis saved the flattened text.
+def test_card17_description_cell_is_not_edited_in_place_outside_wrap(tmp_path, qapp):
+    from PyQt6.QtWidgets import QAbstractItemView
+
+    from gui import main_window as mw
+
+    window = _window_with(tmp_path, ["a.epub"])
+    keys = [key for key, _label, _multiline in mw.FIELDS]
+    col = mw.FIRST_FIELD_COL + keys.index("description")
+    title_col = mw.FIRST_FIELD_COL + keys.index("title")
+    trigger = QAbstractItemView.EditTrigger.DoubleClicked
+    window.set_text_overflow_mode("clip")
+    assert window.table.edit(window.table.model().index(0, col), trigger, None) is False
+    assert "side panel" in window.status.currentMessage()
+    assert window.table.locked_columns == frozenset({col})
+    window.set_text_overflow_mode("ellipsis")
+    assert window.table.locked_columns == frozenset({col})
+    window.set_text_overflow_mode("wrap")
+    assert window.table.locked_columns == frozenset()
+    assert title_col not in window.table.locked_columns
+
+
+# Card 18: the wheel over a side-panel field picked a value without the field having focus.
+def test_card18_wheel_over_an_unfocused_field_scrolls_instead_of_picking(qapp):
+    from PyQt6.QtCore import QPoint, QPointF, Qt
+    from PyQt6.QtGui import QWheelEvent
+
+    from gui.tag_panel import MultiValueLineEdit
+
+    edit = MultiValueLineEdit()
+    edit.set_alternatives(["A", "B"])
+    picked = []
+    edit.valuePicked.connect(lambda: picked.append(edit.text()))
+    event = QWheelEvent(QPointF(5, 5), QPointF(5, 5), QPoint(0, 0), QPoint(0, 120),
+                        Qt.MouseButton.NoButton, Qt.KeyboardModifier.NoModifier, Qt.ScrollPhase.NoScrollPhase, False)
+    edit.wheelEvent(event)
+    assert picked == [] and edit.text() == "" and not event.isAccepted()
+
+
+# Card 26: Search & Replace on Filename numbered a case-only change and let the extension change.
+def test_card26_filename_replace_case_only_and_extension_kept(tmp_path, qapp):
+    import os
+
+    folder = tmp_path / "books"
+    folder.mkdir()
+    window = _window_with(folder, ["my book.epub", "other.epub"])
+    books = list(window.books)
+    window._apply_filename_search_replace(books, {0: "My Book.epub", 1: "other.zip"})
+    assert sorted(os.listdir(folder)) == ["My Book.epub", "other.epub"]
+
+
+# Card 33: Detect Missing Spaces "fixed" initials, acronyms and web addresses.
+@pytest.mark.parametrize("text", ["R.U.R.", "P.S. I Love You", "e.g. this", "U.S.A.", "see example.com", "www.Site.org"])
+def test_card33_initials_acronyms_and_addresses_are_left_alone(text):
+    from core.missing_space import find_missing_spaces, suggest_fix
+
+    assert find_missing_spaces(text) == [] and suggest_fix(text) == text
+
+
+def test_card33_a_real_missing_space_after_initials_is_still_found():
+    from core.missing_space import suggest_fix
+
+    assert suggest_fix("J.R.R.Tolkien") == "J.R.R. Tolkien"
+    assert suggest_fix("Hello.World") == "Hello. World"
+
+
+# Card 34: Number Series numbered books with no series (the save drops the number).
+def test_card34_books_without_a_series_are_skipped(qapp):
+    from types import SimpleNamespace
+
+    from gui.series_number_dialog import SeriesNumberDialog
+
+    def fake(name, series):
+        return SimpleNamespace(path=name, metadata=SimpleNamespace(series=series, series_index=""))
+
+    dialog = SeriesNumberDialog([fake("a.epub", "Dune"), fake("b.epub", ""), fake("c.epub", "Dune")])
+    assert dialog.result_values() == {0: "1", 2: "2"}
+    assert "skipped" in dialog.table.item(1, 2).text()
+    assert "1 book(s) have no Series" in dialog.skipped_label.text()
+
+
+# Card 37: Save All left out books that failed before without saying so.
+def test_card37_save_all_names_books_skipped_for_an_earlier_failure(tmp_path, qapp, monkeypatch):
+    from PyQt6.QtWidgets import QMessageBox
+
+    window = _window_with(tmp_path, ["a.epub", "b.epub"])
+    for book in window.books:
+        book.apply_metadata({"title": "Changed"})
+    window.books[1].save_error = "locked yesterday"
+    monkeypatch.setattr(QMessageBox, "question", staticmethod(lambda *a, **k: QMessageBox.StandardButton.Yes))
+    warnings = []
+    monkeypatch.setattr(QMessageBox, "warning", staticmethod(lambda *a, **k: warnings.append(a[2])))
+    window._save_changed_among(list(window.books))
+    assert not window.books[0].dirty
+    assert any("1 book(s) skipped because they failed to save earlier" in w and "b.epub" in w for w in warnings)
+    assert "skipped (failed to save earlier)" in window.status.currentMessage()

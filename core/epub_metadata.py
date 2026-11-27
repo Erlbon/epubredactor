@@ -586,6 +586,16 @@ class EpubBook:
     # repair/Redact right after a check isn't refused for "unsaved changes".
     # Class defaults so test doubles that skip __init__ still have them.
     stamp_only_dirty: bool = False
+    # True while a repair (fixes, manifest/guide/navigation repairs, a new
+    # table of contents, removed running headers, a validation stamp) is
+    # staged and not yet saved. Undo does not take those back, so a book
+    # restored by Undo stays unsaved while this is set. Cleared by an
+    # in-place save.
+    structure_staged: bool = False
+    # Archive paths of content documents staged by
+    # stage_content_replacement() (they share _image_replacements); Undo
+    # keeps them when it restores the image replacements.
+    _content_staged: frozenset = frozenset()
     scan_stamp: Optional[ScanStamp] = None
     stamp_stale: Optional[bool] = None
     _stamp_follows_save: bool = False
@@ -1349,6 +1359,7 @@ class EpubBook:
                                  f"{', '.join(sorted(set(dropped)))}")
 
         self.dirty = True
+        self.structure_staged = True
         self.revalidate()
         return fixed
 
@@ -1402,6 +1413,7 @@ class EpubBook:
         only_stamp = not self.dirty or self.stamp_only_dirty
         self.dirty = True
         self.stamp_only_dirty = only_stamp
+        self.structure_staged = True
         return True
 
     def check_and_stamp(self) -> bool:
@@ -1548,6 +1560,7 @@ class EpubBook:
                     if itemref.get("idref") in removed_ids:
                         spine.remove(itemref)
             self.dirty = True
+            self.structure_staged = True
             self.revalidate()
 
         return removed_hrefs
@@ -1635,6 +1648,7 @@ class EpubBook:
 
         if renames:
             self.dirty = True
+            self.structure_staged = True
             self.revalidate()
         return renames
 
@@ -1701,6 +1715,7 @@ class EpubBook:
             if not guide.findall("opf:reference", namespaces=NS):
                 root.remove(guide)  # an empty <guide/> left behind isn't useful
             self.dirty = True
+            self.structure_staged = True
         return removed
 
     def find_orphaned_files(self) -> list[str]:
@@ -1744,6 +1759,7 @@ class EpubBook:
             return []
         self._orphan_files_to_remove.update(paths)
         self.dirty = True
+        self.structure_staged = True
         return sorted(paths)
 
     # ------------------------------------------------------------------
@@ -1811,6 +1827,8 @@ class EpubBook:
         removed from a scanned book's text, see core/page_headers.py). Same staging as an image replacement;
         read_archive_file() returns the staged bytes, so a later step sees the changed text."""
         self.stage_image_replacement(archive_path, new_bytes)
+        self._content_staged = frozenset(self._content_staged | {archive_path})
+        self.structure_staged = True
 
     def stage_generated_toc(self, files: dict[str, tuple[str, bytes]]) -> None:
         """Stages generated TOC documents ({"nav"/"ncx": (archive_path,
@@ -1821,6 +1839,7 @@ class EpubBook:
         self._toc_files = dict(files)
         self._toc_in_tree = False
         self.dirty = True
+        self.structure_staged = True
         self.revalidate()
 
     # ------------------------------------------------------------------
@@ -2461,6 +2480,8 @@ class EpubBook:
             self.cover_removed = False
             self._orphan_files_to_remove = set()
             self._image_replacements = {}
+            self._content_staged = frozenset()
+            self.structure_staged = False
             self._toc_files = {}
             self._toc_in_tree = False
             self._stamp_follows_save = False

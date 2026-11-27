@@ -398,6 +398,22 @@ class BookTableWidget(QTableWidget):
     redactor_common's VisibleRowsWatcher now -- this class no longer
     needs its own viewportResized signal.)"""
 
+    # Columns whose cells must not be edited in place right now, and a
+    # callback that tells the user why (see MainWindow._apply_text_overflow_mode:
+    # a Description cell shows a flattened copy outside Wrap Text, and
+    # editing it would save that flattened copy).
+    locked_columns: frozenset = frozenset()
+    on_locked_edit = None
+
+    def edit(self, index, trigger=None, event=None):
+        if trigger is None:
+            return super().edit(index)
+        if index.isValid() and index.column() in self.locked_columns:
+            if self.on_locked_edit is not None and bool(self.editTriggers() & trigger):
+                self.on_locked_edit()
+            return False
+        return super().edit(index, trigger, event)
+
     def keyPressEvent(self, event) -> None:
         key = event.key()
         row, col = self.currentRow(), self.currentColumn()
@@ -1498,17 +1514,50 @@ class MainWindow(QMainWindow):
             "cover_changed": book.cover_changed,
             "cover_removed": book.cover_removed,
             "image_replacements": dict(book._image_replacements),
+            # Changes on every in-place save: tells a restore that the file
+            # was saved after this snapshot was taken.
+            "disk_stat": getattr(book, "_disk_stat", None),
         }
 
     @staticmethod
     def _restore_book(book: EpubBook, snapshot: dict) -> None:
+        """Put back the metadata, cover and image replacements of `snapshot`.
+        The unsaved flag is not taken from the snapshot: it is worked out
+        against what the file holds now, since the book may have been saved,
+        or had a repair staged, after the snapshot was taken."""
+        saved_since = snapshot.get("disk_stat") != getattr(book, "_disk_stat", None)
+        old_cover = book.cover_bytes
+        old_changed, old_removed = book.cover_changed, book.cover_removed
+        content_staged = getattr(book, "_content_staged", frozenset())
+        current_images = book._image_replacements
+
         book.metadata = snapshot["metadata"]
-        book.dirty = snapshot["dirty"]
         book.cover_bytes = snapshot["cover_bytes"]
         book.cover_mime = snapshot["cover_mime"]
-        book.cover_changed = snapshot["cover_changed"]
-        book.cover_removed = snapshot["cover_removed"]
-        book._image_replacements = snapshot["image_replacements"]
+        if not saved_since:
+            book.cover_changed = snapshot["cover_changed"]
+            book.cover_removed = snapshot["cover_removed"]
+        elif snapshot["cover_bytes"] == old_cover:
+            book.cover_changed, book.cover_removed = old_changed, old_removed
+        else:
+            # The file now holds another cover than the one put back: it must be written (or removed) again.
+            book.cover_changed = snapshot["cover_bytes"] is not None
+            book.cover_removed = snapshot["cover_bytes"] is None
+        images = dict(snapshot["image_replacements"])
+        for path in content_staged:  # removed running headers: a repair Undo does not take back
+            if path in current_images:
+                images[path] = current_images[path]
+        book._image_replacements = images
+
+        baseline = getattr(book, "baseline", None)
+        if baseline is None:
+            fields_differ = bool(snapshot["dirty"])
+        else:
+            fields_differ = history.fields_text(book.metadata) != baseline
+        book.dirty = bool(
+            fields_differ or book.cover_changed or book.cover_removed or book._image_replacements
+            or getattr(book, "structure_staged", False)
+        )
 
     def _push_undo(self, label: str, books: list[EpubBook]) -> None:
         """Call BEFORE mutating `books`."""
@@ -1917,12 +1966,25 @@ class MainWindow(QMainWindow):
         trailing "…"), or "clip" (single-line, hard cut, no "…"). See
         app_settings.load_text_overflow_mode() for the full rationale."""
         self._text_overflow_mode = mode
+        # Outside Wrap Text a multi-line cell shows its text flattened to one
+        # line; editing it there would save that flat copy and lose every
+        # paragraph break, so those cells are edited in the side panel instead.
+        self.table.locked_columns = frozenset() if mode == "wrap" else frozenset(
+            FIRST_FIELD_COL + i for i, (_key, _label, multiline) in enumerate(FIELDS) if multiline
+        )
+        self.table.on_locked_edit = self._say_multiline_cell_is_locked
         self.table.setWordWrap(mode == "wrap")
         self.table.setTextElideMode(
             Qt.TextElideMode.ElideNone if mode == "clip" else Qt.TextElideMode.ElideRight
         )
         self._refresh_multiline_field_cells()
         self._reflow_table_rows()
+
+    def _say_multiline_cell_is_locked(self) -> None:
+        self.status.showMessage(
+            "This cell shows the text on one line here. Edit it in the side panel, "
+            "or turn on View > Text Wrapping > Wrap Text to edit it in the table.", 8000,
+        )
 
     def set_text_overflow_mode(self, mode: str) -> None:
         """Settings -> Text Wrapping menu handler: applies `mode` and
@@ -2542,15 +2604,21 @@ class MainWindow(QMainWindow):
             i, new_filename = item
             book = books[i]
             try:
-                stem, ext = os.path.splitext(new_filename)
-                if ext == ".":  # "name." splits as ("name", "."): the dot belongs to the stem
-                    stem, ext = new_filename, ""
+                # The extension stays as it is (only its case may change): a
+                # book renamed to ".zip" would vanish from Open Folder.
+                old_ext = os.path.splitext(book.path)[1] or ".epub"
+                if not new_filename.lower().endswith(old_ext.lower()) or len(new_filename) == len(old_ext):
+                    errors.append((book.path, f"not renamed: the extension ({old_ext}) cannot be changed or removed here"))
+                    return
+                stem, ext = new_filename[: -len(old_ext)], new_filename[-len(old_ext):]
                 problem = validate_filename_stem(stem)
                 if problem:
                     errors.append((book.path, problem))
                     return
                 directory = os.path.dirname(book.path)
-                new_path = unique_path(directory, stem, ext or ".epub", taken)
+                # own_path: the book's own file is no clash, so a case-only change ("my book" -> "My Book")
+                # is not numbered "(2)".
+                new_path = unique_path(directory, stem, ext, taken, own_path=book.path)
                 old_path = book.path
                 os.rename(book.path, new_path)
                 book.path = new_path
@@ -3193,11 +3261,19 @@ class MainWindow(QMainWindow):
                             SaveReport(nothing=reason))
             return
 
+        skipped_line = ""
+        if previously_failed:
+            failed_before = [os.path.basename(b.path) for b in all_dirty if b.save_error]
+            shown = ", ".join(failed_before[:5]) + (f" and {len(failed_before) - 5} more" if len(failed_before) > 5 else "")
+            skipped_line = (f"{previously_failed} book(s) skipped because they failed to save earlier "
+                            f"(double-click a \"SAVE FAILED\" status to retry): {shown}")
         reply = QMessageBox.question(
             self,
             "Overwrite original files?",
             f"This will overwrite {len(dirty_books)} original EPUB file(s) in place.\n"
-            "This cannot be undone. Continue?",
+            + (f"{previously_failed} changed book(s) that failed to save earlier are skipped.\n"
+               if previously_failed else "")
+            + "This cannot be undone. Continue?",
             QMessageBox.StandardButton.Yes | QMessageBox.StandardButton.No,
         )
         if reply != QMessageBox.StandardButton.Yes:
@@ -3214,10 +3290,15 @@ class MainWindow(QMainWindow):
             dirty_books, lambda b: b.dirty, lambda b: os.path.basename(b.path) in failed_names,
             lambda b: os.path.basename(b.path))
         report.saved -= len(report.still_dirty)
-        self.status.showMessage(report.status_line(), 30000)
+        status_line = report.status_line()
+        if previously_failed:
+            status_line += f", {previously_failed} skipped (failed to save earlier)"
+        self.status.showMessage(status_line, 30000)
         append_save_log(os.path.dirname(crash_log.log_path()), history.history_enabled(), report)
-        self._report_save_result(len(dirty_books), errors, in_place=True, extra_problems=(
-            [line for line in report.problem_lines()[len(report.failed):]]))
+        extra = [line for line in report.problem_lines()[len(report.failed):]]
+        if skipped_line:
+            extra.append(skipped_line)
+        self._report_save_result(len(dirty_books), errors, in_place=True, extra_problems=extra)
 
     def retry_save(self, book: EpubBook) -> None:
         """Explicitly retries saving one book that previously failed --
@@ -4357,14 +4438,16 @@ class MainWindow(QMainWindow):
         if dialog.exec() != SeriesNumberDialog.DialogCode.Accepted:
             return
 
-        values = dialog.result_values()  # book index -> new series_index value
+        values = dialog.result_values()  # book index -> new series_index value (books with a series only)
         if not values:
+            self.status.showMessage("Number Series: none of the selected books has a Series, so nothing was numbered.", 8000)
             return
 
-        self._push_undo("Number series", target_books)
+        numbered = [target_books[i] for i in values]
+        self._push_undo("Number series", numbered)
         for i, new_value in values.items():
             target_books[i].apply_metadata({"series_index": new_value})
-        self._refresh_rows_full(target_books)
+        self._refresh_rows_full(numbered)
         self._refresh_status()
         self._on_selection_changed()  # bulk-edit panel may be showing the Series # field
 

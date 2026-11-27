@@ -81,6 +81,11 @@ class MultiValueLineEdit(QLineEdit):
         self._alt_index = -1
 
     def wheelEvent(self, event) -> None:  # noqa: N802 - Qt override signature
+        if not self.hasFocus():
+            # The panel sits in a scroll area: a wheel turn that only passes
+            # over the field scrolls the panel and never picks a value.
+            event.ignore()
+            return
         if not self._alternatives:
             super().wheelEvent(event)
             return
@@ -623,7 +628,8 @@ class TagPanel(QWidget):
                 alternatives = sorted(v for v in values if v) if len(values) > 1 else []
                 editor.set_alternatives(alternatives)
                 editor.setToolTip(
-                    f"Scroll to cycle through {len(alternatives)} different values in the selection"
+                    f"Click into the field, then scroll to cycle through {len(alternatives)} "
+                    "different values in the selection"
                     if alternatives else ""
                 )
             if len(values) == 1:

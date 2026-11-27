@@ -309,8 +309,8 @@ them in one go.
 - **Bulk Edit panel** (left side) — select multiple books, tick the fields
   you want to change, type the new value, click **Apply**. Unticked fields
   are left untouched, so partial edits across a batch are safe. When a
-  field shows `<multiple values>` (the selection disagrees), scroll your
-  mouse wheel over it to cycle through the actual differing values and
+  field shows `<multiple values>` (the selection disagrees), click into it
+  and scroll your mouse wheel to cycle through the actual differing values and
   pick one — blank values are never among the alternatives offered.
 - Fields covered: Title, ISBN, Author(s), Author Sort, Series, Series Index,
   Collection, Genre, Publisher, Year, Month, Day, DDC (Dewey Decimal),

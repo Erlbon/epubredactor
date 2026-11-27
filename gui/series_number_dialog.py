@@ -40,7 +40,7 @@ class SeriesNumberDialog(OwnedDialog):
         self.setWindowTitle("Number Series")
         self.resize(520, 480)
         self.books = books  # already in current table (visual, top-to-bottom) order
-        self._new_values: list[str] = []
+        self._new_values: dict[int, str] = {}
 
         self._build_ui()
         self._refresh_preview()
@@ -77,6 +77,11 @@ class SeriesNumberDialog(OwnedDialog):
         self.table.setEditTriggers(QAbstractItemView.EditTrigger.NoEditTriggers)
         layout.addWidget(self.table, 1)
 
+        self.skipped_label = QLabel("")
+        self.skipped_label.setWordWrap(True)
+        self.skipped_label.setStyleSheet("color: gray; font-size: 11px;")
+        layout.addWidget(self.skipped_label)
+
         buttons = QDialogButtonBox(
             QDialogButtonBox.StandardButton.Ok | QDialogButtonBox.StandardButton.Cancel
         )
@@ -86,14 +91,28 @@ class SeriesNumberDialog(OwnedDialog):
         layout.addWidget(buttons)
 
     def _refresh_preview(self) -> None:
-        self._new_values = generate_series_numbers(
-            len(self.books), self.start_edit.text(), self.step_edit.text()
-        )
+        # A Series # is only saved with a series, so a book without one is
+        # skipped (and not counted): its number would be gone after a reload.
+        numbered = [i for i, book in enumerate(self.books) if (book.metadata.series or "").strip()]
+        numbers = generate_series_numbers(len(numbered), self.start_edit.text(), self.step_edit.text())
+        self._new_values = dict(zip(numbered, numbers))
         self.table.setRowCount(len(self.books))
-        for row, (book, new_val) in enumerate(zip(self.books, self._new_values)):
+        for row, book in enumerate(self.books):
             self.table.setItem(row, BOOK_COL, self._readonly_item(os.path.basename(book.path)))
             self.table.setItem(row, CURRENT_COL, self._readonly_item(book.metadata.series_index or ""))
-            self.table.setItem(row, NEW_COL, self._readonly_item(new_val))
+            if row in self._new_values:
+                self.table.setItem(row, NEW_COL, self._readonly_item(self._new_values[row]))
+            else:
+                skipped = self._readonly_item("skipped: no series")
+                skipped.setForeground(Qt.GlobalColor.gray)
+                skipped.setToolTip("This book has no Series, and a Series # is only saved together with a series.")
+                self.table.setItem(row, NEW_COL, skipped)
+        skipped_count = len(self.books) - len(numbered)
+        self.skipped_label.setText(
+            f"{skipped_count} book(s) have no Series and are skipped (a Series # is only saved with a series)."
+            if skipped_count else ""
+        )
+        self.skipped_label.setVisible(bool(skipped_count))
         if not self._sized:
             make_columns_resizable(self.table)
             self._sized = True
@@ -109,5 +128,5 @@ class SeriesNumberDialog(OwnedDialog):
 
     def result_values(self) -> dict[int, str]:
         """book index (into the `books` list passed to the constructor)
-        -> new series_index value."""
-        return dict(enumerate(self._new_values))
+        -> new series_index value. Books without a series are left out."""
+        return dict(self._new_values)

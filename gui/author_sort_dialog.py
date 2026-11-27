@@ -43,6 +43,11 @@ DIRECTIONS = {
 }
 
 
+def _entry_count(value: str) -> int:
+    """Semicolon-separated names in a field (blank entries not counted)."""
+    return sum(1 for part in (value or "").split(";") if part.strip())
+
+
 class AuthorSortDialog(OwnedDialog):
     def __init__(self, books: list[EpubBook], parent=None):
         super().__init__(parent)
@@ -122,14 +127,24 @@ class AuthorSortDialog(OwnedDialog):
         )
 
         self.table.setRowCount(len(rows_to_show))
+        fewer_rows = 0
         for row, (book_index, old_value, new_value) in enumerate(rows_to_show):
             book = self.books[book_index]
             self.table.setItem(row, BOOK_COL, self._readonly_item(os.path.basename(book.path)))
             self.table.setItem(row, OLD_COL, self._readonly_item(old_value))
-            self.table.setItem(row, NEW_COL, self._readonly_item(new_value))
+            new_item = self._readonly_item(new_value)
+            self.table.setItem(row, NEW_COL, new_item)
 
+            # Author Sort often names only the first author: building Author(s)
+            # from it would drop the co-authors, so such a row starts unticked.
+            fewer = _entry_count(new_value) < _entry_count(old_value)
             cb = QCheckBox()
-            cb.setChecked(True)
+            cb.setChecked(not fewer)
+            if fewer:
+                fewer_rows += 1
+                why = "Left unticked: this names fewer authors than the book has now, so co-authors would be lost."
+                new_item.setToolTip(why)
+                cb.setToolTip(why)
             self._checkboxes[book_index] = cb
             self.table.setCellWidget(row, APPLY_COL, cb)
             self._new_values[book_index] = new_value
@@ -140,7 +155,11 @@ class AuthorSortDialog(OwnedDialog):
             self.status_label.setText("No books would be changed.")
             self._ok_button.setEnabled(False)
         else:
-            self.status_label.setText(f"{len(rows_to_show)} book(s) would be changed.")
+            text = f"{len(rows_to_show)} book(s) would be changed."
+            if fewer_rows:
+                text += (f" {fewer_rows} of them start unticked: the new value names fewer authors than "
+                         "the book has now, so co-authors would be lost.")
+            self.status_label.setText(text)
             self._ok_button.setEnabled(True)
 
     @staticmethod

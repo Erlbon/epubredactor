@@ -1,5 +1,28 @@
 # Changelog
 
+## 2026-11-27#07 -- Undo, the table and several tools are safer
+
+- **Undo no longer makes unsaved changes look saved.** After a Save, Undo marks the book unsaved again (the file
+  holds the newer value); a repair waiting to be saved (Rebuild Manifest, Repair Navigation, removed running
+  headers and the like) is kept and the book stays unsaved; an Undo that brings a book back to exactly what the file
+  holds shows it as saved.
+- **Author Sort to Author(s) no longer drops co-authors without asking.** A book whose Author Sort names fewer
+  authors than it has now starts unticked, with the reason.
+- **A Description cell is no longer edited flattened.** In the two fixed-row-height views the cell shows the text on
+  one line, so it is now edited in the side panel (or in the table with Wrap Text on); before, a one-letter fix
+  there saved the whole description as one line.
+- **Scrolling the side panel no longer changes fields.** A field with several values in the selection picks one with
+  the mouse wheel only after you click into it; otherwise the wheel scrolls the panel.
+- **Search and Replace on File Name:** a change of case only ("my book" to "My Book") renames the file instead of
+  making "My Book (2).epub", and the extension can no longer be changed or removed (the book is then left as it is,
+  with the reason).
+- **Detect Missing Spaces leaves initials, acronyms and web addresses alone** ("R.U.R.", "P.S.", "e.g.",
+  "example.com"); "J.R.R.Tolkien" still becomes "J.R.R. Tolkien".
+- **Number Series skips books that have no Series** and says so in the preview: a Series number is only saved
+  together with a series, so those numbers were lost on the next reload.
+- **Save All says when it skips books that failed to save earlier,** with their names, in the question, the report
+  and the status bar.
+
 ## 2026-11-27#06 -- Polish, Send to Kobo and Convert are safer, and Cancel stops Calibre
 
 - **Polish in place checks Calibre's result before it replaces the book.** A damaged result leaves the original
