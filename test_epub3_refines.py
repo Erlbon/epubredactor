@@ -85,7 +85,9 @@ EPUB2_METADATA = """<?xml version="1.0" encoding="UTF-8"?>
 # The EPUB 2 OPF metadata the writer produced before this change, for the
 # edit made in test_epub2_output_unchanged (captured from the old code),
 # except that the translator keeps opf:role="trl" instead of being turned
-# into "aut".
+# into "aut", and that a subject the save does not change keeps its place
+# and the line break after it (since 2026-11-27 subjects are no longer
+# rebuilt; the new DDC subject comes after it).
 EPUB2_EXPECTED = (
     '<metadata xmlns:dc="http://purl.org/dc/elements/1.1/" xmlns:opf="http://www.idpf.org/2007/opf"'
     ' xmlns="http://www.idpf.org/2007/opf">\n'
@@ -94,7 +96,7 @@ EPUB2_EXPECTED = (
     '    <dc:language>en</dc:language>\n'
     '    <dc:creator opf:file-as="Lawson, Allan" opf:role="aut">Allan Lawson</dc:creator>'
     '<dc:creator opf:file-as="Tolk, Tom" opf:role="trl">Tom Tolk</dc:creator>'
-    '<dc:subject>Fiction</dc:subject>'
+    '<dc:subject>Fiction</dc:subject>\n  '
     '<dc:subject opf:authority="DDC">823.914</dc:subject></metadata>\n  '
 )
 

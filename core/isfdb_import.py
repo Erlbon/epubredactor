@@ -76,6 +76,8 @@ from redactor_common.core.isbn_norm import (
 )
 from redactor_common.core.local_db import LocalDatabase, LocalDatabaseError
 
+from core.xml_text import strip_xml_illegal
+
 SOURCE_NAME = "ISFDB"
 RECIPE = "isfdb-works/1"
 BOOK_TYPES = ("NOVEL", "COLLECTION", "ANTHOLOGY", "OMNIBUS", "NONFICTION", "CHAPBOOK")
@@ -161,7 +163,8 @@ class ImportSummary:
 
 
 def _text(value: Optional[str]) -> str:
-    return " ".join(value.split()) if value else ""
+    # Control characters would make the book's save fail once the value is applied (core/xml_text.py).
+    return " ".join(strip_xml_illegal(value).split()) if value else ""
 
 
 def parse_date(raw: Optional[str]) -> tuple[Optional[int], Optional[int], Optional[int]]:

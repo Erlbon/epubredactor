@@ -100,6 +100,8 @@ from redactor_common.core.dump_import import (
 from redactor_common.core.isbn_norm import is_valid_isbn10, isbn13_to_10, normalize_isbn
 from redactor_common.core.local_db import LocalDatabase, LocalDatabaseError
 
+from core.xml_text import strip_xml_illegal
+
 SOURCE_NAME = "Open Library"
 RECIPE = "openlibrary-editions/1"
 TYPE_EDITION = "/type/edition"
@@ -208,7 +210,8 @@ class ImportSummary:
 
 
 def _text(value) -> str:
-    return " ".join(value.split()) if isinstance(value, str) else ""
+    # Control characters would make the book's save fail once the value is applied (core/xml_text.py).
+    return " ".join(strip_xml_illegal(value).split()) if isinstance(value, str) else ""
 
 
 def _strip_prefix(key) -> str:

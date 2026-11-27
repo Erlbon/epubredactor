@@ -1,5 +1,28 @@
 # Changelog
 
+## 2026-11-27#04 -- saving no longer damages covers, dates or metadata the app does not show
+
+- **Setting or removing a cover never touches the cover page.** Many books point their cover at the cover page
+  rather than the picture. The app now uses the picture that page shows (or adds a new cover picture), so a new
+  cover can no longer overwrite a chapter, and Remove Cover can no longer delete one.
+- **A publication date the Year/Month/Day fields cannot show is kept.** Dates like "May 2020", "c. 1920" or
+  "2020/05/14" used to be deleted by any save; now the date is only rewritten when you change Year, Month or Day.
+  "2020-05-14 10:00" now reads as 14 May 2020.
+- **A description with formatting inside it** now shows its text and is no longer deleted by a save.
+- **Saving keeps what the app does not show:** a second (or nested) series, other collections, a second DDC number,
+  and the authority (LCSH, BISAC) of a subject you keep. Only the fields you changed are rewritten.
+- **The book's unique identifier is never changed.** When it is the ISBN, a new ISBN is added beside it; clearing
+  such an ISBN is refused with an explanation, instead of seeming to work and coming back.
+- **Applying the Author(s), Author Sort or Tags value a book already has** no longer marks it as changed.
+- **Save refuses a book that was changed on disk since it was loaded** (by Sigil, a sync client, another program),
+  instead of writing old metadata into the new file. Refresh List and make the edit again.
+- **Control characters in a field** (pasted from a PDF, or in a lookup answer or an imported dump) are removed
+  instead of making the save fail.
+- **A book with a damaged file inside it** is reported as "not saved" (the original is left as it was) instead of
+  showing a crash report; the command line counts it as failed and goes on with the other books.
+- **Every save is written to the disk and read back** before it replaces the book, so a power cut or a bad write
+  cannot leave a cut-off book behind.
+
 ## 2026-11-27#03 -- Download Calibre button works, shared-code update (redactor_common 2026-11-27-07)
 
 - **The "Download Calibre..." button in Import and Convert** opens Calibre's download page instead of crashing.

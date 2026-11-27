@@ -64,6 +64,7 @@ from redactor_common.core.scan_stamp import ScanStamp, make_stamp, parse_stamp
 
 from core import history
 from core.epub_fingerprint import entries_fingerprint, zip_fingerprint
+from core.xml_text import strip_xml_illegal
 from core.validation_issue import (
     STATUS_INVALID,
     STATUS_ISSUES,
@@ -94,6 +95,42 @@ _URN_ISBN_RE = re.compile(r"urn:isbn:(.+)", re.IGNORECASE)
 
 class EpubError(Exception):
     """Raised for any problem reading or writing an EPUB's metadata."""
+
+
+def _stat_of(path: str) -> Optional[tuple[int, int]]:
+    """(mtime_ns, size) of a file, None when it cannot be read."""
+    try:
+        st = os.stat(path)
+    except OSError:
+        return None
+    return (st.st_mtime_ns, st.st_size)
+
+
+# What reading a damaged zip entry raises: bad CRC / header (BadZipFile),
+# broken deflate data (zlib.error), a cut-off entry (EOFError), an
+# encrypted entry (RuntimeError), an unsupported compression method.
+_DAMAGED_ENTRY_ERRORS = (zipfile.BadZipFile, zlib.error, EOFError, RuntimeError, NotImplementedError)
+
+
+def _read_member(src: zipfile.ZipFile, name: str) -> bytes:
+    """One entry's bytes for the save's rewrite; a damaged entry is an
+    EpubError naming it (a normal per-book save failure, not a crash)."""
+    try:
+        return src.read(name)
+    except _DAMAGED_ENTRY_ERRORS as exc:
+        raise EpubError(f"The file is damaged (entry {name}: {exc}) and was not changed.") from exc
+
+
+def _check_written_zip(path: str) -> None:
+    """Reads the freshly written temp zip back (every entry's CRC) before
+    it may replace the book."""
+    try:
+        with zipfile.ZipFile(path, "r") as zf:
+            bad = zf.testzip()
+    except (*_DAMAGED_ENTRY_ERRORS, OSError) as exc:
+        raise EpubError(f"The new file did not read back correctly ({exc}); the original was not changed.") from exc
+    if bad is not None:
+        raise EpubError(f"The new file has a damaged entry ({bad}); the original was not changed.")
 
 
 @dataclass
@@ -185,6 +222,15 @@ def _split_multi(value: str) -> list[str]:
     return [p for p in parts if p]
 
 
+def _trim_trailing_blanks(values: list[str]) -> list[str]:
+    """`values` without blank entries at the end (they mean nothing for
+    author_sort, which is aligned with authors by position)."""
+    values = list(values)
+    while values and not values[-1]:
+        values.pop()
+    return values
+
+
 _AUTHOR_AMPERSAND_RE = re.compile(r"\s+&\s+")
 
 
@@ -199,12 +245,14 @@ def split_ampersand_names(value: str) -> list[str]:
 def parse_date_parts(text: str) -> tuple[str, str, str]:
     """Split a dc:date value into (year, month, day). Tolerates plain
     years ("2020"), year-month ("2020-05"), full dates ("2020-05-14"),
-    and full datetimes ("2020-05-14T00:00:00Z") -- anything past the
-    date portion is ignored. Missing/unparseable pieces come back "" ."""
+    and full datetimes ("2020-05-14T00:00:00Z", "2020-05-14 10:00") --
+    anything past the date portion is ignored. Missing/unparseable pieces
+    come back "" . (A value this cannot read is still kept in the book:
+    save rewrites dc:date only when year, month or day were changed.)"""
     text = (text or "").strip()
     if not text:
         return "", "", ""
-    date_part = text.split("T")[0]
+    date_part = re.split(r"[T\s]", text, maxsplit=1)[0]
     parts = date_part.split("-")
     year = parts[0].strip() if len(parts) >= 1 and parts[0].strip().isdigit() else ""
     month = parts[1].strip() if len(parts) >= 2 and parts[1].strip().isdigit() else ""
@@ -242,6 +290,26 @@ _FONT_OBFUSCATION_ALGORITHMS = {
     "http://www.idpf.org/2008/embedding",
     "http://ns.adobe.com/pdf/enc#RC",
 }
+
+
+def _el_text(el: Optional[etree._Element]) -> str:
+    """All the text inside a metadata element, markup inside it included
+    (a dc:description holding <p>...</p> has no text of its own), stripped."""
+    if el is None:
+        return ""
+    return "".join(el.itertext()).strip()
+
+
+def _is_image_item(item: Optional[etree._Element]) -> bool:
+    """True for a manifest item that is an image (by media-type, or by its
+    href when it has none). A cover pointer naming anything else -- often the
+    cover PAGE -- must never have its file overwritten or deleted as a cover."""
+    if item is None:
+        return False
+    media = (item.get("media-type") or "").strip().lower()
+    if not media:
+        media = (mimetypes.guess_type(item.get("href") or "")[0] or "").lower()
+    return media.startswith("image/")
 
 
 def _refining_metas(md: etree._Element, el_id: Optional[str]) -> list[etree._Element]:
@@ -524,12 +592,19 @@ class EpubBook:
     # disk: set on load and after every successful in-place save. None =
     # unknown (a load failure, a test double), and then nothing is journaled.
     baseline: Optional[dict] = None
+    # (mtime_ns, size) of the file as loaded, and after each in-place save.
+    # An in-place save is refused when the file no longer matches: it would
+    # write the OPF read back then into a zip someone else has changed since
+    # (Sigil, a sync client). None = unknown (a test double): not checked.
+    _disk_stat: Optional[tuple[int, int]] = None
 
     # ------------------------------------------------------------------
     # Loading
     # ------------------------------------------------------------------
 
     def _load(self) -> None:
+        # Taken before the read: a file changed during the load then counts as changed too.
+        self._disk_stat = _stat_of(self.path)
         try:
             with zipfile.ZipFile(self.path, "r") as zf:
                 self.opf_path = _find_opf_path(zf)
@@ -598,8 +673,7 @@ class EpubBook:
         md = self._metadata_el()
 
         def first_text(tag: str) -> str:
-            el = md.find(f"dc:{tag}", namespaces=NS)
-            return (el.text or "").strip() if el is not None else ""
+            return _el_text(md.find(f"dc:{tag}", namespaces=NS))
 
         title = first_text("title")
         publisher = first_text("publisher")
@@ -624,50 +698,13 @@ class EpubBook:
         while author_sort and not author_sort[-1]:
             author_sort.pop()
 
-        opf_authority_attr = f"{{{NS['opf']}}}authority"
-        tags: list[str] = []
-        ddc = ""
-        for el in md.findall("dc:subject", namespaces=NS):
-            text = (el.text or "").strip()
-            if not text:
-                continue
-            authority = (
-                el.get(opf_authority_attr) or el.get("authority") or _refined_value(md, el, "authority")
-            ).strip()
-            if authority.upper() == "DDC":
-                ddc = text
-            else:
-                tags.append(text)
+        tag_els, ddc_els = self._subject_elements(md)
+        tags = [_el_text(el) for el in tag_els]
+        # The first DDC subject is the one the DDC field shows and edits;
+        # any further one is left in the book as it is.
+        ddc = _el_text(ddc_els[0]) if ddc_els else ""
 
-        series = ""
-        series_index = ""
-        for meta_el in md.findall("opf:meta", namespaces=NS):
-            name = meta_el.get("name")
-            if name == "calibre:series":
-                series = meta_el.get("content", "")
-            elif name == "calibre:series_index":
-                series_index = meta_el.get("content", "")
-
-        if not series:
-            # Fall back to EPUB3 collection metadata if calibre-style absent.
-            for meta_el, coll_id, coll_type in self._iter_collections(md):
-                if coll_type != "series":
-                    continue
-                series = (meta_el.text or "").strip()
-                if coll_id:
-                    pos_el = md.find(
-                        f'opf:meta[@refines="#{coll_id}"][@property="group-position"]',
-                        namespaces=NS,
-                    )
-                    if pos_el is not None:
-                        series_index = (pos_el.text or "").strip()
-                break
-
-        collection = ""
-        for meta_el, _coll_id, coll_type in self._iter_collections(md):
-            if coll_type == "set":
-                collection = (meta_el.text or "").strip()
-                break
+        series, series_index, collection = self._read_collections(md)
 
         isbn = self._read_isbn(md)
 
@@ -690,55 +727,179 @@ class EpubBook:
         )
 
     @staticmethod
+    def _subject_elements(md: etree._Element) -> tuple[list[etree._Element], list[etree._Element]]:
+        """(tag subjects, DDC subjects), each in document order; subjects
+        with no text are left out. A DDC subject is one whose authority
+        (opf:authority, a plain authority attribute, or an EPUB 3 refining
+        meta) is DDC; every other subject is a tag."""
+        opf_authority_attr = f"{{{NS['opf']}}}authority"
+        tag_els: list[etree._Element] = []
+        ddc_els: list[etree._Element] = []
+        for el in md.findall("dc:subject", namespaces=NS):
+            if not _el_text(el):
+                continue
+            authority = (
+                el.get(opf_authority_attr) or el.get("authority") or _refined_value(md, el, "authority")
+            ).strip()
+            (ddc_els if authority.upper() == "DDC" else tag_els).append(el)
+        return tag_els, ddc_els
+
+    def _first_collection(self, md: etree._Element, wanted_type: str) -> Optional[etree._Element]:
+        """The first belongs-to-collection meta of `wanted_type` ("series"
+        or "set"): the one the Series / Collection field shows and edits."""
+        for meta_el, _coll_id, coll_type in self._iter_collections(md):
+            if coll_type == wanted_type:
+                return meta_el
+        return None
+
+    def _read_collections(self, md: etree._Element) -> tuple[str, str, str]:
+        """(series, series_index, collection) as the fields show them:
+        Calibre's series metas first, else the first EPUB 3 series
+        collection; the first collection of type "set"."""
+        series = ""
+        series_index = ""
+        for meta_el in md.findall("opf:meta", namespaces=NS):
+            name = meta_el.get("name")
+            if name == "calibre:series":
+                series = meta_el.get("content", "")
+            elif name == "calibre:series_index":
+                series_index = meta_el.get("content", "")
+        if not series:
+            # Fall back to EPUB3 collection metadata if calibre-style absent.
+            series_el = self._first_collection(md, "series")
+            if series_el is not None:
+                series = _el_text(series_el)
+                series_index = _refined_value(md, series_el, "group-position")
+        collection = _el_text(self._first_collection(md, "set"))
+        return series, series_index, collection
+
+    @staticmethod
+    def _isbn_elements(md: etree._Element) -> tuple[Optional[etree._Element], list[etree._Element]]:
+        """(the package's unique identifier if it is an ISBN, the other ISBN
+        identifiers in document order). The unique identifier is what
+        readers key notes and reading progress on: it is never edited."""
+        root = md.getparent()
+        primary_id = root.get("unique-identifier") if root is not None else None
+        opf_scheme_attr = f"{{{NS['opf']}}}scheme"
+        primary: Optional[etree._Element] = None
+        others: list[etree._Element] = []
+        for el in md.findall("dc:identifier", namespaces=NS):
+            text = (el.text or "").strip()
+            if not text:
+                continue
+            if el.get(opf_scheme_attr, "").strip().upper() != "ISBN" and not _URN_ISBN_RE.match(text):
+                continue
+            if primary_id and el.get("id") == primary_id:
+                primary = el
+            else:
+                others.append(el)
+        return primary, others
+
+    @staticmethod
+    def _isbn_value(el: Optional[etree._Element]) -> str:
+        """The ISBN in one ISBN identifier element, without a "urn:isbn:" prefix."""
+        if el is None:
+            return ""
+        text = (el.text or "").strip()
+        m = _URN_ISBN_RE.match(text)
+        return m.group(1).strip() if m else text
+
+    @staticmethod
     def _read_isbn(md: etree._Element) -> str:
         """Find the ISBN among possibly-several dc:identifier elements.
         A book typically has its own primary identifier (a UUID), tracked
         by <package unique-identifier="...">, plus optionally an ISBN as a
         second one. We look for the ISBN specifically rather than assuming
-        it's the primary identifier."""
-        opf_scheme_attr = f"{{{NS['opf']}}}scheme"
-        for el in md.findall("dc:identifier", namespaces=NS):
-            text = (el.text or "").strip()
-            if not text:
-                continue
-            scheme = el.get(opf_scheme_attr, "")
-            if scheme.strip().upper() == "ISBN":
-                m = _URN_ISBN_RE.match(text)
-                return m.group(1).strip() if m else text
-            m = _URN_ISBN_RE.match(text)
-            if m:
-                return m.group(1).strip()
-        return ""
+        it's the primary identifier. When the primary identifier is itself
+        an ISBN, a separate ISBN identifier (the one this app edits) wins."""
+        primary, others = EpubBook._isbn_elements(md)
+        return EpubBook._isbn_value(others[0] if others else primary)
 
     # ------------------------------------------------------------------
     # Cover image
     # ------------------------------------------------------------------
 
     def _find_cover_item(self) -> Optional[etree._Element]:
+        return self._cover_lookup()[0]
+
+    def _cover_lookup(self, zf: Optional[zipfile.ZipFile] = None) -> tuple[Optional[etree._Element], bool]:
+        """(the cover IMAGE's manifest item or None, whether it was found
+        through a cover page). Only an image item is ever taken as the
+        cover: many EPUB 2 books point <meta name="cover"> at the cover
+        page (cover.xhtml), and treating that page as the image would
+        overwrite or delete a chapter. For such a pointer, the image the
+        page shows is the cover."""
         manifest = self._manifest_el()
         if manifest is None:
-            return None
+            return None, False
+        items = manifest.findall("opf:item", namespaces=NS)
         # EPUB3 convention: item with properties="cover-image"
-        for item in manifest.findall("opf:item", namespaces=NS):
+        for item in items:
             props = (item.get("properties") or "").split()
-            if "cover-image" in props:
-                return item
+            if "cover-image" in props and _is_image_item(item):
+                return item, False
         # EPUB2 convention: <meta name="cover" content="<manifest id>">
         md = self._metadata_el()
         for meta_el in md.findall("opf:meta", namespaces=NS):
-            if meta_el.get("name") == "cover":
-                cover_id = meta_el.get("content")
-                if cover_id:
-                    for item in manifest.findall("opf:item", namespaces=NS):
-                        if item.get("id") == cover_id:
-                            return item
+            if meta_el.get("name") != "cover" or not meta_el.get("content"):
+                continue
+            item = next((i for i in items if i.get("id") == meta_el.get("content")), None)
+            if item is None:
+                continue
+            if _is_image_item(item):
+                return item, False
+            image = self._image_in_page(item, items, zf)
+            if image is not None:
+                return image, True
+        return None, False
+
+    def _image_in_page(
+        self, page: etree._Element, items: list[etree._Element], zf: Optional[zipfile.ZipFile],
+    ) -> Optional[etree._Element]:
+        """The manifest item of the first image a (cover) page shows, via
+        <img src> or SVG <image href>; None if there is none or the page
+        cannot be read."""
+        href = page.get("href")
+        if not href:
+            return None
+        page_path = self._cover_archive_path(href)
+        try:
+            if zf is not None:
+                data = zf.read(page_path)
+            else:
+                with zipfile.ZipFile(self.path, "r") as own:
+                    data = own.read(page_path)
+            parser = etree.XMLParser(recover=True, resolve_entities=False, no_network=True)
+            doc = etree.fromstring(data, parser=parser)
+        except Exception:  # noqa: BLE001 - an unreadable page just has no cover image
+            return None
+        if doc is None:
+            return None
+        xlink_href = "{http://www.w3.org/1999/xlink}href"
+        for el in doc.iter():
+            if not isinstance(el.tag, str):
+                continue
+            local = etree.QName(el).localname.lower()
+            if local == "img":
+                src = el.get("src")
+            elif local == "image":
+                src = el.get(xlink_href) or el.get("href")
+            else:
+                continue
+            target = resolve_resource_path(page_path, src or "")
+            if not target:
+                continue
+            for item in items:
+                if item.get("href") and self._cover_archive_path(item.get("href")) == target:
+                    return item if _is_image_item(item) else None
+            return None
         return None
 
     def _cover_archive_path(self, href: str) -> str:
         return href_to_archive_path(posixpath.dirname(self.opf_path), href)
 
     def _load_cover(self, zf: zipfile.ZipFile) -> None:
-        item = self._find_cover_item()
+        item = self._cover_lookup(zf)[0]
         if item is None:
             return
         href = item.get("href")
@@ -1657,10 +1818,18 @@ class EpubBook:
         """Apply a dict of field_name -> value onto this book's metadata
         and mark it dirty. Only keys present in new_values are changed."""
         changed = False
+        list_fields = {"authors_str": "authors", "author_sort_str": "author_sort", "tags_str": "tags"}
         for key, value in new_values.items():
-            if key in ("authors_str", "author_sort_str", "tags_str"):
+            if key in list_fields:
+                # Compared as the lists they become, so applying the value a
+                # book already holds ("A;B" for "A; B" too) changes nothing.
+                attr = list_fields[key]
+                before = list(getattr(self.metadata, attr))
                 setattr(self.metadata, key, value)
-                changed = True
+                if _trim_trailing_blanks(getattr(self.metadata, attr)) != _trim_trailing_blanks(before):
+                    changed = True
+                else:
+                    setattr(self.metadata, attr, before)
             elif hasattr(self.metadata, key):
                 if getattr(self.metadata, key) != value:
                     setattr(self.metadata, key, value)
@@ -1677,6 +1846,8 @@ class EpubBook:
         nsmap_dc = NS["dc"]
         nsmap_opf = NS["opf"]
         file_ops = {"add": {}, "remove": set()}
+        self._check_isbn_clear(md)  # before anything in the tree is changed
+        self._strip_illegal_characters()
         # EPUB 2 keeps its opf:file-as / opf:role / opf:authority attributes;
         # EPUB 3 does not allow them and gets ids plus refining metas instead.
         epub3 = _is_epub3(root)
@@ -1691,12 +1862,16 @@ class EpubBook:
 
         def set_dc_single(tag: str, value: str) -> None:
             el = md.find(f"dc:{tag}", namespaces=NS)
+            if _el_text(el) == (value or "").strip():
+                return  # unchanged: the element stays exactly as it is (markup inside it too)
             if not value:
                 if el is not None:
                     _remove_with_refines(md, el)
                 return
             if el is None:
                 el = etree.SubElement(md, f"{{{nsmap_dc}}}{tag}")
+            for child in list(el):  # a changed value replaces any markup inside, not just the text before it
+                el.remove(child)
             el.text = value
 
         def set_creators(authors: list[str], author_sort: list[str]) -> None:
@@ -1707,111 +1882,130 @@ class EpubBook:
             # a role other than "aut" (a translator marked "trl", say: this
             # app has no separate field for one, so it sits in Authors)
             # keeps that role; every other name gets MARC relator "aut".
+            # The new creators go where the first old one was (at the end
+            # when there was none), so a save leaves the other metadata where
+            # it is and saving twice gives the same file.
+            old_creators = md.findall("dc:creator", namespaces=NS)
+            marker = None
+            if old_creators:
+                marker = etree.Element("creator-position-marker")
+                old_creators[0].addprevious(marker)
+
+            def place(new_el: etree._Element) -> None:
+                if marker is not None:
+                    marker.addprevious(new_el)
+                else:
+                    md.append(new_el)
+
+            def place_refine(el: etree._Element, prop: str, value: str, scheme: str = "") -> None:
+                meta_el = etree.Element(f"{{{nsmap_opf}}}meta")
+                meta_el.set("refines", f"#{el.get('id')}")
+                meta_el.set("property", prop)
+                if scheme:
+                    meta_el.set("scheme", scheme)
+                meta_el.text = value
+                place(meta_el)
+
             old_roles: dict[str, str] = {}
-            for el in md.findall("dc:creator", namespaces=NS):
+            for el in old_creators:
                 role = (el.get(opf_role_attr) or "").strip() or _refined_value(md, el, "role")
                 old_roles.setdefault((el.text or "").strip(), role)
                 _remove_with_refines(md, el)
             for i, name in enumerate(authors):
                 sort_name = author_sort[i] if i < len(author_sort) else ""
                 role = old_roles.get(name) or "aut"
-                el = etree.SubElement(md, f"{{{nsmap_dc}}}creator")
+                el = etree.Element(f"{{{nsmap_dc}}}creator")
                 el.text = name
+                place(el)
                 if epub3:
                     el.set("id", _unique_id(root, f"creator-{i + 1}"))
                     if sort_name:
-                        add_refine(el, "file-as", sort_name)
-                    add_refine(el, "role", role, scheme="marc:relators")
+                        place_refine(el, "file-as", sort_name)
+                    place_refine(el, "role", role, scheme="marc:relators")
                 else:
                     if sort_name:
                         el.set(opf_file_as_attr, sort_name)
                     el.set(opf_role_attr, role)
+            if marker is not None:
+                md.remove(marker)
 
         set_dc_single("title", self.metadata.title)
         set_creators(self.metadata.authors, self.metadata.author_sort)
         set_dc_single("publisher", self.metadata.publisher)
         set_dc_single("language", self.metadata.language)
         set_dc_single("description", self.metadata.description)
-        set_dc_single("date", format_date_parts(
-            self.metadata.pub_year, self.metadata.pub_month, self.metadata.pub_day
-        ))
+        # The date is shown split into year/month/day, which cannot hold every
+        # value a book may carry ("May 2020", "c. 1920", a time of day). The
+        # element is rewritten only when the user changed one of the parts,
+        # and a date the parts could not read is never deleted.
+        date_el = md.find("dc:date", namespaces=NS)
+        old_parts = parse_date_parts(_el_text(date_el))
+        new_parts = tuple(
+            (part or "").strip()
+            for part in (self.metadata.pub_year, self.metadata.pub_month, self.metadata.pub_day)
+        )
+        if new_parts != old_parts:
+            new_date = format_date_parts(*new_parts)
+            if new_date or old_parts[0]:
+                set_dc_single("date", new_date)
 
         # --- subjects: tags/genre (plain dc:subject) and DDC classification
-        # (dc:subject with opf:authority="DDC") share the same element type,
-        # so they're rebuilt together to avoid clobbering one when writing
-        # the other. In EPUB 3 the DDC is marked by refining metas
-        # (authority DDC, term = the class number) instead.
-        for el in md.findall("dc:subject", namespaces=NS):
-            _remove_with_refines(md, el)
-        for tag_value in self.metadata.tags:
-            el = etree.SubElement(md, f"{{{nsmap_dc}}}subject")
-            el.text = tag_value
+        # (dc:subject with opf:authority="DDC") share the same element type.
+        # Only what the fields show is touched, and only when it changed: a
+        # tag subject keeps its authority and refines, a second DDC stays.
+        # In EPUB 3 the DDC is marked by refining metas (authority DDC,
+        # term = the class number) instead of opf:authority.
+        tag_els, ddc_els = self._subject_elements(md)
+        new_tags = [t.strip() for t in self.metadata.tags if t and t.strip()]
+        if [_el_text(el) for el in tag_els] != new_tags:
+            self._write_tags(md, tag_els, new_tags)
         ddc = self.metadata.ddc.strip()
-        if ddc:
-            el = etree.SubElement(md, f"{{{nsmap_dc}}}subject")
-            el.text = ddc
-            if epub3:
-                el.set("id", _unique_id(root, "subject-ddc"))
-                add_refine(el, "authority", "DDC")
-                add_refine(el, "term", ddc)
+        if ddc != (_el_text(ddc_els[0]) if ddc_els else ""):
+            if not ddc:
+                for el in ddc_els:
+                    _remove_with_refines(md, el)
+            elif ddc_els:
+                el = ddc_els[0]
+                for child in list(el):
+                    el.remove(child)
+                el.text = ddc
+                for meta_el in _refining_metas(md, el.get("id")):
+                    if meta_el.get("property") == "term":
+                        meta_el.text = ddc
             else:
-                el.set(f"{{{nsmap_opf}}}authority", "DDC")
+                el = etree.SubElement(md, f"{{{nsmap_dc}}}subject")
+                el.text = ddc
+                if epub3:
+                    el.set("id", _unique_id(root, "subject-ddc"))
+                    add_refine(el, "authority", "DDC")
+                    add_refine(el, "term", ddc)
+                else:
+                    el.set(f"{{{nsmap_opf}}}authority", "DDC")
 
-        # --- series & collection: strip ALL existing belongs-to-collection
-        # meta (both series-type and other-type, e.g. "set"), then rewrite
-        # fresh so we never leave stale/duplicate entries behind. Removal
-        # is type-agnostic since both use the same element shapes; writing
-        # is not, since Series and Collection are independent fields with
-        # their own collection-type.
-        for meta_el in md.findall("opf:meta", namespaces=NS):
-            name = meta_el.get("name")
-            prop = meta_el.get("property")
-            refines = meta_el.get("refines")
-            if name in ("calibre:series", "calibre:series_index"):
-                md.remove(meta_el)
-            elif prop == "belongs-to-collection":
-                md.remove(meta_el)
-            elif refines and prop in ("collection-type", "group-position"):
-                md.remove(meta_el)
+        if epub3:
+            # A subject kept as it is may still carry the EPUB 2 opf:authority
+            # this app wrote into EPUB 3 books before 2026-11-02: EPUB 3 has
+            # refining metas for that instead.
+            opf_authority_attr = f"{{{nsmap_opf}}}authority"
+            for el in md.findall("dc:subject", namespaces=NS):
+                authority = (el.attrib.pop(opf_authority_attr, None) or "").strip()
+                if not authority:
+                    continue
+                if not el.get("id"):
+                    el.set("id", _unique_id(root, "subject-1"))
+                if not _refined_value(md, el, "authority"):
+                    add_refine(el, "authority", authority)
+                if authority.upper() == "DDC" and not _refined_value(md, el, "term"):
+                    add_refine(el, "term", _el_text(el))
 
-        if self.metadata.series:
-            cal_series = etree.SubElement(md, f"{{{nsmap_opf}}}meta")
-            cal_series.set("name", "calibre:series")
-            cal_series.set("content", self.metadata.series)
-
-            if self.metadata.series_index:
-                cal_idx = etree.SubElement(md, f"{{{nsmap_opf}}}meta")
-                cal_idx.set("name", "calibre:series_index")
-                cal_idx.set("content", self.metadata.series_index)
-
-            coll_id = "bookmeta-series"
-            coll_el = etree.SubElement(md, f"{{{nsmap_opf}}}meta")
-            coll_el.set("id", coll_id)
-            coll_el.set("property", "belongs-to-collection")
-            coll_el.text = self.metadata.series
-
-            type_el = etree.SubElement(md, f"{{{nsmap_opf}}}meta")
-            type_el.set("refines", f"#{coll_id}")
-            type_el.set("property", "collection-type")
-            type_el.text = "series"
-
-            if self.metadata.series_index:
-                pos_el = etree.SubElement(md, f"{{{nsmap_opf}}}meta")
-                pos_el.set("refines", f"#{coll_id}")
-                pos_el.set("property", "group-position")
-                pos_el.text = self.metadata.series_index
-
-        if self.metadata.collection:
-            set_id = "bookmeta-collection"
-            set_el = etree.SubElement(md, f"{{{nsmap_opf}}}meta")
-            set_el.set("id", set_id)
-            set_el.set("property", "belongs-to-collection")
-            set_el.text = self.metadata.collection
-
-            set_type_el = etree.SubElement(md, f"{{{nsmap_opf}}}meta")
-            set_type_el.set("refines", f"#{set_id}")
-            set_type_el.set("property", "collection-type")
-            set_type_el.text = "set"
+        # --- series & collection: only the series and the set the fields
+        # show are updated (in place), and only when they changed. Other
+        # collections (a second or nested series, other types) are kept.
+        old_series, old_index, old_collection = self._read_collections(md)
+        if (self.metadata.series, self.metadata.series_index) != (old_series, old_index):
+            self._write_series(md, self.metadata.series, self.metadata.series_index)
+        if self.metadata.collection != old_collection:
+            self._write_collection_set(md, self.metadata.collection)
 
         self._write_isbn(md)
         self._write_cover(md, file_ops)
@@ -1826,6 +2020,145 @@ class EpubBook:
             self._opf_tree, xml_declaration=True, encoding="UTF-8", standalone=True
         )
         return new_opf_bytes, file_ops
+
+    def _strip_illegal_characters(self) -> None:
+        """Removes characters XML cannot hold (NUL, other control characters)
+        from every text field, wherever they came from (typed, pasted, a
+        lookup answer, a dump), so they cannot make the save fail."""
+        md = self.metadata
+        for name, value in list(vars(md).items()):
+            if isinstance(value, str):
+                clean = strip_xml_illegal(value)
+                if clean != value:
+                    setattr(md, name, clean)
+            elif isinstance(value, list) and any(isinstance(v, str) and strip_xml_illegal(v) != v for v in value):
+                setattr(md, name, [strip_xml_illegal(v) if isinstance(v, str) else v for v in value])
+
+    def _check_isbn_clear(self, md: etree._Element) -> None:
+        """Refuses (EpubError, nothing written) to clear an ISBN that is
+        also the book's unique identifier: that one is never changed, so the
+        clear could not happen and the old ISBN would silently come back."""
+        new_isbn = self.metadata.isbn.strip()
+        urn_match = _URN_ISBN_RE.match(new_isbn)
+        if urn_match:
+            new_isbn = urn_match.group(1).strip()
+        if new_isbn:
+            return
+        primary, _others = self._isbn_elements(md)
+        if primary is not None:
+            raise EpubError(
+                "The ISBN cannot be cleared: in this book it is also the unique identifier "
+                "that reading apps key notes and reading progress on. Put the ISBN back and save again."
+            )
+
+    def _write_tags(self, md: etree._Element, tag_els: list[etree._Element], new_tags: list[str]) -> None:
+        """Makes the tag subjects read `new_tags`, in that order: a subject
+        whose text stays is kept as it is (attributes, refines), a subject
+        no longer wanted is removed, a new tag gets a new subject. They sit
+        where the first tag subject was (at the end when there was none)."""
+        pool: dict[str, list[etree._Element]] = {}
+        for el in tag_els:
+            pool.setdefault(_el_text(el), []).append(el)
+        final: list[etree._Element] = []
+        for value in new_tags:
+            if pool.get(value):
+                final.append(pool[value].pop(0))
+            else:
+                el = etree.Element(f"{{{NS['dc']}}}subject")
+                el.text = value
+                final.append(el)
+        marker = None
+        if tag_els:
+            marker = etree.Element("tag-position-marker")
+            tag_els[0].addprevious(marker)
+        for leftovers in pool.values():
+            for el in leftovers:
+                _remove_with_refines(md, el)
+        for el in final:
+            if el.getparent() is not None:
+                el.getparent().remove(el)
+            if marker is not None:
+                marker.addprevious(el)
+            else:
+                md.append(el)
+        if marker is not None:
+            md.remove(marker)
+
+    def _write_series(self, md: etree._Element, series: str, series_index: str) -> None:
+        """Writes Series / Series Index in both conventions: Calibre's
+        metas (rewritten) and the first EPUB 3 series collection (updated
+        in place, created when there is none, removed when Series is
+        cleared). Every other collection stays as it is."""
+        root = self._opf_tree.getroot()
+        opf = NS["opf"]
+        for meta_el in md.findall("opf:meta", namespaces=NS):
+            if meta_el.get("name") in ("calibre:series", "calibre:series_index"):
+                md.remove(meta_el)
+        series_el = self._first_collection(md, "series")
+        if not series:
+            if series_el is not None:
+                _remove_with_refines(md, series_el)
+            return
+        cal_series = etree.SubElement(md, f"{{{opf}}}meta")
+        cal_series.set("name", "calibre:series")
+        cal_series.set("content", series)
+        if series_index:
+            cal_idx = etree.SubElement(md, f"{{{opf}}}meta")
+            cal_idx.set("name", "calibre:series_index")
+            cal_idx.set("content", series_index)
+
+        if series_el is None:
+            series_el = etree.SubElement(md, f"{{{opf}}}meta")
+            series_el.set("id", _unique_id(root, "bookmeta-series"))
+            series_el.set("property", "belongs-to-collection")
+            type_el = etree.SubElement(md, f"{{{opf}}}meta")
+            type_el.set("refines", f"#{series_el.get('id')}")
+            type_el.set("property", "collection-type")
+            type_el.text = "series"
+        elif not series_el.get("id"):
+            series_el.set("id", _unique_id(root, "bookmeta-series"))
+        for child in list(series_el):
+            series_el.remove(child)
+        series_el.text = series
+
+        positions = [
+            m for m in _refining_metas(md, series_el.get("id")) if m.get("property") == "group-position"
+        ]
+        if series_index:
+            if positions:
+                positions[0].text = series_index
+            else:
+                pos_el = etree.Element(f"{{{opf}}}meta")
+                pos_el.set("refines", f"#{series_el.get('id')}")
+                pos_el.set("property", "group-position")
+                pos_el.text = series_index
+                last = ([series_el] + _refining_metas(md, series_el.get("id")))[-1]
+                last.addnext(pos_el)
+        else:
+            for pos_el in positions:
+                md.remove(pos_el)
+
+    def _write_collection_set(self, md: etree._Element, collection: str) -> None:
+        """Writes Collection as the first EPUB 3 collection of type "set":
+        updated in place, created when there is none, removed when the
+        field is cleared. Every other collection stays as it is."""
+        opf = NS["opf"]
+        set_el = self._first_collection(md, "set")
+        if not collection:
+            if set_el is not None:
+                _remove_with_refines(md, set_el)
+            return
+        if set_el is None:
+            set_el = etree.SubElement(md, f"{{{opf}}}meta")
+            set_el.set("id", _unique_id(self._opf_tree.getroot(), "bookmeta-collection"))
+            set_el.set("property", "belongs-to-collection")
+            type_el = etree.SubElement(md, f"{{{opf}}}meta")
+            type_el.set("refines", f"#{set_el.get('id')}")
+            type_el.set("property", "collection-type")
+            type_el.text = "set"
+        for child in list(set_el):
+            set_el.remove(child)
+        set_el.text = collection
 
     def _write_stamp(self, md: etree._Element, file_ops: dict) -> None:
         """Writes the validation stamp as the one redactor:validation meta
@@ -1867,18 +2200,14 @@ class EpubBook:
         """Update or create the ISBN dc:identifier, without ever touching
         the package's primary/unique identifier element (referenced by
         <package unique-identifier="...">) -- removing or repurposing that
-        one would make the EPUB invalid."""
+        one would make the EPUB invalid, and readers key notes and reading
+        progress on it. When the unique identifier is itself an ISBN, a new
+        ISBN goes into a separate identifier (which _read_isbn prefers);
+        clearing it is refused before this runs (_check_isbn_clear)."""
         root = self._opf_tree.getroot()
-        primary_id = root.get("unique-identifier")
         opf_scheme_attr = f"{{{NS['opf']}}}scheme"
-
-        isbn_el = None
-        for el in md.findall("dc:identifier", namespaces=NS):
-            text = (el.text or "").strip()
-            scheme = el.get(opf_scheme_attr, "")
-            if scheme.strip().upper() == "ISBN" or _URN_ISBN_RE.match(text):
-                isbn_el = el
-                break
+        primary, others = self._isbn_elements(md)
+        isbn_el = others[0] if others else None
 
         new_isbn = self.metadata.isbn.strip()
         urn_match = _URN_ISBN_RE.match(new_isbn)
@@ -1886,9 +2215,11 @@ class EpubBook:
             new_isbn = urn_match.group(1).strip()
 
         if not new_isbn:
-            if isbn_el is not None and isbn_el.get("id") != primary_id:
+            if isbn_el is not None:
                 _remove_with_refines(md, isbn_el)
             return
+        if isbn_el is None and primary is not None and self._isbn_value(primary) == new_isbn:
+            return  # the unique identifier already says it; nothing to add
 
         # EPUB 3 has no opf:scheme attribute; there the value itself says
         # what it is, as a "urn:isbn:" URN (which _read_isbn also reads).
@@ -1914,10 +2245,19 @@ class EpubBook:
             return
 
         manifest = self._manifest_el()
-        existing_item = self._find_cover_item()
+        # Only ever an image item (see _cover_lookup): a cover pointer that
+        # names a page never gets that page overwritten or deleted.
+        existing_item, via_page = self._cover_lookup()
 
         if self.cover_removed:
-            if existing_item is not None:
+            if existing_item is not None and via_page:
+                # The image is shown by the book's cover page: keep the page
+                # and its image, and drop only the pointer that made it "the
+                # cover" (deleting the image would break the page).
+                for meta_el in md.findall("opf:meta", namespaces=NS):
+                    if meta_el.get("name") == "cover":
+                        md.remove(meta_el)
+            elif existing_item is not None:
                 href = existing_item.get("href")
                 if href:
                     file_ops["remove"].add(self._cover_archive_path(href))
@@ -1943,6 +2283,13 @@ class EpubBook:
         ext = mimetypes.guess_extension(self.cover_mime or "image/jpeg") or ".jpg"
         href = f"cover-image{ext}"
         archive_path = self._cover_archive_path(href)
+        # Never over a file the manifest already lists (it is not the cover).
+        taken = {self._cover_archive_path(i.get("href")) for i in manifest.iter() if i.get("href")}
+        n = 2
+        while archive_path in taken:
+            href = f"cover-image-{n}{ext}"
+            archive_path = self._cover_archive_path(href)
+            n += 1
 
         existing_ids = {e.get("id") for e in md.iter() if e.get("id")}
         for e in manifest.iter():
@@ -1959,10 +2306,18 @@ class EpubBook:
         new_item.set("media-type", self.cover_mime or "image/jpeg")
         new_item.set("properties", "cover-image")  # EPUB3 readers
 
-        # Also add the EPUB2-style pointer for older readers/Calibre.
-        cover_meta = etree.SubElement(md, f"{{{NS['opf']}}}meta")
-        cover_meta.set("name", "cover")
-        cover_meta.set("content", cover_id)
+        # Also the EPUB2-style pointer for older readers/Calibre. A pointer
+        # already there named no image (a cover page, a missing id): it is
+        # turned to the new image rather than left beside a second one.
+        cover_metas = [m for m in md.findall("opf:meta", namespaces=NS) if m.get("name") == "cover"]
+        if cover_metas:
+            cover_metas[0].set("content", cover_id)
+            for extra in cover_metas[1:]:
+                md.remove(extra)
+        else:
+            cover_meta = etree.SubElement(md, f"{{{NS['opf']}}}meta")
+            cover_meta.set("name", "cover")
+            cover_meta.set("content", cover_id)
 
         file_ops["add"][archive_path] = self.cover_bytes
 
@@ -2062,9 +2417,18 @@ class EpubBook:
         if self.load_error:
             raise EpubError(f"Cannot save, file failed to load: {self.load_error}")
 
-        new_opf_bytes, file_ops = self._rebuild_opf()
         target = output_path or self.path
         in_place = output_path is None or output_path == self.path
+        if in_place and self._disk_stat is not None:
+            now = _stat_of(self.path)
+            if now is None:
+                raise EpubError("Not saved: the file is no longer there (moved or deleted since it was loaded).")
+            if now != self._disk_stat:
+                raise EpubError(
+                    "Not saved: the file was changed on disk since it was loaded (by another program?). "
+                    "Reload it (Refresh List), then make the edits again."
+                )
+        new_opf_bytes, file_ops = self._rebuild_opf()
         tmp_fd_path = target + ".tmp_write"
         entry = self._journal_begin(target, in_place, journal_kind)
         try:
@@ -2088,17 +2452,26 @@ class EpubBook:
             self._toc_in_tree = False
             self._stamp_follows_save = False
             self.baseline = history.fields_text(self.metadata)
+            self._disk_stat = _stat_of(target)
             self._refresh_stamp_staleness()
 
     def _write_archive(self, target: str, tmp_fd_path: str, new_opf_bytes: bytes, file_ops: dict) -> None:
         """The zip rewrite behind save(): a temp file beside `target`, then
-        an atomic replace."""
+        an atomic replace. A damaged entry in the source (bad CRC, broken
+        compressed data) becomes an EpubError naming it, the original left
+        as it is. The temp file is flushed to the disk and read back
+        (testzip) before it replaces anything, so a power cut or a bad
+        write cannot leave a cut-off book in the original's place."""
         try:
-            with zipfile.ZipFile(self.path, "r") as src:
+            try:
+                src = zipfile.ZipFile(self.path, "r")
+            except zipfile.BadZipFile as exc:
+                raise EpubError(f"The file is damaged ({exc}) and was not changed.") from exc
+            with src, open(tmp_fd_path, "wb") as tmp_fh:
                 names = src.namelist()
                 infos = {i.filename: i for i in src.infolist()}
 
-                with zipfile.ZipFile(tmp_fd_path, "w") as dst:
+                with zipfile.ZipFile(tmp_fh, "w") as dst:
                     written: set[str] = set()
 
                     # Always write a spec-correct mimetype entry -- first,
@@ -2124,7 +2497,7 @@ class EpubBook:
                         elif name in file_ops["add"]:
                             data = file_ops["add"][name]
                         else:
-                            data = src.read(name)
+                            data = _read_member(src, name)
                         info = infos[name]
                         new_info = zipfile.ZipInfo(name, date_time=info.date_time)
                         new_info.compress_type = info.compress_type
@@ -2137,6 +2510,9 @@ class EpubBook:
                     for path, data in file_ops["add"].items():
                         if path not in written:
                             dst.writestr(path, data)
+                tmp_fh.flush()
+                os.fsync(tmp_fh.fileno())
+            _check_written_zip(tmp_fd_path)
             # Rides out a transient lock on the target (antivirus, indexer, a sync client holding the
             # .epub for a moment) instead of failing the save at once.
             replace_with_retry(tmp_fd_path, target)
