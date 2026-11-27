@@ -53,7 +53,7 @@ def test_open_in_sigil_launches_with_correct_args():
 
     captured = {}
 
-    def fake_popen(args):
+    def fake_popen(args, **kwargs):
         captured["args"] = args
 
     open_in_sigil(sigil_path, epub_path, popen_fn=fake_popen)
@@ -66,7 +66,7 @@ def test_open_in_sigil_missing_sigil_raises():
     with open(epub_path, "w") as f:
         f.write("fake epub")
     try:
-        open_in_sigil("/nonexistent/sigil.exe", epub_path, popen_fn=lambda args: None)
+        open_in_sigil("/nonexistent/sigil.exe", epub_path, popen_fn=lambda args, **kwargs: None)
         assert False, "should have raised"
     except SigilLaunchError as exc:
         assert "not found" in str(exc).lower()
@@ -76,7 +76,7 @@ def test_open_in_sigil_missing_sigil_raises():
 def test_open_in_sigil_missing_book_raises():
     sigil_path = _make_fake_exe("sigil2.exe")
     try:
-        open_in_sigil(sigil_path, "/nonexistent/book.epub", popen_fn=lambda args: None)
+        open_in_sigil(sigil_path, "/nonexistent/book.epub", popen_fn=lambda args, **kwargs: None)
         assert False, "should have raised"
     except SigilLaunchError as exc:
         assert "not found" in str(exc).lower()
@@ -89,7 +89,7 @@ def test_open_in_sigil_launch_failure_wrapped():
     with open(epub_path, "w") as f:
         f.write("fake epub")
 
-    def failing_popen(args):
+    def failing_popen(args, **kwargs):
         raise OSError("permission denied")
 
     try:

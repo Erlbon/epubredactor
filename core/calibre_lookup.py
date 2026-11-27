@@ -223,7 +223,9 @@ def _run_lookup(exe_path, title, authors, isbn, timeout, run_fn) -> CalibreLooku
         args += ["--isbn", isbn]
 
     try:
-        proc = run_fn(args, capture_output=True, timeout=timeout + 15, **no_console_window_kwargs())
+        proc = run_fn(
+            args, stdin=subprocess.DEVNULL, capture_output=True, timeout=timeout + 15, **no_console_window_kwargs()
+        )
     except subprocess.TimeoutExpired as exc:
         raise CalibreLookupError(
             f"Calibre metadata lookup timed out after {timeout + 15}s."

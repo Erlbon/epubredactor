@@ -74,6 +74,12 @@ def open_in_sigil(sigil_path: str, epub_path: str, popen_fn=subprocess.Popen) ->
     if not epub_path or not os.path.isfile(epub_path):
         raise SigilLaunchError(f"Book file not found: {epub_path}")
     try:
-        popen_fn([sigil_path, epub_path])
+        # Family rule: every external tool gets stdin=DEVNULL; Sigil's own output is not wanted either.
+        popen_fn(
+            [sigil_path, epub_path],
+            stdin=subprocess.DEVNULL,
+            stdout=subprocess.DEVNULL,
+            stderr=subprocess.DEVNULL,
+        )
     except OSError as exc:
         raise SigilLaunchError(f"Could not launch Sigil: {exc}") from exc

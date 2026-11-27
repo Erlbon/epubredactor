@@ -1,5 +1,12 @@
 # Changelog
 
+## 2026-11-27#03 -- Download Calibre button works, shared-code update (redactor_common 2026-11-27-07)
+
+- **The "Download Calibre..." button in Import and Convert** opens Calibre's download page instead of crashing.
+- **Sigil and Calibre's metadata lookup no longer inherit the app's input.** A Calibre plugin that waits for input
+  can no longer hang a lookup until it times out.
+- Shared-code update (redactor_common 2026-11-27-07): the overwrite review reads its fields correctly.
+
 ## 2026-11-27#02 -- shared-code update (redactor_common 2026-11-27-06)
 
 - **A file name is never just a Windows device name.** The shared code's filename tidy-up now puts "_" in front of

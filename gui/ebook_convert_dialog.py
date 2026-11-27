@@ -16,6 +16,7 @@ from __future__ import annotations
 
 import os
 import threading
+import webbrowser
 
 from PyQt6.QtWidgets import (
     QDialog,
@@ -31,7 +32,7 @@ from PyQt6.QtWidgets import (
 )
 
 from core import conversion_safety
-from core.calibre_tools import cancellable_run, find_tool
+from core.calibre_tools import DOWNLOAD_URL, cancellable_run, find_tool
 from core.ebook_convert import EbookConvertError, SUPPORTED_SOURCE_EXTENSIONS, convert_to_epub
 from redactor_common.gui.background_call import call_in_background
 from redactor_common.gui.progress import run_with_progress
