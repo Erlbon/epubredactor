@@ -42,7 +42,7 @@ a = Analysis(
         ("ABOUT.md", "."),
         ("CREDITS.md", "."),
     ] + ([] if FOLDER else [(CHANNEL, ".")]),
-    hiddenimports=[],
+    hiddenimports=(["send2trash.win.modern", "win32com.shell.shell", "win32com.shell.shellcon", "pythoncom", "pywintypes"] if sys.platform == "win32" else []),
     hookspath=[],
     hooksconfig={},
     runtime_hooks=[],

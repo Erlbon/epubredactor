@@ -178,3 +178,18 @@ def test_send_to_ereader_project_link_opens_in_the_browser():
     assert '<a href="https://github.com/daniel-j/send2ereader">' in label.text()
     assert label.openExternalLinks() and label.textFormat() == Qt.TextFormat.RichText
     dlg.deleteLater()
+
+
+def test_filename_search_replace_rejects_invalid_stems(tmp_path, monkeypatch):
+    from PyQt6.QtWidgets import QMessageBox
+    monkeypatch.setattr(QMessageBox, "information", lambda *a, **k: None)
+    monkeypatch.setattr(QMessageBox, "warning", lambda *a, **k: None)
+    window = _window()
+    for bad in ("sub/x.epub", "CON.epub", "name..epub", "name."):
+        folder = tmp_path / bad.replace("/", "_").replace(".", "_")
+        folder.mkdir()
+        b = EpubBook(build(folder / "a.epub"))
+        before = b.path
+        window._apply_filename_search_replace([b], {0: bad})
+        assert b.path == before and os.path.exists(before), bad
+        assert os.listdir(folder) == ["a.epub"], bad

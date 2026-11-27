@@ -189,7 +189,11 @@ def begin(
     if not changes and not cover_changed:
         return None
     try:
-        return get_journal().begin(path, kind, changes, cover_changed=cover_changed, note=note)
+        entry_id = get_journal().begin(path, kind, changes, cover_changed=cover_changed, note=note)
+        if entry_id is None:
+            # redactor_common 2026-11-27 swallows the append error and returns None for a non-empty change
+            _problem("write", OSError(get_journal().path))
+        return entry_id
     except Exception as exc:  # noqa: BLE001 - see _problem
         _problem("write", exc)
         return None

@@ -1,5 +1,15 @@
 # Changelog
 
+## 2026-11-27#01 -- safer filename Search & Replace, safer Recycle Bin, shared-code update
+
+- **Search & Replace on the Filename column checks the new name first.** A name like `sub/x`, `CON` or one ending in a
+  dot is reported as a problem and that file is left unchanged, instead of failing half-way or making a stray folder.
+- **Deleting to the Recycle Bin on Windows** no longer risks removing a file for good when it is too big for the bin;
+  it refuses instead. The installer and exe now bundle the Windows Recycle Bin support this needs.
+- Shared-code update (redactor_common 2026-11-27): exported settings leave out secret-looking names, an imported
+  setting of the wrong type is ignored, series numbering refuses odd input such as exponents and accepts "3,5", and
+  the History journal reports a write problem in the status bar as before.
+
 ## 2026-11-26#02 -- Check for Updates installs the new version itself; a Windows installer
 
 - **Help > Check for Updates installs the update** instead of only opening the download page. The app is on the

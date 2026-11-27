@@ -69,6 +69,7 @@ from core.genres import add_genres
 from core import perf_log
 from core.languages import is_blank_or_unknown_language
 from core.rename_pattern import DEFAULT_PATTERN, PLACEHOLDERS, placeholder_values, unique_path
+from redactor_common.core.rename_pattern import validate_filename_stem
 from core.sigil_tools import DOWNLOAD_URL as SIGIL_DOWNLOAD_URL
 from core.calibre_tools import find_install_dir as find_calibre_install_dir
 from core.sigil_tools import SigilLaunchError, find_sigil, sigil_file_filter
@@ -2522,6 +2523,12 @@ class MainWindow(QMainWindow):
             book = books[i]
             try:
                 stem, ext = os.path.splitext(new_filename)
+                if ext == ".":  # "name." splits as ("name", "."): the dot belongs to the stem
+                    stem, ext = new_filename, ""
+                problem = validate_filename_stem(stem)
+                if problem:
+                    errors.append((book.path, problem))
+                    return
                 directory = os.path.dirname(book.path)
                 new_path = unique_path(directory, stem, ext or ".epub", taken)
                 old_path = book.path
