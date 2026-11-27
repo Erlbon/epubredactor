@@ -1,5 +1,19 @@
 # Changelog
 
+## 2026-11-27#09 -- Cleaner lookups; safer database builds and page previews
+
+- **Calibre lookups give two-letter language codes.** "eng" from Calibre becomes "en", as the other lookup
+  sources already did, so language checks, scans and rename patterns see the same code. A language with no
+  two-letter code keeps the code Calibre gave.
+- **Google Books and Calibre descriptions arrive as plain text.** HTML tags such as `<p>`, `<br>` and `<b>` are
+  turned into paragraphs instead of being written into the description, where an e-reader would show them.
+- **Building the Open Library or ISFDB database: a full disk is a message, not a crash.** A disk that fills up or
+  a locked file during the build now shows what went wrong. Both dialogs show the free space where the database
+  goes and warn when it may not be enough (under about 6 GB for Open Library, 1 GB for ISFDB).
+- **Page previews never read files outside the book.** The side panel's page browser and Read Book no longer load
+  a picture or stylesheet that a book's page points to on your computer; Read Book still shows the book's own
+  pictures.
+
 ## 2026-11-27#08 -- Faster with large selections; Repair Navigation keeps fonts
 
 - **No freeze after saving or editing a large selection.** Putting back a selection of many books (after Save All,

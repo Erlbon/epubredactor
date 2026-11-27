@@ -17,6 +17,7 @@ language options and a status line (what the file was built from).
 from __future__ import annotations
 
 import os
+import sqlite3
 from typing import Optional
 
 from PyQt6.QtWidgets import (
@@ -44,6 +45,12 @@ from gui import app_settings
 
 DUMPS_URL = "https://openlibrary.org/developers/dumps"
 DUMP_FILTER = "Open Library dump (*.txt *.txt.gz *.gz *.bz2 *.xz *.zip);;All files (*)"
+# Shown after "Free space where the database goes: N GB." when the drive has less than this.
+FREE_SPACE_WARNING_BYTES = 6 * (1 << 30)
+FREE_SPACE_WARNING_TEXT = (
+    " That may not be enough: a build with the default languages needs roughly 5-6 GB while it runs "
+    "(about 2-3 GB stays afterwards). Choose another location or keep fewer languages."
+)
 
 INSTRUCTIONS = (
     "Look up books offline in <b>Open Library</b>: by ISBN, or by title and author, with no network "
@@ -80,6 +87,7 @@ class OpenLibrarySettingsDialog(LocalDatabaseSettingsDialog):
             default_path=app_settings.default_open_library_database_path,
             browse_for_destination=True,
             show_status=True,
+            free_space_warning=(FREE_SPACE_WARNING_BYTES, FREE_SPACE_WARNING_TEXT),
         )
         self.setMinimumWidth(620)
         options = app_settings.load_open_library_build_options()
@@ -182,4 +190,7 @@ class OpenLibrarySettingsDialog(LocalDatabaseSettingsDialog):
             ),
             confirm="Build {name} from the dump(s)?\n\nIt reads the whole dump, which can take tens of minutes, "
                     f"and needs a few GB of free disk space. Keeping: {options.describe()}.",
+            # A full disk (sqlite3.OperationalError) or a locked temp file (PermissionError) is a message, not a
+            # crash.
+            error_types=(OSError, sqlite3.Error),
         )

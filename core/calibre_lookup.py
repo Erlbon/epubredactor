@@ -36,7 +36,9 @@ from lxml import etree
 
 from core.author_sort import space_initials
 from core.calibre_tools import no_console_window_kwargs
+from core.description_html import strip_html
 from core.epub_metadata import parse_date_parts
+from core.openlibrary_local import app_language_code
 
 DEFAULT_TIMEOUT_SECONDS = 30
 # Calibre's fetch-ebook-metadata can be extremely chatty on stderr when
@@ -87,7 +89,7 @@ class CalibreLookupResult:
             "pub_day": self.pub_day,
             "isbn": self.isbn,
             "language": self.language,
-            "description": self.description,
+            "description": strip_html(self.description),
         }
         return {k: v for k, v in raw.items() if v}
 
@@ -143,7 +145,9 @@ def parse_calibre_opf(opf_bytes: bytes) -> CalibreLookupResult:
         elif local == "publisher" and not result.publisher:
             result.publisher = text
         elif local == "language" and not result.language:
-            result.language = text
+            # Calibre gives ISO 639-2 ("eng"); the Language field uses the two-letter code like the other
+            # sources. A code with no two-letter form is kept as it came.
+            result.language = app_language_code(text) or text
         elif local == "description" and not result.description:
             result.description = text
         elif local == "date" and not result.pub_year:

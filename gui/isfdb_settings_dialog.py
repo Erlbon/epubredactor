@@ -18,6 +18,7 @@ status line (what the file was built from).
 
 from __future__ import annotations
 
+import sqlite3
 from typing import Optional
 
 from PyQt6.QtWidgets import (
@@ -38,6 +39,12 @@ from gui import app_settings
 
 DOWNLOADS_URL = "https://www.isfdb.org/wiki/index.php/ISFDB_Downloads"
 BACKUP_FILTER = "ISFDB backup (*.zip *.sql *.gz *.bz2 *.xz);;All files (*)"
+# Shown after "Free space where the database goes: N GB." when the drive has less than this.
+FREE_SPACE_WARNING_BYTES = 1 << 30
+FREE_SPACE_WARNING_TEXT = (
+    " That may not be enough: the build needs a few hundred MB while it runs (about 150 MB stays afterwards). "
+    "Choose another location."
+)
 
 INSTRUCTIONS = (
     "Look up books offline in the <b>ISFDB</b> (Internet Speculative Fiction Database): by ISBN, or by title "
@@ -69,6 +76,7 @@ class IsfdbSettingsDialog(LocalDatabaseSettingsDialog):
             default_path=app_settings.default_isfdb_database_path,
             browse_for_destination=True,
             show_status=True,
+            free_space_warning=(FREE_SPACE_WARNING_BYTES, FREE_SPACE_WARNING_TEXT),
         )
         self.setMinimumWidth(620)
 
@@ -114,4 +122,7 @@ class IsfdbSettingsDialog(LocalDatabaseSettingsDialog):
             lambda dest, progress, cancelled: build_isfdb_database(backup, dest, progress, cancelled),
             confirm="Build {name} from the ISFDB backup?\n\nIt reads the whole backup, which takes a few minutes, "
                     "and needs a few hundred MB of free disk space.",
+            # A full disk (sqlite3.OperationalError) or a locked temp file (PermissionError) is a message, not a
+            # crash.
+            error_types=(OSError, sqlite3.Error),
         )

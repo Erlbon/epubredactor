@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import sqlite3
 import subprocess
 import sys
 
@@ -1484,3 +1485,179 @@ def test_card74_dialog_shows_kept_files_without_a_repair_tick(tmp_path, qapp):
     dialog = NavRepairDialog([EpubBook(path)])
     assert "kept" in dialog.table.item(0, 1).text()
     assert not dialog._checkboxes[0].isEnabled() and dialog.accepted_book_indices() == []
+
+
+# Card 27: Calibre's three-letter language codes became the Language field's two-letter codes.
+def _calibre_opf(language: str, description: str = "") -> bytes:
+    from xml.sax.saxutils import escape
+
+    return (
+        '<?xml version="1.0" encoding="utf-8"?><package xmlns="http://www.idpf.org/2007/opf" version="2.0">'
+        '<metadata xmlns:dc="http://purl.org/dc/elements/1.1/"><dc:title>T</dc:title>'
+        f"<dc:language>{language}</dc:language><dc:description>{escape(description)}</dc:description>"
+        "</metadata></package>"
+    ).encode("utf-8")
+
+
+def test_card27_calibre_language_becomes_the_two_letter_code():
+    from core.calibre_lookup import parse_calibre_opf
+
+    assert parse_calibre_opf(_calibre_opf("eng")).language == "en"
+    assert parse_calibre_opf(_calibre_opf("ger")).language == "de"  # bibliographic code too
+    assert parse_calibre_opf(_calibre_opf("nob")).language == "no"  # Norwegian is "no" here, as for Open Library
+    assert parse_calibre_opf(_calibre_opf("en")).language == "en"
+    assert parse_calibre_opf(_calibre_opf("haw")).language == "haw"  # no two-letter code: kept as it came
+    assert parse_calibre_opf(_calibre_opf("eng")).as_dict()["language"] == "en"
+
+
+# Card 30: Google Books and Calibre descriptions came with their HTML tags.
+_HTML_DESCRIPTION = "<p>Dune is <b>great</b>.<br><br>Read it &amp; weep.</p>"
+
+
+def test_card30_google_books_description_is_plain_text():
+    from core.google_books_lookup import GoogleBooksCandidate
+
+    text = GoogleBooksCandidate(title="Dune", description=_HTML_DESCRIPTION).as_dict()["description"]
+    assert "<" not in text and "Dune is great." in text and "Read it & weep." in text
+    plain = "Less than 5 < 6 and a > b."
+    assert GoogleBooksCandidate(description=plain).as_dict()["description"] == plain
+
+
+def test_card30_calibre_description_is_plain_text():
+    from core.calibre_lookup import parse_calibre_opf
+
+    text = parse_calibre_opf(_calibre_opf("eng", _HTML_DESCRIPTION)).as_dict()["description"]
+    assert "<" not in text and "Dune is great." in text and "Read it & weep." in text
+
+
+# Card 29: a full disk while building the Open Library or ISFDB database crashed instead of showing a message,
+# and there was no free-space warning.
+@pytest.mark.parametrize("error", [sqlite3.OperationalError("database or disk is full"), PermissionError("locked")])
+def test_card29_isfdb_build_error_is_a_message(error, tmp_path, monkeypatch, qapp):
+    import redactor_common.gui.local_db_settings_dialog as shared
+    from PyQt6.QtWidgets import QMessageBox
+
+    from gui import app_settings
+    from gui.isfdb_settings_dialog import FREE_SPACE_WARNING_BYTES, IsfdbSettingsDialog
+
+    app_settings.save_isfdb_database(str(tmp_path / "isfdb.db"))
+    dialog = IsfdbSettingsDialog()
+    assert dialog.space_label is not None and "Free space where the database goes" in dialog.space_label.text()
+    assert FREE_SPACE_WARNING_BYTES == 1 << 30
+    dialog.backup_edit.setText(str(tmp_path / "backup.zip"))
+    warned = []
+    monkeypatch.setattr(QMessageBox, "question", staticmethod(lambda *a, **k: QMessageBox.StandardButton.Yes))
+    monkeypatch.setattr(QMessageBox, "warning", staticmethod(lambda p, title, text, *a: warned.append(text)))
+
+    def failing(parent, title, label, work):
+        raise error
+
+    monkeypatch.setattr(shared, "run_dump_import", failing)
+    assert dialog._build_database() is None
+    assert warned == [str(error)]
+    dialog.close()
+
+
+@pytest.mark.parametrize("error", [sqlite3.OperationalError("database or disk is full"), OSError(28, "No space")])
+def test_card29_open_library_build_error_is_a_message(error, tmp_path, monkeypatch, qapp):
+    import redactor_common.gui.local_db_settings_dialog as shared
+    from PyQt6.QtWidgets import QMessageBox
+
+    from gui import app_settings
+    from gui.open_library_settings_dialog import FREE_SPACE_WARNING_BYTES, OpenLibrarySettingsDialog
+
+    app_settings.save_open_library_database(str(tmp_path / "ol.db"))
+    dialog = OpenLibrarySettingsDialog()
+    assert dialog.space_label is not None and "Free space where the database goes" in dialog.space_label.text()
+    assert FREE_SPACE_WARNING_BYTES == 6 * (1 << 30)
+    dialog.editions_edit.setText(str(tmp_path / "editions.txt.gz"))
+    dialog.all_languages.setChecked(True)
+    warned = []
+    monkeypatch.setattr(QMessageBox, "question", staticmethod(lambda *a, **k: QMessageBox.StandardButton.Yes))
+    monkeypatch.setattr(QMessageBox, "warning", staticmethod(lambda p, title, text, *a: warned.append(text)))
+
+    def failing(parent, title, label, work):
+        raise error
+
+    monkeypatch.setattr(shared, "run_dump_import", failing)
+    assert dialog._build_database() is None
+    assert warned == [str(error)]
+    dialog.close()
+
+
+def test_card29_free_space_warning_text_shows_under_the_threshold(tmp_path, monkeypatch, qapp):
+    import shutil
+    from collections import namedtuple
+
+    from gui import app_settings
+    from gui.open_library_settings_dialog import FREE_SPACE_WARNING_TEXT, OpenLibrarySettingsDialog
+
+    usage = namedtuple("usage", "total used free")
+    monkeypatch.setattr(shutil, "disk_usage", lambda folder: usage(10 << 30, 9 << 30, 1 << 30))
+    app_settings.save_open_library_database(str(tmp_path / "ol.db"))
+    dialog = OpenLibrarySettingsDialog()
+    dialog.refresh_status()
+    assert dialog.space_label.text().endswith(FREE_SPACE_WARNING_TEXT)
+    dialog.close()
+
+
+# Card 54: the side panel's page browser (and the Read Book view, through QTextDocument's own fallback when
+# loadResource answered None) loaded whatever <img src> or stylesheet href named from disk.
+def _card54_loads_from_disk(view, tmp_path) -> list[str]:
+    from PyQt6.QtCore import QUrl
+    from PyQt6.QtGui import QColor, QImage, QTextDocument
+
+    png = tmp_path / "secret.png"
+    image = QImage(4, 4, QImage.Format.Format_RGB32)
+    image.fill(QColor("red"))
+    assert image.save(str(png))
+    css = tmp_path / "secret.css"
+    css.write_text("p { color: red }", encoding="utf-8")
+    image_type = QTextDocument.ResourceType.ImageResource.value
+    css_type = QTextDocument.ResourceType.StyleSheetResource.value
+    absolute = QUrl.fromLocalFile(str(png))
+    view.document().setBaseUrl(QUrl.fromLocalFile(str(tmp_path) + "/"))  # where a relative name would be looked up
+    view.setHtml(f'<p>text<img src="{absolute.toString()}"><img src="secret.png"></p>')
+    leaks = []
+    for label, rtype, url in (("absolute image", image_type, absolute), ("relative image", image_type, QUrl("secret.png")),
+                              ("stylesheet", css_type, QUrl.fromLocalFile(str(css)))):
+        found = view.document().resource(rtype, url)
+        if found is not None and (bool(found) if isinstance(found, str) else not found.isNull()):
+            leaks.append(label)
+    return leaks
+
+
+def test_card54_page_browser_loads_no_local_files(tmp_path, qapp):
+    from gui import tag_panel as tp
+
+    panel = tp.TagPanel()
+    assert isinstance(panel.text_view, tp.PagePreviewBrowser)
+    assert _card54_loads_from_disk(panel.text_view, tmp_path) == []
+    panel.close()
+
+
+def test_card54_read_book_view_loads_no_local_files(tmp_path, qapp):
+    from gui.read_book_dialog import ReaderBrowser
+
+    class _Book:
+        cover_bytes = b""
+
+        def read_resource(self, path, cap):
+            return None  # not in the book
+
+    view = ReaderBrowser(_Book())
+    view.base_path = "OEBPS/ch1.xhtml"
+    assert _card54_loads_from_disk(view, tmp_path) == []
+    view.close()
+
+
+# Card 65 (checked, not real): the machine-specific tool paths are a non-portable section, so the shared import
+# preview shows them unticked; this pins that.
+def test_card65_tool_paths_are_machine_specific():
+    from gui.settings_adapter import EpubSettingsAdapter
+    from redactor_common.core import settings_bundle as sb
+
+    adapter = EpubSettingsAdapter(["filename"])
+    tools = [s for s in adapter.sections() if s.key == "tools"][0]
+    assert tools.portable is False
+    assert "tools" not in sb.default_selection(adapter)

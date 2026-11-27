@@ -118,9 +118,10 @@ def test_dialog_images_navigation_zoom_find(tmp_path):
     assert view.base_path == "text/ch.xhtml"
     pic = view.loadResource(QTextDocument.ResourceType.ImageResource.value, QUrl("../img/pic.png"))
     assert isinstance(pic, QImage) and not pic.isNull()
-    assert view.loadResource(QTextDocument.ResourceType.ImageResource.value, QUrl("../../x.png")) is None
-    assert view.loadResource(QTextDocument.ResourceType.ImageResource.value, QUrl("../img/big.png")) is None  # not an image
-    assert view.loadResource(QTextDocument.ResourceType.ImageResource.value, QUrl("http://x/a.png")) is None
+    # Refused: an empty image, never None (None lets Qt read the name from disk itself).
+    assert view.loadResource(QTextDocument.ResourceType.ImageResource.value, QUrl("../../x.png")).isNull()
+    assert view.loadResource(QTextDocument.ResourceType.ImageResource.value, QUrl("../img/big.png")).isNull()  # not an image
+    assert view.loadResource(QTextDocument.ResourceType.ImageResource.value, QUrl("http://x/a.png")).isNull()
     # zoom
     start = dlg._point_size
     dlg.zoom(1)

@@ -60,7 +60,7 @@ def test_parse_realistic_opf():
     assert result.series_index == "1"
     assert result.tags_str == "Fantasy; Fiction"
     assert result.publisher == "George Allen & Unwin"
-    assert result.language == "eng"
+    assert result.language == "en"  # Calibre's "eng" in the two-letter form the Language field uses
     assert result.pub_year == "1937"
     assert result.pub_month == "09"
     assert result.pub_day == "21"

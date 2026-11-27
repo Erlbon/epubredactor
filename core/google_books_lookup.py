@@ -22,6 +22,7 @@ from dataclasses import dataclass
 from urllib.parse import quote
 
 from core.author_sort import space_initials
+from core.description_html import strip_html
 from core.isbn import best_isbn13, normalize_isbn
 from redactor_common.core.lookup_client import fetch_bytes, fetch_json, make_default_fetch
 
@@ -82,7 +83,7 @@ class GoogleBooksCandidate:
             "isbn": best_isbn13(self.best_isbn) or self.best_isbn,
             "tags_str": self.tags_str,
             "language": self.language,
-            "description": self.description,
+            "description": strip_html(self.description),
         }
         return {k: v for k, v in raw.items() if v}
 

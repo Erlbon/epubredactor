@@ -54,6 +54,14 @@ def decode_image_capped(data: bytes, max_width: int = 0, max_pixels: int = MAX_I
     return image
 
 
+def no_resource(rtype: int):
+    """What a text view's loadResource returns for something it will not load. Not None: for a null answer
+    QTextDocument falls back to reading the name from disk itself ("file:///C:/...", or a relative name
+    resolved against the working folder), so a book could make the app read local files. An empty image (for
+    an image) or "" (anything else) is a real answer, so nothing is read."""
+    return QImage() if rtype == QTextDocument.ResourceType.ImageResource.value else ""
+
+
 class ReaderBrowser(QTextBrowser):
     """QTextBrowser that resolves <img src> against the current chapter's
     path inside the EPUB and reads the image on demand."""
@@ -67,8 +75,9 @@ class ReaderBrowser(QTextBrowser):
         self.setOpenExternalLinks(False)
 
     def loadResource(self, rtype: int, name: QUrl):  # noqa: N802 (Qt override)
+        # Only the book's own images are served; anything else gets no_resource(), never None (see there).
         if rtype != QTextDocument.ResourceType.ImageResource.value:
-            return None
+            return no_resource(rtype)
         width = max(self.viewport().width() - 30, 100)
         raw = name.toString()
         if raw == COVER_URL:
@@ -76,13 +85,14 @@ class ReaderBrowser(QTextBrowser):
         else:
             path = resolve_resource_path(self.base_path, raw)
             if path is None:
-                return None
+                return no_resource(rtype)
         key = (path, width)
         if key not in self._image_cache:
             data = self._book.cover_bytes if raw == COVER_URL else self._book.read_resource(path, MAX_IMAGE_BYTES)
             image = decode_image_capped(data, width) if data and len(data) <= MAX_IMAGE_BYTES else None
             self._image_cache[key] = image
-        return self._image_cache[key]
+        image = self._image_cache[key]
+        return no_resource(rtype) if image is None else image
 
 
 class ReadBookDialog(OwnedDialog):

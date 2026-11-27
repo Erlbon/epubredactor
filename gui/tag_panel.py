@@ -40,6 +40,7 @@ from core.epub_metadata import EpubBook
 from core.fields import FIELDS
 from core.genres import add_genre
 from gui import app_settings
+from gui.read_book_dialog import no_resource
 from redactor_common.gui.quick_pick_dialog import QuickPickDialog
 from redactor_common.gui.collapsible_splitter import CollapseToggleButton
 from redactor_common.gui.image_pane import ImagePanelSplitter, ImagePreviewBox
@@ -57,6 +58,18 @@ COVER_PREVIEW_MIN_SIZE = (60, 80)
 # literal "this opens a menu" indicator in every single case.
 FIELD_BUTTON_GLYPH = "\u25bc"
 FIELD_BUTTON_WIDTH = 26
+
+
+class PagePreviewBrowser(QTextBrowser):
+    """The page browser's text view. A plain QTextBrowser loads whatever a
+    page's <img src> names from disk ("file:///C:/...", or a relative name
+    resolved against the working folder), so a book could make the app read
+    local files. This one loads no resources at all: the preview shows the
+    page's text only, as before (its relative images never resolved to the
+    book's own files)."""
+
+    def loadResource(self, rtype: int, name):  # noqa: N802 (Qt override)
+        return no_resource(rtype)
 
 
 class MultiValueLineEdit(QLineEdit):
@@ -179,7 +192,7 @@ class TagPanel(QWidget):
         # image; the rest are the book's text documents (spine order) shown
         # as rendered text, so title and copyright pages are easy to spot.
         # Only active with exactly one book selected.
-        self.text_view = QTextBrowser()
+        self.text_view = PagePreviewBrowser()
         self.text_view.setOpenLinks(False)
         self.text_view.setOpenExternalLinks(False)
         self.text_view.setMinimumSize(*COVER_PREVIEW_MIN_SIZE)
