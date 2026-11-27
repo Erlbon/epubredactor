@@ -81,8 +81,9 @@ def test_calibre_found_searches_with_isbn_and_returns_changes(monkeypatch):
     calls = []
     monkeypatch.setattr(cal, "find_tool", lambda *a, **k: "C:/Calibre2/fetch-ebook-metadata.exe")
 
-    def fetch(tool, title, authors, isbn):
+    def fetch(tool, title, authors, isbn, run_fn=None):
         calls.append((tool, title, isbn))
+        assert run_fn is not None  # the cancel-aware runner (2026-11-27 review)
         return SimpleNamespace(as_dict=lambda: {"series": "Discworld"})
 
     monkeypatch.setattr(cal, "fetch_metadata", fetch)

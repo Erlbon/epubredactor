@@ -15,11 +15,10 @@ removable-media mount points (see _mount_points()).
 from __future__ import annotations
 
 import os
+import secrets
 import shutil
 import string
 import sys
-
-from core.rename_pattern import unique_path
 
 KOBO_MARKER_FOLDER = ".kobo"
 
@@ -80,21 +79,86 @@ def find_connected_kobos(drive_letters=None, isdir_fn=os.path.isdir, mount_point
     return found
 
 
-def send_to_kobo(kobo_root: str, source_path: str, copy_fn=shutil.copy2) -> str:
+COPY_CHUNK = 1024 * 1024
+
+
+class KoboSendCancelled(KoboSendError):
+    """The user cancelled while the book was being copied; the partial copy was removed."""
+
+
+def copy_with_cancel(source_path: str, dest_path: str, cancel=None) -> None:
+    """Copies in chunks, checking `cancel` (a threading.Event, or None) between them, then flushes the data to the
+    device (fsync) and copies the timestamps. Raises KoboSendCancelled when cancelled."""
+    with open(source_path, "rb") as src, open(dest_path, "wb") as dst:
+        while True:
+            if cancel is not None and cancel.is_set():
+                raise KoboSendCancelled("Cancelled.")
+            chunk = src.read(COPY_CHUNK)
+            if not chunk:
+                break
+            dst.write(chunk)
+        dst.flush()
+        os.fsync(dst.fileno())
+    try:
+        shutil.copystat(source_path, dest_path)
+    except OSError:
+        pass  # FAT/exFAT may refuse some of it; the book itself is complete
+
+
+def part_path(dest_path: str) -> str:
+    """The name a book is copied under before it gets its real one: `.<8 hex>.part` beside it -- a family temp
+    name (redactor_common core/temp_names), and not an e-book extension, so the Kobo never imports a half-copied
+    book."""
+    folder = os.path.dirname(dest_path)
+    while True:
+        candidate = os.path.join(folder, f".{secrets.token_hex(4)}.part")
+        if not os.path.lexists(candidate):
+            return candidate
+
+
+def send_to_kobo(kobo_root: str, source_path: str, copy_fn=None, replace_existing: bool = True,
+                 cancel=None) -> str:
     """Copies source_path onto the Kobo at kobo_root. Kobo scans its
     entire filesystem for supported formats, so there's no required
-    destination folder -- files go straight in the root, auto-numbered
-    on a filename collision (same collision-safe logic as Rename/Export
-    and Import and Convert). Returns the path actually written to. Raises
-    KoboSendError if the source file doesn't exist or the copy fails."""
+    destination folder -- files go straight in the root.
+
+    The copy goes to a `.part` name first and is renamed to the book's
+    name only when complete, so an unplugged cable or a full device never
+    leaves a half-written book for the Kobo to import; the partial file is
+    removed on any error or Cancel (`cancel`, a threading.Event).
+
+    A book of the same file name already on the Kobo is replaced when
+    `replace_existing` (a re-send of an edited book), else left alone and
+    "" is returned (nothing sent). Never "Name (2).epub" duplicates.
+    Returns the path written. Raises KoboSendError if the source file
+    doesn't exist or the copy fails (KoboSendCancelled on Cancel).
+    `copy_fn(src, dst)` replaces the chunked copy (tests)."""
     if not source_path or not os.path.isfile(source_path):
         raise KoboSendError(f"Source file not found: {source_path}")
 
-    stem = os.path.splitext(os.path.basename(source_path))[0]
-    ext = os.path.splitext(source_path)[1]
-    dest_path = unique_path(kobo_root, stem, ext, set())
+    dest_path = os.path.join(kobo_root, os.path.basename(source_path))
+    if os.path.lexists(dest_path) and not replace_existing:
+        return ""
+    temp = part_path(dest_path)
     try:
-        copy_fn(source_path, dest_path)
+        if copy_fn is None:
+            copy_with_cancel(source_path, temp, cancel)
+        else:
+            copy_fn(source_path, temp)
+        if cancel is not None and cancel.is_set():
+            raise KoboSendCancelled("Cancelled.")
+        os.replace(temp, dest_path)
+    except KoboSendError:
+        _remove_quietly(temp)
+        raise
     except OSError as exc:
+        _remove_quietly(temp)
         raise KoboSendError(f"Could not copy to Kobo: {exc}") from exc
     return dest_path
+
+
+def _remove_quietly(path: str) -> None:
+    try:
+        os.remove(path)
+    except OSError:
+        pass

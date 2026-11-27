@@ -177,14 +177,18 @@ class EbookConvertDialog(OwnedDialog):
         if dry_run:
             self.dry_run_box.setChecked(False)
 
-    def convert_all(self, dry_run: bool = False, show_report: bool = True) -> bool:
+    def convert_all(self, dry_run: bool = False, show_report: bool = True, skip_existing: bool = False) -> bool:
         """Converts the listed files; True when the dialog should now close (something was converted). A dry run
         converts nothing, touches nothing and only reports. Each original is then settled by the policy, after the
-        result was verified."""
+        result was verified.
+
+        `skip_existing` (Convert Automatically, on Open Folder): a file whose "<stem>.epub" exists already, or is
+        taken by another file in this run, is skipped (as the CLI does) instead of written as "<stem> (2).epub"."""
         if not self._source_paths:
             return False
         succeeded: list[str] = []
         errors: list[str] = []
+        skipped: list[str] = []
         taken: set[str] = set()
         outcomes: list[conversion_safety.Outcome] = []
         if dry_run:
@@ -211,6 +215,11 @@ class EbookConvertDialog(OwnedDialog):
         def _step(source: str, _index: int) -> None:
             directory = os.path.dirname(source)
             stem = os.path.splitext(os.path.basename(source))[0]
+            if skip_existing:
+                plain = os.path.join(directory, stem + ".epub")
+                if os.path.lexists(plain) or os.path.normcase(os.path.abspath(plain)) in taken:
+                    skipped.append(f"{os.path.basename(source)}: skipped, {os.path.basename(plain)} already exists")
+                    return
             try:
                 output_path = unique_path(directory, stem, ".epub", taken)
                 call_in_background(convert_to_epub, self._tool_path, source, output_path, run_fn=run_fn)
@@ -231,7 +240,7 @@ class EbookConvertDialog(OwnedDialog):
         self.outcomes = outcomes
 
         total = len(self._source_paths)
-        report = [f"Converted {len(succeeded)} of {total} file(s)."] + [o.line() for o in outcomes]
+        report = [f"Converted {len(succeeded)} of {total} file(s)."] + [o.line() for o in outcomes] + skipped
         if errors:
             report += ["", "Failed:"] + errors[:5] + (["..."] if len(errors) > 5 else [])
         self.report_text = "\n".join(report)

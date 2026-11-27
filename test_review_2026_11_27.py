@@ -730,3 +730,410 @@ def test_card73_a_damaged_deflate_stream_reads_as_unreadable(tmp_path):
     assert book.read_resource("OEBPS/ch1.xhtml") is None
     assert book.read_archive_file("OEBPS/ch1.xhtml") is None
     assert not find_page_furniture(book).changed
+
+
+# --- batch 4: tools and conversion -----------------------------------------------------------------
+
+
+def _fake_polish_writing(data_for):
+    """A stand-in for core.ebook_polish.polish_book that writes data_for(src) to the output."""
+
+    def fake(tool, src, dst, options, run_fn=None, **_kw):
+        with open(dst, "wb") as f:
+            f.write(data_for(src))
+
+    return fake
+
+
+# Card 15: Polish in place replaced the original with whatever ebook-polish wrote, unchecked, without a backup.
+def test_card15_a_damaged_polish_result_never_replaces_the_original(tmp_path, monkeypatch):
+    import gui.polish_book_dialog as pbd
+    from core.ebook_polish import EbookPolishError
+
+    path = _make_book(tmp_path / "p.epub", _UUID)
+    before = open(path, "rb").read()
+    binned = []
+    monkeypatch.setattr(pbd, "polish_book", _fake_polish_writing(lambda src: b"PK not really a zip"))
+    tmp = pbd.polish_temp_path(path)
+    with pytest.raises(EbookPolishError):
+        pbd.polish_in_place("ebook-polish", path, tmp, None, trash=binned.append)
+    assert open(path, "rb").read() == before and binned == []
+
+
+def test_card15_a_sound_polish_result_goes_in_and_the_original_to_the_bin(tmp_path, monkeypatch):
+    import os
+
+    import gui.polish_book_dialog as pbd
+
+    path = _make_book(tmp_path / "p.epub", _UUID)
+    other = _make_book(tmp_path / "other.epub", _UUID.replace("Book<", "Polished<"))
+    monkeypatch.setattr(pbd, "polish_book", _fake_polish_writing(lambda src: open(other, "rb").read()))
+    binned = []
+
+    def trash(p):
+        binned.append(open(p, "rb").read())
+        os.remove(p)
+
+    assert pbd.polish_in_place("ebook-polish", path, pbd.polish_temp_path(path), None, trash=trash) == ""
+    assert open(path, "rb").read() == open(other, "rb").read()
+    assert len(binned) == 1  # the original, sent to the Recycle Bin (the backup)
+    assert sorted(os.listdir(tmp_path)) == ["other.epub", "p.epub"]
+
+
+# Card 20: the temp name was not a family temp name, a failed remove after Cancel was swallowed, and an existing
+# file of that name was overwritten.
+def test_card20_polish_temp_name_is_a_family_temp_name_and_never_overwrites(tmp_path):
+    import os
+
+    import gui.polish_book_dialog as pbd
+    from redactor_common.core.temp_names import is_app_temp_name
+
+    book = str(tmp_path / "Foo.epub")
+    first = pbd.polish_temp_path(book)
+    assert first == str(tmp_path / "Foo.partial.epub") and is_app_temp_name("Foo.partial.epub")
+    (tmp_path / "Foo.partial.epub").write_bytes(b"somebody's file")
+    second = pbd.polish_temp_path(book)
+    assert second != first and is_app_temp_name(os.path.basename(second))
+
+
+def test_card20_temp_remove_is_retried_while_locked(tmp_path, monkeypatch):
+    import os
+
+    import gui.polish_book_dialog as pbd
+
+    target = tmp_path / "Foo.partial.epub"
+    target.write_bytes(b"x")
+    real_remove, calls = os.remove, []
+
+    def locked_twice(p):
+        calls.append(p)
+        if len(calls) < 3:
+            raise PermissionError(32, "in use")
+        real_remove(p)
+
+    monkeypatch.setattr(pbd.os, "remove", locked_twice)
+    assert pbd.remove_with_retry(str(target), delay=0) is True
+    assert len(calls) == 3 and not target.exists()
+
+
+def test_card20_failed_polish_leaves_no_temp_file(tmp_path, monkeypatch, qapp):
+    import os
+
+    import gui.polish_book_dialog as pbd
+    from core.ebook_polish import EbookPolishError
+    from core.epub_metadata import EpubBook
+
+    book = EpubBook(_make_book(tmp_path / "Foo.epub", _UUID))
+    written = []
+
+    def failing(tool, src, dst, options, run_fn=None, **_kw):
+        written.append(dst)
+        with open(dst, "wb") as f:
+            f.write(b"half")
+        raise EbookPolishError("ebook-polish failed")
+
+    monkeypatch.setattr(pbd, "polish_book", failing)
+    monkeypatch.setattr(pbd, "move_to_trash", os.remove)
+    dialog = pbd.PolishBookDialog([book])
+    dialog._tool_path = "ebook-polish"
+    monkeypatch.setattr(dialog, "_collect_options", lambda: type("O", (), {"any_selected": lambda self: True})())
+    dialog._run_polish()
+    assert [os.path.basename(p) for p in written] == ["Foo.partial.epub"]
+    assert sorted(os.listdir(tmp_path)) == ["Foo.epub"]
+
+
+# Card 19: the quarantine move ran before the undo log was written; a log failure was reported as "NOT touched".
+def test_card19_undo_log_failure_leaves_the_original_in_place(tmp_path):
+    import os
+    import zipfile
+    from datetime import date
+
+    from core import conversion_safety as cs
+    from redactor_common.core import conversion_policy as pm
+
+    source = tmp_path / "a.mobi"
+    source.write_bytes(b"mobi")
+    result = tmp_path / "a.epub"
+    with zipfile.ZipFile(result, "w") as zf:
+        zf.writestr("mimetype", "application/epub+zip")
+        zf.writestr("META-INF/container.xml", "<container/>")
+    blocker = tmp_path / "logs-is-a-file"
+    blocker.write_bytes(b"x")  # the undo-log folder cannot be made below a file
+    policy = pm.ConversionPolicy(on_open=pm.ON_OPEN_ASK, originals=pm.ORIGINALS_QUARANTINE, recent_minutes=0,
+                                 dry_run_first=False, undo_log_folder=str(blocker / "sub"))
+    outcome = cs.settle_original(str(source), str(result), policy, today=date(2026, 11, 27))
+    assert outcome.action == "failed" and "undo log" in outcome.note
+    assert source.read_bytes() == b"mobi"  # really not touched
+    assert not os.path.exists(tmp_path / "converted originals 2026-11-27" / "a.mobi")
+
+
+def test_card19_a_log_write_failure_after_the_move_says_where_the_original_went(tmp_path, monkeypatch):
+    import builtins
+    import zipfile
+    from datetime import date
+
+    from core import conversion_safety as cs
+    from redactor_common.core import conversion_policy as pm
+
+    source = tmp_path / "a.mobi"
+    source.write_bytes(b"mobi")
+    result = tmp_path / "a.epub"
+    with zipfile.ZipFile(result, "w") as zf:
+        zf.writestr("mimetype", "application/epub+zip")
+        zf.writestr("META-INF/container.xml", "<container/>")
+    real_open = builtins.open
+
+    class _Broken:
+        def write(self, _text):
+            raise OSError(5, "drive gone")
+
+        def flush(self):
+            pass
+
+        def close(self):
+            pass
+
+    monkeypatch.setattr(cs, "open", lambda p, *a, **k: _Broken() if str(p).endswith(".tsv") else real_open(p, *a, **k),
+                        raising=False)
+    policy = pm.ConversionPolicy(on_open=pm.ON_OPEN_ASK, originals=pm.ORIGINALS_QUARANTINE, recent_minutes=0,
+                                 dry_run_first=False)
+    outcome = cs.settle_original(str(source), str(result), policy, today=date(2026, 11, 27))
+    assert outcome.action == "quarantined" and not source.exists()
+    assert "undo log" in outcome.note and outcome.destination in outcome.line()
+
+
+# Card 24: Open Folder converted the same files again on every open.
+def test_card24_folder_scan_skips_converted_books_and_quarantine_folders(tmp_path):
+    from gui.main_window import find_convertible_books
+
+    for name in ("Book.mobi", "Book.epub", "New.azw3", "converted originals 2026-11-27/Old.mobi",
+                 "sub/Converted Originals 2026-01-02/deep/X.fb2"):
+        path = tmp_path / name
+        path.parent.mkdir(parents=True, exist_ok=True)
+        path.write_bytes(b"x")
+    found = [p.replace(str(tmp_path), "").lstrip("/\\") for p in find_convertible_books([str(tmp_path)])]
+    assert found == ["New.azw3"]
+    # A file named directly is taken as meant.
+    assert find_convertible_books([str(tmp_path / "Book.mobi")]) == [str(tmp_path / "Book.mobi")]
+
+
+def test_card24_automatic_conversion_skips_instead_of_numbering(tmp_path, monkeypatch, qapp):
+    import os
+
+    import gui.ebook_convert_dialog as ecd
+
+    for name in ("Book.mobi", "Book.epub", "Two.mobi", "Two.azw3"):
+        (tmp_path / name).write_bytes(b"x")
+    made = []
+
+    def fake_convert(tool, src, dst, run_fn=None):
+        made.append(os.path.basename(dst))
+        open(dst, "wb").close()
+
+    monkeypatch.setattr(ecd, "convert_to_epub", fake_convert)
+    dialog = ecd.EbookConvertDialog(None, initial_paths=[str(tmp_path / n) for n in ("Book.mobi", "Two.azw3", "Two.mobi")])
+    dialog._tool_path = "ebook-convert"
+    dialog.convert_all(show_report=False, skip_existing=True)
+    assert made == ["Two.epub"]
+    assert "Book.mobi: skipped" in dialog.report_text and "Two.mobi: skipped" in dialog.report_text
+    assert not any("(2)" in name for name in os.listdir(tmp_path))
+
+
+# Card 16: Send to Kobo wrote straight to the final name, left a partial file on error, numbered re-sends and copied
+# on the GUI thread.
+def test_card16_failed_copy_leaves_nothing_on_the_kobo(tmp_path):
+    import os
+
+    from core.kobo_usb import KoboSendError, send_to_kobo
+
+    source = tmp_path / "Book.epub"
+    source.write_bytes(b"new book")
+    kobo = tmp_path / "kobo"
+    kobo.mkdir()
+    (kobo / "Book.epub").write_bytes(b"the Kobo's good copy")
+
+    def unplugged(src, dst):
+        with open(dst, "wb") as f:
+            f.write(b"half")
+        raise OSError(5, "device not ready")
+
+    with pytest.raises(KoboSendError):
+        send_to_kobo(str(kobo), str(source), copy_fn=unplugged)
+    assert os.listdir(kobo) == ["Book.epub"] and (kobo / "Book.epub").read_bytes() == b"the Kobo's good copy"
+
+
+def test_card16_cancel_removes_the_partial_copy_and_part_names_are_temp_names(tmp_path):
+    import os
+    import threading
+
+    from core.kobo_usb import KoboSendCancelled, part_path, send_to_kobo
+    from redactor_common.core.temp_names import is_app_temp_name
+
+    source = tmp_path / "Book.epub"
+    source.write_bytes(b"x" * 3_000_000)
+    kobo = tmp_path / "kobo"
+    kobo.mkdir()
+    cancel = threading.Event()
+    cancel.set()
+    with pytest.raises(KoboSendCancelled):
+        send_to_kobo(str(kobo), str(source), cancel=cancel)
+    assert os.listdir(kobo) == []
+    assert is_app_temp_name(os.path.basename(part_path(str(kobo / "Book.epub"))))
+    assert send_to_kobo(str(kobo), str(source)) == str(kobo / "Book.epub")
+    assert (kobo / "Book.epub").stat().st_size == 3_000_000 and os.listdir(kobo) == ["Book.epub"]
+
+
+def _kobo_dialog(monkeypatch, tmp_path, books, save_books=None):
+    import gui.send_to_kobo_dialog as skd
+
+    kobo = tmp_path / "kobo"
+    kobo.mkdir(exist_ok=True)
+    monkeypatch.setattr(skd, "find_connected_kobos", lambda: [str(kobo)])
+    return skd.SendToKoboDialog(books, save_books=save_books), kobo
+
+
+def test_card16_dialog_copies_off_the_gui_thread_with_a_working_cancel(tmp_path, monkeypatch, qapp):
+    import threading
+
+    import gui.send_to_kobo_dialog as skd
+    from core.epub_metadata import EpubBook
+
+    book = EpubBook(_make_book(tmp_path / "Book.epub", _UUID))
+    dialog, kobo = _kobo_dialog(monkeypatch, tmp_path, [book])
+    seen, calls = {}, []
+    real_send, real_progress = skd.send_to_kobo, skd.run_with_progress
+
+    def spy_send(*args, **kwargs):
+        seen["thread"] = threading.current_thread()
+        seen["cancel"] = kwargs.get("cancel")
+        return real_send(*args, **kwargs)
+
+    def spy_progress(parent, items, step, label, **kwargs):
+        calls.append(kwargs)
+        return real_progress(parent, items, step, label, **kwargs)
+
+    monkeypatch.setattr(skd, "send_to_kobo", spy_send)
+    monkeypatch.setattr(skd, "run_with_progress", spy_progress)
+    dialog._run_send()
+    assert seen["thread"] is not threading.main_thread() and seen["cancel"] is not None
+    assert calls and calls[0].get("on_cancel") is not None
+    assert dialog.sent_count() == 1 and (kobo / "Book.epub").exists()
+
+
+# Card 25: Send to Kobo sent the file on disk and ignored unsaved edits.
+def test_card25_unsaved_books_save_and_send(tmp_path, monkeypatch, qapp):
+    from core.epub_metadata import EpubBook
+    import gui.send_to_kobo_dialog as skd
+
+    clean = EpubBook(_make_book(tmp_path / "Clean.epub", _UUID))
+    dirty = EpubBook(_make_book(tmp_path / "Dirty.epub", _UUID))
+    dirty.dirty = True
+    saved = []
+
+    def save_books(books):
+        saved.extend(books)
+        for b in books:
+            b.dirty = False
+        return []
+
+    dialog, kobo = _kobo_dialog(monkeypatch, tmp_path, [clean, dirty], save_books=save_books)
+    asked = []
+    monkeypatch.setattr(dialog, "_ask_about_unsaved", lambda unsaved: asked.append(unsaved) or skd.UNSAVED_SAVE)
+    dialog._run_send()
+    assert asked == [[dirty]] and saved == [dirty] and dialog.saved_any
+    assert sorted(p.name for p in kobo.iterdir()) == ["Clean.epub", "Dirty.epub"]
+
+
+def test_card25_a_failed_save_is_not_sent_and_cancel_sends_nothing(tmp_path, monkeypatch, qapp):
+    from core.epub_metadata import EpubBook
+    import gui.send_to_kobo_dialog as skd
+
+    dirty = EpubBook(_make_book(tmp_path / "Dirty.epub", _UUID))
+    dirty.dirty = True
+    dialog, kobo = _kobo_dialog(monkeypatch, tmp_path, [dirty], save_books=lambda books: [(books[0].path, "disk full")])
+    monkeypatch.setattr(dialog, "_ask_about_unsaved", lambda unsaved: skd.UNSAVED_CANCEL)
+    dialog._run_send()
+    assert list(kobo.iterdir()) == []
+    monkeypatch.setattr(dialog, "_ask_about_unsaved", lambda unsaved: skd.UNSAVED_SAVE)
+    dialog._run_send()
+    assert list(kobo.iterdir()) == [] and dialog.sent_count() == 0
+    monkeypatch.setattr(dialog, "_ask_about_unsaved", lambda unsaved: skd.UNSAVED_SEND_ANYWAY)
+    dialog._run_send()
+    assert [p.name for p in kobo.iterdir()] == ["Dirty.epub"]
+
+
+# Card 46: Cancel in the Calibre lookup abandoned the worker but left fetch-ebook-metadata running.
+def test_card46_cancel_kills_the_calibre_lookup(tmp_path, monkeypatch, qapp):
+    import threading
+    import time
+    from types import SimpleNamespace
+
+    from PyQt6.QtWidgets import QProgressDialog
+
+    import gui.calibre_lookup_dialog as cld
+    from core.calibre_tools import ToolCancelled
+    from core.epub_metadata import EpubBook
+
+    monkeypatch.setattr(cld, "find_tool", lambda *a, **k: None)
+    book = EpubBook(_make_book(tmp_path / "b.epub", _UUID))
+    dialog = cld.CalibreLookupDialog([book])
+    seen = {}
+
+    def fake_fetch(*_a, run_fn=None, **_k):
+        seen["run_fn"] = run_fn
+        raise cld.CalibreLookupError("nothing")
+
+    monkeypatch.setattr(cld, "fetch_metadata", fake_fetch)
+    progress = QProgressDialog()
+    dialog._cancel_signal(SimpleNamespace(dialog=progress))
+    dialog._search_one(book, {})
+    run_fn = seen["run_fn"]
+    outcome = {}
+
+    def worker():  # the lookup runs on a worker thread; Cancel is clicked on the GUI thread
+        try:
+            run_fn([sys.executable, "-c", "import time; time.sleep(30)"], capture_output=True, timeout=60)
+        except ToolCancelled:
+            outcome["cancelled"] = True
+
+    thread = threading.Thread(target=worker, daemon=True)
+    started = time.monotonic()
+    thread.start()
+    time.sleep(0.5)
+    progress.canceled.emit()
+    thread.join(15)
+    assert outcome.get("cancelled") and time.monotonic() - started < 10
+    progress.deleteLater()
+
+
+# Card 58: Cancel killed only Calibre's launcher; a child it started kept running.
+def test_card58_cancel_kills_the_whole_process_tree(tmp_path):
+    import threading
+    import time
+
+    from core.calibre_tools import ToolCancelled, cancellable_run
+
+    beat = tmp_path / "beat.txt"
+    beat.write_text("")
+    grandchild = ("import sys, time, itertools; f = open(sys.argv[1], 'a'); "
+                  "[(f.write('x'), f.flush(), time.sleep(0.05)) for _ in itertools.count()]")
+    parent = ("import subprocess, sys, time; "
+              "subprocess.Popen([sys.executable, '-c', sys.argv[1], sys.argv[2]], "
+              "stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL); time.sleep(60)")
+    cancel = threading.Event()
+
+    def cancel_once_beating():
+        deadline = time.monotonic() + 20
+        while beat.stat().st_size == 0 and time.monotonic() < deadline:
+            time.sleep(0.05)
+        cancel.set()
+
+    threading.Thread(target=cancel_once_beating, daemon=True).start()
+    with pytest.raises(ToolCancelled):
+        cancellable_run(cancel, poll_seconds=0.05)(
+            [sys.executable, "-c", parent, grandchild, str(beat)], capture_output=True, timeout=60)
+    assert beat.stat().st_size > 0
+    time.sleep(0.5)
+    size = beat.stat().st_size
+    time.sleep(0.6)
+    assert beat.stat().st_size == size, "the grandchild is still writing"

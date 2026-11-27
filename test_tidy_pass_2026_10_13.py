@@ -304,6 +304,7 @@ def test_polish_runs_in_the_background_with_a_working_cancel(tmp_path, monkeypat
 
     calls = _record_progress(monkeypatch, pbd)
     monkeypatch.setattr(pbd, "polish_book", fake_polish)
+    monkeypatch.setattr(pbd, "move_to_trash", os.remove)  # never the real Recycle Bin from a test
     dialog = pbd.PolishBookDialog([book])
     dialog._tool_path = "ebook-polish"
     monkeypatch.setattr(dialog, "_collect_options", lambda: type("O", (), {"any_selected": lambda self: True})())

@@ -1,5 +1,28 @@
 # Changelog
 
+## 2026-11-27#06 -- Polish, Send to Kobo and Convert are safer, and Cancel stops Calibre
+
+- **Polish in place checks Calibre's result before it replaces the book.** A damaged result leaves the original
+  untouched; a sound one goes in and the original goes to the Recycle Bin, as after Redact.
+- **Polish's temporary file is no longer listed as a book** if it is left behind, is not written over a file of the
+  same name, and is removed again after Cancel even when it is briefly locked.
+- **Send to Kobo never leaves a half-copied book on the Kobo.** Each book is copied under a temporary name and gets
+  its real name only when complete; an unplugged cable or Cancel removes the partial copy.
+- **Send to Kobo replaces a book that is already on the Kobo** instead of adding "Name (2).epub". Untick "Replace a
+  book with the same file name" to skip such books instead.
+- **Send to Kobo keeps the window responsive** while it copies, with a Cancel button.
+- **Send to Kobo asks about unsaved changes.** Books with unsaved edits are named, with "Save and Send" or "Send
+  Anyway"; before, the Kobo silently got the old file.
+- **Open Folder no longer converts the same books again.** A file with an EPUB of its own name beside it, and the
+  originals in the app's "converted originals" folders, are no longer offered; Convert Automatically skips a book
+  whose EPUB exists instead of writing "Book (2).epub".
+- **Moving converted originals aside tells the truth.** The undo log is opened before the original is moved, so a
+  log that cannot be written leaves the original where it is; should it fail afterwards, the report says where the
+  original went.
+- **Cancel in Look Up via Calibre stops Calibre** instead of leaving it searching in the background.
+- **Cancel in Import and Convert and Polish stops all of Calibre's processes,** not only the first one, so nothing
+  goes on writing after the cancel.
+
 ## 2026-11-27#05 -- Redact and the scan tools no longer drop pictures, titles, text or authors
 
 - **Remove Running Headers keeps pictures and link targets.** A paragraph holding only a picture, or a page anchor

@@ -74,7 +74,7 @@ def test_send_to_kobo_missing_source_raises():
     print("PASS: a missing source file raises before attempting the copy")
 
 
-def test_send_to_kobo_collision_auto_numbers():
+def test_send_to_kobo_collision_replaces_or_skips_never_numbers():
     source = os.path.join(TEST_DIR, "book2.epub")
     with open(source, "w") as f:
         f.write("new content")
@@ -82,13 +82,18 @@ def test_send_to_kobo_collision_auto_numbers():
     os.makedirs(kobo_root, exist_ok=True)
     # Pre-existing file with the same name already on the "Kobo"
     with open(os.path.join(kobo_root, "book2.epub"), "w") as f:
-        f.write("existing content, must not be overwritten")
+        f.write("existing content")
 
-    dest = send_to_kobo(kobo_root, source)
-    assert dest == os.path.join(kobo_root, "book2 (2).epub"), dest
+    # Not replacing: left alone, nothing sent, no "book2 (2).epub" (2026-11-27 review)
+    assert send_to_kobo(kobo_root, source, replace_existing=False) == ""
     with open(os.path.join(kobo_root, "book2.epub")) as f:
-        assert f.read() == "existing content, must not be overwritten"
-    print("PASS: a filename collision on the Kobo is auto-numbered, doesn't overwrite")
+        assert f.read() == "existing content"
+    dest = send_to_kobo(kobo_root, source)  # the default replaces it
+    assert dest == os.path.join(kobo_root, "book2.epub"), dest
+    with open(dest) as f:
+        assert f.read() == "new content"
+    assert sorted(os.listdir(kobo_root)) == ["book2.epub"]
+    print("PASS: a filename collision on the Kobo is replaced or skipped, never numbered")
 
 
 def test_send_to_kobo_copy_failure_wrapped():

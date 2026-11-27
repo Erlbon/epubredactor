@@ -12,7 +12,9 @@ from __future__ import annotations
 
 import os
 import shutil
+import signal
 import subprocess
+import sys
 import time
 
 from redactor_common.core.subprocess_utils import no_window_kwargs
@@ -64,6 +66,8 @@ def cancellable_run(cancel_event, poll_seconds: float = 0.2):
             kwargs.setdefault("stdout", subprocess.PIPE)
             kwargs.setdefault("stderr", subprocess.PIPE)
         kwargs.setdefault("stdin", subprocess.DEVNULL)
+        if sys.platform != "win32":
+            kwargs.setdefault("start_new_session", True)  # its own process group, so kill_tree reaches the children
         deadline = None if timeout is None else time.monotonic() + timeout
         proc = subprocess.Popen(args, **kwargs)
         try:
@@ -78,10 +82,36 @@ def cancellable_run(cancel_event, poll_seconds: float = 0.2):
                         raise subprocess.TimeoutExpired(args, timeout) from None
         finally:
             if proc.poll() is None:
-                proc.kill()
+                kill_tree(proc)
                 proc.communicate()
 
     return run
+
+
+def kill_tree(proc) -> None:
+    """Kills `proc` AND the processes it started. Calibre's tools are launchers that start children (pdftohtml for
+    PDF input, calibre-parallel workers, a QtWebEngine renderer...); proc.kill() alone ended only the launcher, and a
+    child could go on writing the half-finished output after the caller had cleaned it up. Windows: taskkill /T /F
+    (must run while the parent still lives: the tree is found through it). POSIX: the process group the tool was
+    started in (start_new_session). proc.kill() always follows, so the parent dies even if the tree kill failed."""
+    if sys.platform == "win32":
+        try:
+            subprocess.run(
+                ["taskkill", "/PID", str(proc.pid), "/T", "/F"], stdin=subprocess.DEVNULL,
+                stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL, timeout=15, **no_window_kwargs(),
+            )
+        except (OSError, subprocess.SubprocessError):
+            pass
+    else:
+        try:
+            if os.getpgid(proc.pid) == proc.pid:  # only a group of its own, never ours
+                os.killpg(proc.pid, signal.SIGKILL)
+        except (OSError, AttributeError):
+            pass
+    try:
+        proc.kill()
+    except OSError:
+        pass
 
 
 def _exe_name(base_name: str) -> str:

@@ -27,12 +27,13 @@ found cover side by side, and per-row title/author/ISBN correction with
 from __future__ import annotations
 
 import os
+import threading
 import webbrowser
 
 from PyQt6.QtWidgets import QFileDialog, QMessageBox, QPushButton
 
 from core.calibre_lookup import CalibreLookupError, fetch_metadata
-from core.calibre_tools import DOWNLOAD_URL, find_tool
+from core.calibre_tools import DOWNLOAD_URL, cancellable_run, find_tool
 from core.epub_metadata import EpubBook
 from gui import app_settings
 from redactor_common.gui.lookup_dialog import LookupDialogBase, LookupResult
@@ -48,6 +49,8 @@ class CalibreLookupDialog(LookupDialogBase):
     def __init__(self, books: list[EpubBook], parent=None):
         self.books = books
         self._tool_path = ""
+        # Set by the progress dialog's Cancel (see _cancel_signal): the running fetch-ebook-metadata is killed.
+        self._cancel_event = threading.Event()
         super().__init__(
             books, parent,
             window_title="Look Up via Calibre",
@@ -122,6 +125,17 @@ class CalibreLookupDialog(LookupDialogBase):
     # ------------------------------------------------------------------
     # One lookup
 
+    def _cancel_signal(self, reporter):
+        """The base class asks for the progress dialog's Cancel signal right before each search starts on its
+        worker thread. Besides abandoning the worker (the base's own handling), Cancel now also kills Calibre: each
+        search gets a fresh event, set by that signal, which its cancel-aware runner watches."""
+        signal = LookupDialogBase._cancel_signal(reporter)
+        event = threading.Event()
+        self._cancel_event = event
+        if signal is not None:
+            signal.connect(lambda *_args, e=event: e.set())
+        return signal
+
     def _search_one(self, book: EpubBook, query_override: dict) -> LookupResult:
         used = {
             "title": query_override.get("title") or book.metadata.title,
@@ -131,6 +145,7 @@ class CalibreLookupDialog(LookupDialogBase):
         try:
             result = fetch_metadata(
                 self._tool_path, title=used["title"], authors=used["authors"], isbn=used["isbn"],
+                run_fn=cancellable_run(self._cancel_event),
             )
         except CalibreLookupError as exc:
             return LookupResult(error=str(exc), used_query=used)

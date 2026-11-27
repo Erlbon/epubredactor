@@ -10,9 +10,12 @@ exists on disk right now, so any pending in-memory edits would otherwise
 be silently ignored -- and then lost outright once the book gets
 reloaded afterward. Save those first, then polish them separately.
 
-"Polish in place" writes to a temp file next to the original and
-atomically replaces it (so a crash mid-polish can't corrupt the
-original), then the caller (gui/main_window.py) reloads the book fresh
+"Polish in place" writes to a temp file next to the original
+(`<stem>.partial.epub`, a family temp name, so a leftover is never
+listed as a book), checks that Calibre's result is a sound EPUB, and
+swaps it in with redactor_common's commit_in_place (the original goes to
+the Recycle Bin, as after Redact; a crash mid-polish can't corrupt it),
+then the caller (gui/main_window.py) reloads the book fresh
 from disk -- same reasoning as Refresh List, since polishing is a real
 file rewrite, not a staged edit. "Export polished copies" leaves
 originals untouched and adds the copies to the working list instead.
@@ -22,6 +25,7 @@ from __future__ import annotations
 
 import os
 import threading
+import time
 import webbrowser
 
 from PyQt6.QtWidgets import (
@@ -40,9 +44,12 @@ from PyQt6.QtWidgets import (
 )
 
 from core.calibre_tools import DOWNLOAD_URL, cancellable_run, find_tool
+from core.conversion_safety import verify_epub
 from core.ebook_polish import EbookPolishError, PolishOptions, polish_book
 from core.epub_metadata import EpubBook
 from core.rename_pattern import unique_path
+from redactor_common.core.pipeline import CommitError, VerifyFailed, commit_in_place
+from redactor_common.core.trash import move_to_trash
 from redactor_common.gui.background_call import call_in_background
 from redactor_common.gui.progress import run_with_progress
 from gui import app_settings
@@ -50,6 +57,58 @@ from redactor_common.gui.owned_dialog import OwnedDialog
 
 HYPHENS_DONT_CHANGE, HYPHENS_ADD, HYPHENS_REMOVE = "Don't change", "Add", "Remove"
 JACKET_DONT_CHANGE, JACKET_INSERT, JACKET_REMOVE = "Don't change", "Insert", "Remove"
+
+# After Cancel the killed Calibre process (or an antivirus scan) can hold the temp file for a moment.
+REMOVE_RETRIES, REMOVE_RETRY_SECONDS = 10, 0.2
+
+
+def polish_temp_path(book_path: str) -> str:
+    """The temp file Polish in place writes next to the book: `<stem>.partial<ext>`, one of the family's temp names
+    (redactor_common core/temp_names), so a leftover is never listed as a book. A file already holding that name is
+    never overwritten: `<stem> (2).partial<ext>` and so on."""
+    root, ext = os.path.splitext(book_path)
+    ext = ext or ".epub"
+    candidate, n = f"{root}.partial{ext}", 2
+    while os.path.lexists(candidate):
+        candidate = f"{root} ({n}).partial{ext}"
+        n += 1
+    return candidate
+
+
+def remove_with_retry(path: str, retries: int = REMOVE_RETRIES, delay: float = REMOVE_RETRY_SECONDS) -> bool:
+    """Removes `path`, retrying briefly while it is locked; True when it is gone."""
+    for attempt in range(retries):
+        try:
+            os.remove(path)
+            return True
+        except FileNotFoundError:
+            return True
+        except OSError:
+            if attempt + 1 < retries:
+                time.sleep(delay)
+    return not os.path.lexists(path)
+
+
+def _verify_polished(path: str) -> bool:
+    problem = verify_epub(path)
+    if problem:
+        raise VerifyFailed(problem.replace("the converted file", "Calibre's polished file"))
+    return True
+
+
+def polish_in_place(tool_path: str, book_path: str, tmp_path: str, options: PolishOptions,
+                    run_fn=None, trash=None) -> str:
+    """Polishes `book_path` into `tmp_path`, checks the result is a sound EPUB and swaps it in (commit_in_place:
+    the original goes to the Recycle Bin; nothing changes when the check fails). Returns a warning ("" when none),
+    e.g. that the original was kept beside the book because the Recycle Bin refused it. Raises EbookPolishError."""
+    kwargs = {"run_fn": run_fn} if run_fn is not None else {}
+    polish_book(tool_path, book_path, tmp_path, options, **kwargs)
+    try:
+        # The module's move_to_trash looked up now, so a test can patch it.
+        done = commit_in_place(book_path, tmp_path, trash=trash or move_to_trash, verify=_verify_polished)
+    except CommitError as exc:
+        raise EbookPolishError(str(exc)) from exc
+    return done.warning
 
 
 class PolishBookDialog(OwnedDialog):
@@ -231,6 +290,7 @@ class PolishBookDialog(OwnedDialog):
         succeeded_in_place: list[EpubBook] = []
         succeeded_export_paths: list[str] = []
         errors: list[str] = []
+        notes: list[str] = []  # said even after Cancel: a kept original, a temp file that would not go
         taken: set[str] = set()
         export = self.export_radio.isChecked()
         # Each book is one long ebook-polish process: it runs off the GUI
@@ -249,20 +309,19 @@ class PolishBookDialog(OwnedDialog):
                     succeeded_export_paths.append(output_path)
                     taken.add(os.path.normcase(os.path.abspath(output_path)))
                 else:
-                    root, ext = os.path.splitext(book.path)
-                    tmp_path = f"{root}.polish_tmp{ext}"
-                    call_in_background(polish_book, self._tool_path, book.path, tmp_path, options, run_fn=run_fn)
-                    os.replace(tmp_path, book.path)
-                    tmp_path = None  # renamed away, nothing left to clean up
+                    tmp_path = polish_temp_path(book.path)
+                    warning = call_in_background(
+                        polish_in_place, self._tool_path, book.path, tmp_path, options, run_fn=run_fn,
+                    )
+                    tmp_path = None  # swapped in, nothing left to clean up
                     succeeded_in_place.append(book)
+                    if warning:
+                        notes.append(f"{os.path.basename(book.path)}: {warning}")
             except (EbookPolishError, OSError) as exc:
                 if not cancel.is_set():
                     errors.append(f"{os.path.basename(book.path)}: {exc}")
-                if tmp_path and os.path.exists(tmp_path):
-                    try:
-                        os.remove(tmp_path)
-                    except OSError:
-                        pass
+                if tmp_path and os.path.lexists(tmp_path) and not remove_with_retry(tmp_path):
+                    notes.append(f"Could not remove the temp file {tmp_path}; delete it by hand.")
 
         run_with_progress(
             self, self.eligible_books, _step, "Polishing\u2026", threshold=1,
@@ -279,6 +338,8 @@ class PolishBookDialog(OwnedDialog):
                 f"{len(succeeded_in_place) + len(succeeded_export_paths)} of "
                 f"{len(self.eligible_books)} succeeded.\n\nFailed:\n{details}",
             )
+        if notes:
+            QMessageBox.warning(self, "Polish Book", "\n".join(notes[:10]) + ("\n..." if len(notes) > 10 else ""))
 
         if succeeded_in_place or succeeded_export_paths:
             self.accept()

@@ -291,8 +291,28 @@ def find_epubs(paths, recursive: bool = True) -> list[str]:
 
 def find_convertible_books(paths, recursive: bool = True) -> list[str]:
     """The e-books among `paths` that Calibre can convert to EPUB and Open Folder announces (MOBI, AZW3, FB2,
-    LIT... see core.ebook_convert.ANNOUNCED_SOURCE_EXTENSIONS), the app's leftovers skipped as in find_epubs()."""
-    return find_by_extension(paths, ANNOUNCED_SOURCE_EXTENSIONS, recursive, skip=is_app_temp_name)
+    LIT... see core.ebook_convert.ANNOUNCED_SOURCE_EXTENSIONS), the app's leftovers skipped as in find_epubs().
+
+    A folder search also leaves out what was converted already: a file with an EPUB of its own name beside it
+    ("Book.mobi" next to "Book.epub"), and everything inside the app's own "converted originals <date>" folders
+    (the quarantined originals). Otherwise every Open Folder offered, or with Convert Automatically on did, the
+    same conversions again. A file named directly is taken as meant."""
+    folders = [os.path.abspath(os.fspath(p)) for p in paths if os.path.isdir(os.fspath(p))]
+    found = find_by_extension(paths, ANNOUNCED_SOURCE_EXTENSIONS, recursive, skip=is_app_temp_name)
+    return [path for path in found if not _already_converted(path, folders)]
+
+
+def _already_converted(path: str, folders: list[str]) -> bool:
+    """True for a file found by a folder search (under one of `folders`) that sits in a "converted originals ..."
+    folder below that folder, or has "<stem>.epub" beside it."""
+    under = [f for f in folders if os.path.normcase(path).startswith(os.path.normcase(os.path.join(f, "")))]
+    if not under:
+        return False  # named directly
+    for folder in under:
+        parts = os.path.relpath(os.path.dirname(path), folder).split(os.sep)
+        if any(part.lower().startswith(conversion_safety.KIND_CONVERTED + " ") for part in parts):
+            return True
+    return os.path.isfile(os.path.splitext(path)[0] + ".epub")
 
 
 def _declined_convert_folders():
@@ -1666,7 +1686,7 @@ class MainWindow(QMainWindow):
                 "found, so nothing was converted. Set the Calibre folder in Tools > Preferences, or use "
                 "File > Import and Convert.")
             return
-        dialog.convert_all(dry_run=False, show_report=False)
+        dialog.convert_all(dry_run=False, show_report=False, skip_existing=True)
         converted = dialog.converted_epub_paths()
         if converted:
             self._load_paths(converted)
@@ -4400,6 +4420,8 @@ class MainWindow(QMainWindow):
 
         if polished_in_place or exported_paths:
             msg = f"Polished {len(polished_in_place)} book(s) in place"
+            if polished_in_place:
+                msg += " (the originals are in the Recycle Bin)"
             if exported_paths:
                 msg += f", exported {len(exported_paths)} polished copy/copies"
             QMessageBox.information(self, "Polished", msg + ".")
@@ -4478,8 +4500,18 @@ class MainWindow(QMainWindow):
                 self, "No books", "Open some books first (or select the ones to send)."
             )
             return
-        dialog = SendToKoboDialog(target_books, self)
+        dialog = SendToKoboDialog(target_books, self, save_books=self._save_books_before_sending)
         dialog.exec()
+        if dialog.saved_any:
+            self._rebuild_table()
+            self._refresh_status()
+            self._on_selection_changed()
+            self._show_journal_notice()
+
+    def _save_books_before_sending(self, books: list[EpubBook]) -> list[tuple[str, str]]:
+        """Send to Kobo's "Save and Send": saves these books in place (as Save All does) and returns
+        [(path, error)] for the ones that failed."""
+        return self._save_books(books, output_folder=None)
 
     def open_send_to_ereader_dialog(self) -> None:
         target_books = self._selection_or_all_books()

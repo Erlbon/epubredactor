@@ -96,7 +96,7 @@ class Outcome:
     def line(self) -> str:
         name = os.path.basename(self.source)
         if self.action == "quarantined":
-            return f"{name}: converted; original moved to {self.destination}"
+            return f"{name}: converted; original moved to {self.destination}" + (f" ({self.note})" if self.note else "")
         if self.action == "recycled":
             return f"{name}: converted; original sent to the Recycle Bin"
         if self.action == "failed":
@@ -122,12 +122,6 @@ def _unique(path: str) -> str:
         candidate = f"{stem} ({n}){ext}"
         n += 1
     return candidate
-
-
-def _log(path: str, new: str, old: str) -> None:
-    os.makedirs(os.path.dirname(path) or ".", exist_ok=True)
-    with open(path, "a", encoding="utf-8", newline="") as f:
-        f.write(f"{new}\t{old}\n")
 
 
 def _too_recent(source: str, minutes: int) -> bool:
@@ -164,11 +158,29 @@ def settle_original(
     destination = _unique(os.path.join(folder, os.path.basename(source)))
     if not dry_run:
         log = undo_log_path(source, policy, today)
+        # The undo log is opened (its folder made) BEFORE the move: a log that cannot be written leaves the original
+        # where it is. The lines are written once the move succeeded; should that write still fail, the report says
+        # where the original went.
         try:
             os.makedirs(folder, exist_ok=True)
-            shutil.move(source, destination)
-            _log(log, destination, source)
-            _log(log, result, UNDO_CREATED)
+            os.makedirs(os.path.dirname(log) or ".", exist_ok=True)
+            log_file = open(log, "a", encoding="utf-8", newline="")
         except OSError as exc:
-            return Outcome(source, result, "failed", destination=destination, note=str(exc))
+            return Outcome(source, result, "failed", note=f"the undo log could not be written: {exc}")
+        try:
+            try:
+                shutil.move(source, destination)
+            except OSError as exc:
+                return Outcome(source, result, "failed", note=str(exc))
+            try:
+                log_file.write(f"{destination}\t{source}\n{result}\t{UNDO_CREATED}\n")
+                log_file.flush()
+            except OSError as exc:
+                return Outcome(source, result, "quarantined", destination=destination,
+                               note=f"the undo log {log} could not be written: {exc}")
+        finally:
+            try:
+                log_file.close()
+            except OSError:
+                pass
     return Outcome(source, result, "quarantined", destination=destination)
