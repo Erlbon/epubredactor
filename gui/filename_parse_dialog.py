@@ -54,8 +54,10 @@ from PyQt6.QtWidgets import (
 from core.epub_metadata import EpubBook
 from core.filename_parser import (
     count_matching_filenames,
+    counts_from_saved_values,
+    epub_saved_values,
     field_value_counts,
-    folder_metadata_field_counts,
+    folder_epub_names,
     normalize_field_value,
     parse_book_path,
     parse_filename,
@@ -99,6 +101,12 @@ PATH_TICK_CONFIDENCE = 0.5
 # More books than this and the folder scan runs behind a progress dialog
 # (the same small-batch cutoff as the main window's LOAD_PROGRESS_THRESHOLD).
 SCAN_PROGRESS_THRESHOLD = 3
+# Candidate patterns are ranked on at most this many file names, spread
+# evenly over the selection: ranking every pattern against 15,000 names
+# froze the window for seconds before the dialog showed.
+RANK_SAMPLE_SIZE = 500
+# From this many books the preview table is filled behind a progress dialog.
+PREVIEW_PROGRESS_THRESHOLD = 1000
 
 
 class FilenameParseDialog(OwnedDialog):
@@ -129,14 +137,21 @@ class FilenameParseDialog(OwnedDialog):
         # while this dialog is open, even though _refresh_preview() reruns
         # on every keystroke as the pattern is edited.
         self._sibling_stems_cache: dict[str, list[str]] = {}
-        # (directory, field) -> value counts from OTHER files' own saved
-        # metadata (see folder_metadata_field_counts()) -- unlike the
-        # sibling-filename check above, this doesn't depend on the
-        # pattern text at all (it's real metadata, not re-parsed from a
-        # filename), so it's cached for the dialog's whole lifetime too,
-        # never invalidated by editing the pattern field.
-        self._folder_metadata_cache: dict[tuple[str, str], dict[str, int]] = {}
-        self._folder_all_metadata_cache: dict[tuple[str, str], dict[str, int]] = {}  # path mode, none excluded
+        # directory -> {file name: its saved authors/series keys} (see
+        # epub_saved_values()): ONE cache for both fields and both modes,
+        # filled with one open per file. It doesn't depend on the pattern
+        # text at all (it's real metadata, not re-parsed from a filename),
+        # so it's kept for the dialog's whole lifetime.
+        self._folder_values: dict[str, dict[str, dict[str, list[str]]]] = {}
+        # Set when the user cancels the folder check: folders not read by
+        # then are not opened again while the dialog is open.
+        self._folder_scan_stopped = False
+        self._folder_counts: dict[tuple[str, str], dict[str, int]] = {}  # (directory, field) -> totals
+        sample_step = max(1, -(-len(self._filename_stems) // RANK_SAMPLE_SIZE))
+        self._rank_indexes = list(range(0, len(self._filename_stems), sample_step))
+        self._rank_stems = [self._filename_stems[i] for i in self._rank_indexes]
+        self._scored_cache: list[tuple[str, int, bool]] | None = None
+        self._scored_path_cache: list[tuple[str, int]] | None = None
 
         # Single-shot timer behind the pattern field (see _schedule_refresh()).
         self._refresh_timer = QTimer(self)
@@ -308,15 +323,26 @@ class FilenameParseDialog(OwnedDialog):
         they were already in (most-recent-first for history) -- so a
         built-in template only actually outranks something from history
         when it genuinely fits these files better, not merely because
-        it's listed first."""
-        history, _paths = split_pattern_history(app_settings.load_pattern_history())
-        combined = [(p, True) for p in history] + [(p, False) for p in SUGGESTED_PATTERNS if p not in history]
-        scored = [
-            (pattern, count_matching_filenames(self._filename_stems, pattern), is_history)
-            for pattern, is_history in combined
-        ]
-        scored.sort(key=lambda t: t[1], reverse=True)
-        return scored
+        it's listed first.
+
+        Scored once per dialog (the history does not change while it is
+        open), on an even sample of at most RANK_SAMPLE_SIZE names."""
+        if self._scored_cache is None:
+            history, _paths = split_pattern_history(app_settings.load_pattern_history())
+            combined = [(p, True) for p in history] + [(p, False) for p in SUGGESTED_PATTERNS if p not in history]
+            scored = [
+                (pattern, count_matching_filenames(self._rank_stems, pattern), is_history)
+                for pattern, is_history in combined
+            ]
+            scored.sort(key=lambda t: t[1], reverse=True)
+            self._scored_cache = scored
+        return list(self._scored_cache)
+
+    def _match_label(self, count: int) -> str:
+        """"n/total match", saying so when the count is from a sample."""
+        if len(self._rank_stems) < len(self.books):
+            return f"{count}/{len(self._rank_stems)} sampled match"
+        return f"{count}/{len(self.books)} match"
 
     def _candidate_pattern_labels(self) -> list[tuple[str | None, str]]:
         """(pattern, display label) pairs, ranked best-match-first -- see
@@ -329,9 +355,9 @@ class FilenameParseDialog(OwnedDialog):
         labels = []
         for pattern, count, is_history in scored:
             suffix = "" if is_history else "  (built-in template)"
-            labels.append((pattern, f"{pattern}   \u2014   {count}/{len(self.books)} match{suffix}"))
+            labels.append((pattern, f"{pattern}   \u2014   {self._match_label(count)}{suffix}"))
         for pattern, count in self._scored_path_candidates():
-            labels.append((pattern, f"{pattern}   \u2014   {count}/{len(self.books)} match  (folder path)"))
+            labels.append((pattern, f"{pattern}   \u2014   {self._match_label(count)}  (folder path)"))
         return labels
 
     def _scored_path_candidates(self) -> list[tuple[str, int]]:
@@ -339,17 +365,19 @@ class FilenameParseDialog(OwnedDialog):
         / in it), best first, parsed against the library root. Kept apart
         from the filename candidates so the two kinds are never ranked
         against each other or picked automatically for one another."""
-        _names, paths = split_pattern_history(app_settings.load_pattern_history())
-        scored = []
-        for pattern in paths:
-            count = 0
-            for book in self.books:
-                result = parse_book_path(book.path, pattern, self._library_root)
-                if result.matched and any(result.values.values()):
-                    count += 1
-            scored.append((pattern, count))
-        scored.sort(key=lambda t: t[1], reverse=True)
-        return scored
+        if self._scored_path_cache is None:
+            _names, paths = split_pattern_history(app_settings.load_pattern_history())
+            scored = []
+            for pattern in paths:
+                count = 0
+                for i in self._rank_indexes:
+                    result = parse_book_path(self.books[i].path, pattern, self._library_root)
+                    if result.matched and any(result.values.values()):
+                        count += 1
+                scored.append((pattern, count))
+            scored.sort(key=lambda t: t[1], reverse=True)
+            self._scored_path_cache = scored
+        return list(self._scored_path_cache)
 
     def _on_recent_list_clicked(self, item: QListWidgetItem) -> None:
         pattern = item.data(Qt.ItemDataRole.UserRole)
@@ -367,24 +395,70 @@ class FilenameParseDialog(OwnedDialog):
             self._sibling_stems_cache[directory] = cached
         return cached
 
-    def _folder_metadata_counts_for(self, book_path: str, field: str) -> dict[str, int]:
+    def _scan_folders(self, directories, show_progress: bool = True) -> None:
+        """Read the saved authors and series of the EPUBs in each folder not
+        read yet: one open per file for both fields, into the one cache.
+        Behind a progress dialog with Cancel (per file); after a Cancel the
+        folders not reached stay unread for the rest of the dialog."""
+        todo = [d for d in dict.fromkeys(directories) if d not in self._folder_values]
+        if not todo or self._folder_scan_stopped:
+            return
+        items = []
+        for directory in todo:
+            self._folder_values[directory] = {}
+            items.extend((directory, name) for name in folder_epub_names(directory))
+        done: set[tuple[str, str]] = set()
+
+        def read(item, _index):
+            directory, name = item
+            values = epub_saved_values(os.path.join(directory, name))
+            if values is not None:
+                self._folder_values[directory][name] = values
+            done.add(item)
+
+        if show_progress:
+            finished = run_with_progress(
+                self, items, read, "Checking other books in the same folders…",
+                threshold=1, cancellable=True,
+                label_for=lambda item: f"Checking: {os.path.basename(item[0])}",
+            )
+        else:
+            for index, item in enumerate(items):
+                read(item, index)
+            finished = True
+        if not finished:
+            self._folder_scan_stopped = True
+            # A folder only partly read still counts what was read; one not reached is left unread.
+            reached = {d for d, _n in done}
+            for directory in todo:
+                if directory not in reached:
+                    self._folder_values.pop(directory, None)
+
+    def _folder_values_for(self, directory: str) -> dict[str, dict[str, list[str]]]:
+        if directory not in self._folder_values:
+            self._scan_folders([directory], show_progress=False)
+        return self._folder_values.get(directory, {})
+
+    def _folder_metadata_count(self, book_path: str, field: str, key: str) -> int:
+        """How many OTHER files in the book's folder have `key` (normalized)
+        saved as their `field`."""
         directory = os.path.dirname(book_path)
-        key = (directory, field)
-        cached = self._folder_metadata_cache.get(key)
-        if cached is None:
-            cached = folder_metadata_field_counts(directory, field, exclude_path=book_path)
-            self._folder_metadata_cache[key] = cached
-        return cached
+        total = self._metadata_counts_in(directory, field).get(key, 0)
+        own = self._folder_values.get(directory, {}).get(os.path.basename(book_path))
+        return total - (own or {}).get(field, []).count(key)
 
     def _metadata_counts_in(self, directory: str, field: str) -> dict[str, int]:
         """Saved author/series counts of every file in `directory` (none
         excluded: path_corroborator() takes each book's own value out),
-        cached for the dialog's lifetime like the filename-mode tier."""
-        key = (directory, field)
-        cached = self._folder_all_metadata_cache.get(key)
+        from the same cache as the filename-mode tier."""
+        values = self._folder_values_for(directory)
+        cache_key = (directory, field)
+        if directory not in self._folder_values:  # not read (the check was cancelled): nothing to count
+            return {}
+        cached = self._folder_counts.get(cache_key)
         if cached is None:
-            cached = folder_metadata_field_counts(directory, field)
-            self._folder_all_metadata_cache[key] = cached
+            cached = counts_from_saved_values(values, field)
+            self._folder_counts[cache_key] = cached
         return cached
 
     def _cheap_confirmation_note(
@@ -443,7 +517,7 @@ class FilenameParseDialog(OwnedDialog):
         if note:
             return note
         normalized = normalize_field_value(value)
-        metadata_count = self._folder_metadata_counts_for(book_path, field).get(normalized, 0)
+        metadata_count = self._folder_metadata_count(book_path, field, normalized)
         if metadata_count >= 1:
             return f"{field}: confirmed via existing metadata in {metadata_count} other book(s) in this folder"
 
@@ -464,42 +538,32 @@ class FilenameParseDialog(OwnedDialog):
             self._refresh_preview()
 
     def _prefetch_folder_metadata(
-        self, pattern: str, batch_counts: dict[str, dict[str, int]],
+        self, pattern: str, parsed_rows: list, batch_counts: dict[str, dict[str, int]],
         folder_counts_cache: dict[tuple[str, str], dict[str, int]],
     ) -> None:
-        """Fill the per-folder saved-metadata cache for every folder the
-        render loop will need it for, so the slow part (opening sibling
-        EPUBs) runs here, behind a progress dialog on a big selection,
-        instead of silently inside the row loop. Same rows, same order
-        and same tier-1/2 check as the loop, so the cache ends up exactly
-        as the loop would have filled it."""
-        todo: list[tuple[str, str]] = []
-        seen: set[tuple[str, str]] = set()
+        """Read the saved metadata of every folder the render loop will
+        need it for, so the slow part (opening sibling EPUBs) runs here,
+        behind a progress dialog with Cancel on a big selection, instead
+        of silently inside the row loop. Same rows and the same tier-1/2
+        check as the loop. `parsed_rows`: parse_filename() per book."""
+        folders: list[str] = []
+        seen: set[str] = set()
         for row, book in enumerate(self.books):
-            parsed = parse_filename(self._filename_stems[row], pattern) or {}
+            parsed = parsed_rows[row] or {}
+            directory = os.path.dirname(book.path)
+            if directory in seen or directory in self._folder_values:
+                continue
             for field in _CONFIRMABLE_FIELDS:
                 value = parsed.get(field)
-                key = (os.path.dirname(book.path), field)
-                if not value or key in seen or key in self._folder_metadata_cache:
+                if not value:
                     continue
                 if self._cheap_confirmation_note(field, value, book.path, pattern, batch_counts, folder_counts_cache):
                     continue
-                seen.add(key)
-                todo.append((book.path, field))
-        if not todo:
-            return
-
-        def scan(item, _index):
-            self._folder_metadata_counts_for(*item)
-
-        if len(self.books) > SCAN_PROGRESS_THRESHOLD:
-            run_with_progress(
-                self, todo, scan, "Checking other books in the same folders…",
-                threshold=1, cancellable=False,
-            )
-        else:
-            for index, item in enumerate(todo):
-                scan(item, index)
+                seen.add(directory)
+                folders.append(directory)
+                break
+        if folders:
+            self._scan_folders(folders, show_progress=len(self.books) > SCAN_PROGRESS_THRESHOLD)
 
     def _refresh_preview(self) -> None:
         self._refresh_timer.stop()  # a direct refresh supersedes any pending debounced one
@@ -516,20 +580,34 @@ class FilenameParseDialog(OwnedDialog):
         self._checkboxes = {}
         self._parsed = {}
 
-        batch_counts = {
-            field: field_value_counts(self._filename_stems, pattern, field) for field in _CONFIRMABLE_FIELDS
-        } if pattern.strip() else {}
+        # Each name is parsed ONCE per refresh; the batch counts, the folder
+        # check and the rows all read these.
+        if pattern.strip():
+            parsed_rows = [parse_filename(stem, pattern) for stem in self._filename_stems]
+        else:
+            parsed_rows = [None] * len(self.books)
+        batch_counts: dict[str, dict[str, int]] = {}
+        if pattern.strip():
+            for field in _CONFIRMABLE_FIELDS:
+                counts: dict[str, int] = {}
+                for parsed in parsed_rows:
+                    if parsed and parsed.get(field):
+                        key = normalize_field_value(parsed[field])
+                        counts[key] = counts.get(key, 0) + 1
+                batch_counts[field] = counts
         folder_counts_cache: dict[tuple[str, str], dict[str, int]] = {}
         if pattern.strip():
-            self._prefetch_folder_metadata(pattern, batch_counts, folder_counts_cache)
+            self._prefetch_folder_metadata(pattern, parsed_rows, batch_counts, folder_counts_cache)
 
         self.preview_table.setRowCount(len(self.books))
         matched_count = 0
-        for row, book in enumerate(self.books):
-            stem = self._filename_stems[row]
+
+        def fill_row(row: int, _index: int) -> None:
+            nonlocal matched_count
+            book = self.books[row]
             self.preview_table.setItem(row, BOOK_COL, self._readonly_item(os.path.basename(book.path)))
 
-            parsed = parse_filename(stem, pattern) if pattern.strip() else None
+            parsed = parsed_rows[row]
             non_empty = {k: v for k, v in (parsed or {}).items() if v}
 
             notes = []
@@ -557,14 +635,29 @@ class FilenameParseDialog(OwnedDialog):
             self._checkboxes[row] = cb
             self.preview_table.setCellWidget(row, APPLY_COL, cb)
 
+        rows = range(len(self.books))
+        if len(self.books) >= PREVIEW_PROGRESS_THRESHOLD:
+            self.preview_table.setUpdatesEnabled(False)
+            try:
+                run_with_progress(
+                    self, rows, fill_row, "Filling the preview…",
+                    threshold=PREVIEW_PROGRESS_THRESHOLD, cancellable=False, update_every=100,
+                )
+            finally:
+                self.preview_table.setUpdatesEnabled(True)
+        else:
+            for row in rows:
+                fill_row(row, row)
+
         make_columns_resizable(self.preview_table, wide_column=EXTRACTED_COL)
         if self._auto_detected_pattern and pattern == self._auto_detected_pattern:
-            self.status_label.setText(
-                f"Best-matching pattern selected automatically: {matched_count} of {len(self.books)} "
-                "filename(s) match this pattern."
-            )
+            text = (f"Best-matching pattern selected automatically: {matched_count} of {len(self.books)} "
+                    "filename(s) match this pattern.")
         else:
-            self.status_label.setText(f"{matched_count} of {len(self.books)} filename(s) match this pattern.")
+            text = f"{matched_count} of {len(self.books)} filename(s) match this pattern."
+        if self._folder_scan_stopped:
+            text += " The folder check was cancelled, so some authors or series may show as unconfirmed."
+        self.status_label.setText(text)
 
     def _parse_paths(self, pattern: str) -> dict[int, object]:
         """Path-mode parse of every book: a first pass counts how many
@@ -580,11 +673,7 @@ class FilenameParseDialog(OwnedDialog):
         wanted = [f for f in _CONFIRMABLE_FIELDS if f"%{f}%" in pattern]
         if wanted:
             dirs = sorted({os.path.dirname(b.path) for i, b in enumerate(self.books) if first[i].matched})
-            todo = [d for d in dirs if any((d, f) not in self._folder_all_metadata_cache for f in wanted)]
-            run_with_progress(
-                self, todo, lambda d, _i: [self._metadata_counts_in(d, f) for f in wanted],
-                "Checking other books in the same folders\u2026", cancellable=False,
-            )
+            self._scan_folders(dirs)
         return {
             i: parse(book, path_corroborator(book.path, counts, self._metadata_counts_in, book.metadata))
             for i, book in enumerate(self.books)
@@ -641,6 +730,8 @@ class FilenameParseDialog(OwnedDialog):
         )
         if not self._library_root:
             text += " No library root chosen: the last folders of each path are used."
+        if self._folder_scan_stopped:
+            text += " The folder check was cancelled, so some folders were not compared with saved metadata."
         self.status_label.setText(text)
 
     def _choose_root(self) -> None:
@@ -652,6 +743,7 @@ class FilenameParseDialog(OwnedDialog):
         """Use (and remember, through on_library_root_changed) `folder`
         as the library root; re-reads the preview."""
         self._library_root = folder
+        self._scored_path_cache = None  # path patterns are counted against the root
         self.root_label.setText(folder or "(no library root chosen)")
         self._on_library_root_changed(folder)
         self._refresh_preview()

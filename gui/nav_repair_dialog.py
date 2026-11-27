@@ -65,8 +65,10 @@ class NavRepairDialog(OwnedDialog):
         warning = QLabel(
             "Removes broken <guide> references (the files they pointed to are already "
             "gone from the archive either way) and any file present in the archive but "
-            "not referenced by any manifest item. Doesn't touch reading-order content or "
-            "any file an item still points to. Review carefully before continuing."
+            "not referenced by any manifest item. Doesn't touch reading-order content, "
+            "any file an item still points to, or a file a stylesheet or page still uses "
+            "(a font or picture missing from the manifest is kept: readers load it anyway). "
+            "Review carefully before continuing."
         )
         warning.setWordWrap(True)
         warning.setStyleSheet("color: #b45309; font-size: 11px;")
@@ -85,11 +87,16 @@ class NavRepairDialog(OwnedDialog):
         self._issues = {}
         rows = []
 
+        kept_by_book: dict[int, list[str]] = {}
+
         def _step(book: EpubBook, i: int) -> None:
             broken_guide = [href for _type, _title, href in book.find_broken_guide_references()]
-            orphans = book.find_orphaned_files()
+            orphans, kept = book.scan_unlisted_files()
             if broken_guide or orphans:
                 self._issues[i] = (broken_guide, orphans)
+            if kept:
+                kept_by_book[i] = kept
+            if broken_guide or orphans or kept:
                 rows.append(i)
 
         run_with_progress(
@@ -99,16 +106,21 @@ class NavRepairDialog(OwnedDialog):
         self.table.setRowCount(len(rows))
         for row, book_index in enumerate(rows):
             book = self.books[book_index]
-            broken_guide, orphans = self._issues[book_index]
+            broken_guide, orphans = self._issues.get(book_index, ([], []))
+            kept = kept_by_book.get(book_index, [])
             parts = []
             if broken_guide:
                 parts.append(f"{len(broken_guide)} broken guide reference(s): {', '.join(broken_guide)}")
             if orphans:
                 parts.append(f"{len(orphans)} orphaned file(s): {', '.join(orphans)}")
+            if kept:
+                parts.append(f"kept, not in the manifest but used by the book's styles or pages: {', '.join(kept)}")
             self.table.setItem(row, BOOK_COL, self._readonly_item(os.path.basename(book.path)))
             self.table.setItem(row, ISSUES_COL, self._readonly_item("; ".join(parts)))
             cb = QCheckBox()
-            cb.setChecked(True)
+            repairable = book_index in self._issues
+            cb.setChecked(repairable)
+            cb.setEnabled(repairable)
             self._checkboxes[book_index] = cb
             self.table.setCellWidget(row, APPLY_COL, cb)
         make_columns_resizable(self.table, wide_column=ISSUES_COL)

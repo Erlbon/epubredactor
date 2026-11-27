@@ -1311,3 +1311,176 @@ def test_card37_save_all_names_books_skipped_for_an_earlier_failure(tmp_path, qa
     assert not window.books[0].dirty
     assert any("1 book(s) skipped because they failed to save earlier" in w and "b.epub" in w for w in warnings)
     assert "skipped (failed to save earlier)" in window.status.currentMessage()
+
+
+# Card 42: restoring a selection selected one book at a time (13 s at 15,000 rows).
+def test_card42_selection_of_15000_rows_is_set_in_one_go(qapp, monkeypatch):
+    import time
+
+    from gui import main_window as mw
+
+    window = mw.MainWindow()
+    window.table.setRowCount(15000)
+    books = [object() for _ in range(15000)]
+    monkeypatch.setattr(window, "_rows_by_book", lambda: {b: i for i, b in enumerate(books)})
+    changes = []
+    window.table.selectionModel().selectionChanged.connect(lambda *_a: changes.append(1))
+    wanted = books[::2] + books[1:100:2]  # 7,450 separate runs, plus one long run at the top
+    start = time.perf_counter()
+    window._select_books(wanted)
+    elapsed = time.perf_counter() - start
+    rows = {i.row() for i in window.table.selectionModel().selectedRows()}
+    assert rows == {i for i in range(15000) if i % 2 == 0 or i < 100}
+    assert changes == [1]  # one selection change, so the handler runs once
+    assert elapsed < 2.0, elapsed  # was about 13 s
+    window._select_books(books)
+    assert len(window.table.selectionModel().selectedRows()) == 15000
+
+
+# Card 43: Parse Filename scored every pattern on every name, twice, before it opened.
+def test_card43_parse_filename_ranks_once_on_a_sample(tmp_path, qapp, monkeypatch):
+    import os
+    import time
+    from types import SimpleNamespace
+
+    import gui.filename_parse_dialog as module
+    from gui import app_settings
+
+    monkeypatch.setattr(app_settings, "load_pattern_history", lambda: ["%authors% - %title%", "%title% - %authors%"])
+    calls = []
+    original = module.count_matching_filenames
+    monkeypatch.setattr(module, "count_matching_filenames",
+                        lambda names, pattern: (calls.append(len(names)), original(names, pattern))[1])
+    progress = []
+    real_progress = module.run_with_progress
+    monkeypatch.setattr(module, "run_with_progress",
+                        lambda parent, items, step, label, **kw: (progress.append(label),
+                                                                  real_progress(parent, items, step, label, **kw))[1])
+    base = tmp_path / "missing"  # never created: no folder to check
+    books = [SimpleNamespace(path=os.path.join(str(base), f"f{i % 300}", f"Author {i % 300} - Title {i}.epub"),
+                             metadata=None, load_error=None) for i in range(15000)]
+    start = time.perf_counter()
+    dialog = module.FilenameParseDialog(books, library_root="")
+    elapsed = time.perf_counter() - start
+    candidates = 2 + len([p for p in module.SUGGESTED_PATTERNS if p not in ("%authors% - %title%", "%title% - %authors%")])
+    assert len(calls) == candidates  # each pattern scored once, not twice
+    assert max(calls) <= module.RANK_SAMPLE_SIZE
+    assert dialog.pattern_edit.text() == "%authors% - %title%"
+    assert any("preview" in label for label in progress)  # the 15,000 rows are filled behind a progress dialog
+    assert "15000 of 15000" in dialog.status_label.text()
+    assert "sampled" in dialog.recent_list.item(0).text()
+    assert elapsed < 15, elapsed
+
+
+# Card 45: the folder check opened each EPUB twice (authors, then series) and could not be cancelled.
+def _series_book(path, author, series):
+    meta = (f'<dc:identifier id="BookId">urn:uuid:{abs(hash(path))}</dc:identifier><dc:title>T</dc:title>'
+            f'<dc:language>en</dc:language><dc:creator>{author}</dc:creator>'
+            f'<meta name="calibre:series" content="{series}"/>')
+    return _make_book(path, meta)
+
+
+def test_card45_folder_check_opens_each_book_once_and_can_be_cancelled(tmp_path, qapp, monkeypatch):
+    from types import SimpleNamespace
+
+    import gui.filename_parse_dialog as module
+    from gui import app_settings
+
+    monkeypatch.setattr(app_settings, "load_pattern_history", lambda: [])
+    folder = tmp_path / "lib"
+    folder.mkdir()
+    for i in range(3):
+        _series_book(folder / f"tagged{i}.epub", "Terry Pratchett", "Discworld")
+    books = [SimpleNamespace(path=str(folder / f"x{i} - Discworld - Terry Pratchett.epub"), metadata=None,
+                             load_error=None) for i in range(5)]
+    opened = []
+    original = module.epub_saved_values
+    monkeypatch.setattr(module, "epub_saved_values", lambda p: (opened.append(p), original(p))[1])
+
+    dialog = module.FilenameParseDialog(books, library_root="")
+    dialog.pattern_edit.setText("%title% - %series% - %authors%")
+    dialog.flush_pending_refresh()
+    assert sorted(opened) == sorted(str(folder / f"tagged{i}.epub") for i in range(3))  # once each, both fields
+    assert "confirmed" in dialog.preview_table.item(0, 1).text()
+
+    # Cancel after the first file: the folder check stops and says so; nothing is opened again later.
+    opened.clear()
+    monkeypatch.setattr(module, "run_with_progress", lambda parent, items, step, label, **kw: (
+        step(list(items)[0], 0), False)[1] if kw.get("cancellable") else [step(it, i) for i, it in enumerate(items)])
+    other = tmp_path / "other"
+    other.mkdir()
+    for i in range(3):
+        _series_book(other / f"o{i}.epub", "Someone", "Series")
+    books2 = [SimpleNamespace(path=str(other / f"x{i} - S - A.epub"), metadata=None, load_error=None) for i in range(5)]
+    dialog2 = module.FilenameParseDialog(books2, library_root="")
+    dialog2.pattern_edit.setText("%title% - %series% - %authors%")
+    dialog2.flush_pending_refresh()
+    assert len(opened) == 1 and dialog2._folder_scan_stopped
+    assert "cancelled" in dialog2.status_label.text()
+    dialog2.pattern_edit.setText("%title% - %authors% - %series%")
+    dialog2.flush_pending_refresh()
+    assert len(opened) == 1
+
+
+# Card 47: the reader's SVG patterns rescanned the page for every unclosed tag.
+def test_card47_reader_html_is_fast_on_unclosed_tags_and_unchanged_otherwise():
+    import time
+
+    from core.reader_html import prepare_reader_html
+
+    pages = ["<p>x</p>" + "<img " * 20000, "<svg " * 20000, "<svg>" + "<image " * 20000 + "</svg>",
+             "<img " * 20000 + ">", "<img " * 400000]
+    for page in pages:
+        start = time.perf_counter()
+        prepare_reader_html(page)
+        assert time.perf_counter() - start < 1.0
+    assert prepare_reader_html('<svg x="1"><image width="1" xlink:href="../img/c.jpg"/></svg>') == '<img src="../img/c.jpg">'
+    assert prepare_reader_html('<svg><image href="a.svg"/></svg>t') == "<p>[SVG graphic not shown]</p>t"
+    assert prepare_reader_html('<p>a</p><img src="p.svg?x=1" alt="b"/><img src="p.jpg"/>') == (
+        '<p>a</p>[SVG image not shown: p.svg]<img src="p.jpg"/>')
+    assert prepare_reader_html("<SVG><rect/></SVG >tail<svg>open") == "<p>[SVG graphic not shown]</p>tail<svg>open"
+
+
+# Card 72: with a filter on and nothing selected, tools ran on the hidden books too.
+def test_card72_nothing_selected_means_the_rows_the_filter_shows(tmp_path, qapp):
+    window = _window_with(tmp_path, ["alpha.epub", "beta.epub", "alphabet.epub"])
+    window.table.clearSelection()
+    assert len(window._selection_or_all_books()) == 3
+    window.filter_edit.setText("alpha")
+    window.table.clearSelection()
+    names = sorted(b.path.rsplit("\\", 1)[-1].rsplit("/", 1)[-1] for b in window._selection_or_all_books())
+    assert names == ["alpha.epub", "alphabet.epub"]
+    assert "filter" in window.status.currentMessage()
+
+
+# Card 74: Repair Navigation deleted files that only CSS (or a page) refers to.
+def test_card74_files_used_by_css_or_pages_are_never_removed(tmp_path):
+    from core.epub_metadata import EpubBook
+
+    css = b"@font-face { font-family: X; src: url('../fonts/x.otf'); } body { background: url(bg.png) }"
+    page = _PAGE.format('<p>t</p><img src="images/only-here.jpg"/>').encode()
+    path = _make_book(
+        tmp_path / "f.epub", _UUID,
+        items='<item id="css" href="styles/s.css" media-type="text/css"/>',
+        files={"OEBPS/ch1.xhtml": page, "OEBPS/styles/s.css": css, "OEBPS/fonts/x.otf": b"font",
+               "OEBPS/styles/bg.png": b"png", "OEBPS/images/only-here.jpg": b"jpg", "OEBPS/stray.txt": b"x"},
+    )
+    book = EpubBook(path)
+    orphans, kept = book.scan_unlisted_files()
+    assert orphans == ["OEBPS/stray.txt"]
+    assert kept == ["OEBPS/fonts/x.otf", "OEBPS/images/only-here.jpg", "OEBPS/styles/bg.png"]
+    assert book.remove_orphaned_files() == ["OEBPS/stray.txt"]
+    book.save()
+    assert _member(path, "OEBPS/fonts/x.otf") == b"font" and _member(path, "OEBPS/stray.txt") is None
+
+
+def test_card74_dialog_shows_kept_files_without_a_repair_tick(tmp_path, qapp):
+    from core.epub_metadata import EpubBook
+    from gui.nav_repair_dialog import NavRepairDialog
+
+    css = b"@font-face { src: url(x.otf) }"
+    path = _make_book(tmp_path / "g.epub", _UUID, items='<item id="css" href="s.css" media-type="text/css"/>',
+                      files={"OEBPS/s.css": css, "OEBPS/x.otf": b"font"})
+    dialog = NavRepairDialog([EpubBook(path)])
+    assert "kept" in dialog.table.item(0, 1).text()
+    assert not dialog._checkboxes[0].isEnabled() and dialog.accepted_book_indices() == []

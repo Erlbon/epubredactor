@@ -198,42 +198,63 @@ def folder_metadata_field_counts(
     at all. Opens up to `limit` files (see MAX_SIBLINGS_OPENED_FOR_
     METADATA_CHECK) and stops there even if the folder has more.
     A load failure on any one file is skipped, not fatal to the rest."""
-    from collections import Counter
+    exclude_name = os.path.basename(exclude_path) if exclude_path else None
+    names = folder_epub_names(directory, limit, exclude_name)
+    values_by_name = {}
+    for name in names:
+        values = epub_saved_values(os.path.join(directory, name))
+        if values is not None:
+            values_by_name[name] = values
+    return counts_from_saved_values(values_by_name, field)
 
-    from core.epub_metadata import EpubBook
 
+def folder_epub_names(directory: str, limit: int = MAX_SIBLINGS_OPENED_FOR_METADATA_CHECK,
+                      exclude_name: str | None = None) -> list[str]:
+    """The first `limit` .epub file names in `directory` (listing order),
+    `exclude_name` left out; [] for a folder that can't be listed."""
     try:
         entries = os.listdir(directory)
     except OSError:
-        return {}
-    exclude_name = os.path.basename(exclude_path) if exclude_path else None
+        return []
+    names = [n for n in entries if n.lower().endswith(".epub") and n != exclude_name]
+    return names[:limit]
+
+
+def epub_saved_values(path: str) -> dict[str, list[str]] | None:
+    """{"authors": [...], "series": [...]}: the comparison keys of one
+    EPUB's own saved author(s) and series, read with ONE open of the file
+    (both fields at once). A book with a load error has none; None when
+    the file could not be opened at all."""
+    from core.epub_metadata import EpubBook
+
+    try:
+        book = EpubBook(path)
+    except Exception:  # noqa: BLE001 - one unreadable file never stops a folder check
+        return None
+    if book.load_error:
+        return {"authors": [], "series": []}
+    authors = [a for a in book.metadata.authors if a]
+    if len(authors) > 1:
+        # A parsed "A & B" arrives as "A; B" -- let the whole
+        # co-author list confirm it too, not just each name.
+        authors.append("; ".join(authors))
+    series = [book.metadata.series] if book.metadata.series else []
+    return {
+        "authors": [normalize_field_value(v) for v in authors],
+        "series": [normalize_field_value(v) for v in series],
+    }
+
+
+def counts_from_saved_values(values_by_name: dict[str, dict[str, list[str]]], field: str,
+                             exclude_name: str | None = None) -> dict[str, int]:
+    """normalized value -> how many of the files (epub_saved_values() per
+    file name) have it for `field`, the file `exclude_name` not counted."""
+    from collections import Counter
 
     counts: Counter[str] = Counter()
-    opened = 0
-    for name in entries:
-        if opened >= limit:
-            break
-        if not name.lower().endswith(".epub") or name == exclude_name:
-            continue
-        try:
-            book = EpubBook(os.path.join(directory, name))
-        except Exception:
-            continue
-        opened += 1
-        if book.load_error:
-            continue
-        if field == "authors":
-            values = [a for a in book.metadata.authors if a]
-            if len(values) > 1:
-                # A parsed "A & B" arrives as "A; B" -- let the whole
-                # co-author list confirm it too, not just each name.
-                values.append("; ".join(values))
-        elif field == "series":
-            values = [book.metadata.series] if book.metadata.series else []
-        else:
-            values = []
-        for value in values:
-            counts[normalize_field_value(value)] += 1
+    for name, values in values_by_name.items():
+        if name != exclude_name:
+            counts.update(values.get(field, []))
     return dict(counts)
 
 

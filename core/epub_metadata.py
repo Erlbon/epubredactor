@@ -443,6 +443,47 @@ def href_to_archive_path(opf_dir: str, href: str) -> str:
     return posixpath.normpath(posixpath.join(opf_dir, href)) if opf_dir else posixpath.normpath(href)
 
 
+# References from inside the book's own files (see _archive_references):
+# CSS url(...) and @import, and the attributes pages and SVG use to point
+# at other files. Lengths are bounded so a damaged file can't make a
+# pattern rescan the rest of it for every unclosed "url(".
+_REF_DOC_EXTENSIONS = (".css", ".xhtml", ".html", ".htm", ".xml", ".svg", ".ncx", ".smil")
+_CSS_URL_RE = re.compile(r"url\(\s*['\"]?([^'\")\s]{1,2048})", re.I)
+_CSS_IMPORT_RE = re.compile(r"@import\s+['\"]([^'\"]{1,2048})['\"]", re.I)
+_ATTR_REF_RE = re.compile(r"(?:\bsrc|\bhref|:href|\bposter|\bdata|\baltimg)\s*=\s*['\"]([^'\"]{1,2048})['\"]", re.I)
+_URL_SCHEME_RE = re.compile(r"^[A-Za-z][A-Za-z0-9+.-]*:")
+
+
+def _archive_references(zf: zipfile.ZipFile, names: set[str]) -> set[str]:
+    """Archive paths that the book's stylesheets, pages, SVG and NCX files
+    refer to (url(), @import, src/href/xlink:href/poster/data). A damaged
+    or unreadable entry is skipped."""
+    found: set[str] = set()
+    for name in names:
+        if not name.lower().endswith(_REF_DOC_EXTENSIONS) or name.startswith("META-INF/"):
+            continue
+        try:
+            text = zf.read(name).decode("utf-8", errors="replace")
+        except (zipfile.BadZipFile, KeyError, OSError, RuntimeError, NotImplementedError, zlib.error, EOFError):
+            continue
+        base = posixpath.dirname(name)
+        refs = [m.group(1) for m in _CSS_URL_RE.finditer(text)]
+        refs += [m.group(1) for m in _CSS_IMPORT_RE.finditer(text)]
+        if not name.lower().endswith(".css"):
+            refs += [m.group(1) for m in _ATTR_REF_RE.finditer(text)]
+        for ref in refs:
+            ref = ref.strip()
+            if not ref or _URL_SCHEME_RE.match(ref):
+                continue  # http:, data:, mailto: and the like
+            if ref.startswith("/"):
+                path = href_to_archive_path("", ref.lstrip("/"))
+            else:
+                path = href_to_archive_path(base, ref)
+            if path:
+                found.add(path)
+    return found
+
+
 def _find_opf_path(zf: zipfile.ZipFile) -> str:
     try:
         container_data = zf.read("META-INF/container.xml")
@@ -1721,12 +1762,37 @@ class EpubBook:
     def find_orphaned_files(self) -> list[str]:
         """Archive paths present in the zip but referenced by no manifest
         item -- excludes mimetype, META-INF/*, the OPF file itself, and
-        directory entries. Read-only, opens the archive fresh."""
+        directory entries -- AND used by no page or stylesheet (see
+        scan_unlisted_files()). Read-only, opens the archive fresh."""
+        return self.scan_unlisted_files()[0]
+
+    def scan_unlisted_files(self) -> tuple[list[str], list[str]]:
+        """(orphans, used): the archive files no manifest item lists, split
+        into those nothing in the book refers to (safe to remove) and those
+        a stylesheet or page still refers to (a font or background image
+        named only in CSS, a picture only in a page). Real readers (Kobo,
+        Adobe RMSDK) load such a file by its zip path even though the
+        manifest leaves it out, so removing it would break the book: those
+        are only reported, never removed."""
         try:
             with zipfile.ZipFile(self.path, "r") as zf:
                 names = set(zf.namelist())
+                candidates = self._unlisted_candidates(names)
+                if not candidates:
+                    return [], []
+                used = _archive_references(zf, names)
         except (zipfile.BadZipFile, KeyError, OSError):
-            return []
+            return [], []
+
+        def key(name: str) -> str:
+            return unicodedata.normalize("NFC", name).casefold()
+
+        used_keys = {key(n) for n in used}
+        orphans = [n for n in candidates if key(n) not in used_keys]
+        kept = [n for n in candidates if key(n) in used_keys]
+        return orphans, kept
+
+    def _unlisted_candidates(self, names: set[str]) -> list[str]:
         root = self._opf_tree.getroot()
         manifest = root.find("opf:manifest", namespaces=NS)
         opf_dir = posixpath.dirname(self.opf_path)

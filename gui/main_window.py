@@ -37,7 +37,7 @@ import sys
 import traceback
 import webbrowser
 
-from PyQt6.QtCore import QItemSelectionModel, QSize, Qt, QTimer
+from PyQt6.QtCore import QItemSelection, QItemSelectionModel, QSize, Qt, QTimer
 from PyQt6.QtGui import QActionGroup, QColor, QGuiApplication, QIcon, QKeySequence
 from PyQt6.QtWidgets import (
     QAbstractItemView,
@@ -1387,9 +1387,34 @@ class MainWindow(QMainWindow):
     def _selection_or_all_books(self) -> list[EpubBook]:
         """Currently selected rows' books, or every loaded (non-error) book
         if nothing is selected. Shared by actions that operate on 'the
-        current working set': rename/export, Google Books lookup, search/replace."""
+        current working set': rename/export, Google Books lookup, search/replace.
+
+        With the filter on, "every book" means the books the filter shows:
+        a tool never runs on rows the user cannot see."""
         selected = self._currently_selected_books()
-        return selected if selected else [b for b in self.books if not b.load_error]
+        return selected if selected else self._visible_books()
+
+    def _visible_books(self) -> list[EpubBook]:
+        """Every loaded (non-error) book, or with the filter on only those
+        whose rows it shows (in list order). Says so in the status bar when
+        the filter leaves books out."""
+        books = [b for b in self.books if not b.load_error]
+        filter_edit = getattr(self, "filter_edit", None)
+        if filter_edit is None or not filter_edit.text().strip():
+            return books
+        hidden = set()
+        for row in range(self.table.rowCount()):
+            if self.table.isRowHidden(row):
+                book = self._book_for_row(row)
+                if book is not None:
+                    hidden.add(id(book))
+        visible = [b for b in books if id(b) not in hidden]
+        if len(visible) < len(books):
+            self.status.showMessage(
+                f"Nothing selected: working on the {len(visible)} book(s) the filter shows "
+                f"({len(books) - len(visible)} hidden by the filter are left alone).", 10000,
+            )
+        return visible
 
     def _find_row_for_book(self, book: EpubBook) -> int | None:
         for row in range(self.table.rowCount()):
@@ -1822,23 +1847,34 @@ class MainWindow(QMainWindow):
         book no longer present -- e.g. removed -- is simply skipped).
         Used to restore a selection by book identity after an operation
         that repopulates the table wholesale, like _rebuild_table()."""
-        self.table.clearSelection()
         rows_by_book = self._rows_by_book()
         first_row = None
-        model, selection = self.table.model(), self.table.selectionModel()
+        rows = set()
         for book in books:
             row = rows_by_book.get(book)
             if row is not None:
-                # Not table.selectRow(): in ExtendedSelection mode that
-                # replaces the selection, so only the last book stayed selected.
-                selection.select(
-                    model.index(row, 0),
-                    QItemSelectionModel.SelectionFlag.Select | QItemSelectionModel.SelectionFlag.Rows,
-                )
+                rows.add(row)
                 if first_row is None:
                     first_row = row
+        model, selection = self.table.model(), self.table.selectionModel()
+        # One selection made of runs of adjacent rows, set in ONE call: a
+        # select() per book merged each into the selection so far (and ran
+        # the selection-changed handler each time), about 13 s at 15,000 rows.
+        combined = QItemSelection()
+        ordered = sorted(rows)
+        start = 0
+        while start < len(ordered):
+            end = start
+            while end + 1 < len(ordered) and ordered[end + 1] == ordered[end] + 1:
+                end += 1
+            combined.select(model.index(ordered[start], 0), model.index(ordered[end], 0))
+            start = end + 1
+        selection.select(
+            combined,
+            QItemSelectionModel.SelectionFlag.ClearAndSelect | QItemSelectionModel.SelectionFlag.Rows,
+        )
         if first_row is not None:
-            self.table.scrollToItem(self.table.item(first_row, FILENAME_COL))
+            self.table.scrollTo(model.index(first_row, FILENAME_COL))
 
     def _rebuild_table(self) -> None:
         with perf_log.timed(f"_rebuild_table total ({len(self.books)} books)"):
@@ -2865,7 +2901,7 @@ class MainWindow(QMainWindow):
         from redactor_common.gui.background_call import call_in_background
 
         rows = self._selected_rows()
-        books = self._books_for_rows(rows) if rows else [b for b in self.books if not b.load_error]
+        books = self._books_for_rows(rows) if rows else self._visible_books()
         with_isbn = [b for b in books if (b.metadata.isbn or "").strip()]
         if not with_isbn:
             QMessageBox.information(

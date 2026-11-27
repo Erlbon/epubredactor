@@ -1,5 +1,22 @@
 # Changelog
 
+## 2026-11-27#08 -- Faster with large selections; Repair Navigation keeps fonts
+
+- **No freeze after saving or editing a large selection.** Putting back a selection of many books (after Save All,
+  Redact, History restore, Find Duplicates) is done in one step: about 13 seconds at 15,000 books before, now
+  instantly.
+- **Parse Filename opens quickly on a large selection.** Patterns are ranked once, on a sample of up to 500 file
+  names (the list says "sampled"), each name is read once per preview, and a big preview is filled behind a
+  progress dialog.
+- **Parse Filename's folder check opens each book once** (authors and series together) and has a Cancel button;
+  after a Cancel the preview says some values may show as unconfirmed.
+- **The book reader no longer hangs on a damaged page** with many unclosed picture tags.
+- **With the filter on and nothing selected, tools work on the books the filter shows,** not on hidden ones too; the
+  status bar says how many are left alone.
+- **Repair Navigation no longer deletes fonts and pictures that only a stylesheet or page uses.** A file missing
+  from the manifest but still used (a font named in CSS, a background image) is kept and listed as kept: e-readers
+  such as Kobo load it anyway.
+
 ## 2026-11-27#07 -- Undo, the table and several tools are safer
 
 - **Undo no longer makes unsaved changes look saved.** After a Save, Undo marks the book unsaved again (the file

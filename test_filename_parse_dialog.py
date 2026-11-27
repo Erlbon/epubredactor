@@ -347,8 +347,8 @@ def test_folder_metadata_is_scanned_once_per_folder_and_cached():
     books.append(_FakeBook(os.path.join(tmp_dir, "Someone Else - Other.epub")))
     scans = []
     import gui.filename_parse_dialog as module
-    original = module.folder_metadata_field_counts
-    module.folder_metadata_field_counts = lambda *a, **k: (scans.append(a), original(*a, **k))[1]
+    original = module.epub_saved_values
+    module.epub_saved_values = lambda *a, **k: (scans.append(a), original(*a, **k))[1]
     try:
         with _fake_history([]):
             dlg = FilenameParseDialog(books)
@@ -361,7 +361,7 @@ def test_folder_metadata_is_scanned_once_per_folder_and_cached():
             dlg.flush_pending_refresh()
         assert len(scans) == first  # re-rendering never re-opens the siblings
     finally:
-        module.folder_metadata_field_counts = original
+        module.epub_saved_values = original
     assert "confirmed via existing metadata" in dlg.preview_table.item(0, 1).text()
 
 
@@ -380,7 +380,8 @@ def test_big_selection_scan_runs_behind_a_progress_dialog():
             dlg.flush_pending_refresh()
     finally:
         module.run_with_progress = original
-    assert shown and all(kw.get("cancellable") is False for _n, kw in shown), shown
+    # The folder check opens other books (slow) and can be cancelled (review card 45).
+    assert shown and all(kw.get("cancellable") is True for _n, kw in shown), shown
 
 
 if __name__ == "__main__":
