@@ -14,8 +14,10 @@ def _make_fake_install(dirname: str, tools: list[str]) -> str:
     install_dir = os.path.join(TEST_DIR, dirname)
     os.makedirs(install_dir, exist_ok=True)
     for tool in tools:
-        with open(os.path.join(install_dir, f"{tool}.exe"), "w") as f:
+        path = os.path.join(install_dir, f"{tool}.exe")
+        with open(path, "w") as f:
             f.write("fake")
+        os.chmod(path, 0o755)  # on Linux/Mac redactor_common's find_tool wants an executable file (2026-11-27)
     return install_dir
 
 
