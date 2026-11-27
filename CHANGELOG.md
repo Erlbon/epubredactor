@@ -1,5 +1,19 @@
 # Changelog
 
+## 2026-11-27#10 -- Command line: safer with typos, fewer surprises, big folders start at once
+
+- **A path that matches nothing stops the command.** `set a.epub "typo*.epub" ...` used to change `a.epub` and
+  exit 0. Now every path is checked first; one that matches nothing is an error (exit code 2) and no file is
+  changed.
+- **`set` refuses a value the book cannot hold, before writing.** A series number with no series, a month with no
+  year, or a day with no year and month is reported as failed, and the file is left as it was. `--dry-run` now
+  says the same thing instead of "planned". Month 5 and a stored "05" count as the same value.
+- **Language codes with several parts are accepted.** `-s language=zh-Hans-CN`, `sr-Latn-RS` and `de-CH-1901`
+  work, as `en` and `en-GB` did.
+- **Big folders: results start with the first book.** `info`, `set`, `validate` and `headers` read, handle and let
+  go of one book at a time instead of reading the whole folder first, so output starts at once and memory stays
+  low. `headers --fix` reads each book only when its turn comes.
+
 ## 2026-11-27#09 -- Cleaner lookups; safer database builds and page previews
 
 - **Calibre lookups give two-letter language codes.** "eng" from Calibre becomes "en", as the other lookup

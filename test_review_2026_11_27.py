@@ -1661,3 +1661,132 @@ def test_card65_tool_paths_are_machine_specific():
     tools = [s for s in adapter.sections() if s.key == "tools"][0]
     assert tools.portable is False
     assert "tools" not in sb.default_selection(adapter)
+
+
+# Card 28: a CLI path that matched nothing was only printed; the other books were changed and the exit code was 0.
+def test_card28_a_path_that_matches_nothing_is_exit_2_before_any_file_is_touched(tmp_path, capsys):
+    from epubcli.main import main
+    from redactor_common.cli import EXIT_USAGE, CliError
+
+    good = _make_book(tmp_path / "a.epub", _UUID)
+    before = open(good, "rb").read()
+    with pytest.raises(CliError) as caught:
+        main(["set", str(good), str(tmp_path / "typo*.epub"), "-s", "publisher=ZZZ"])
+    assert caught.value.code == EXIT_USAGE and "typo" in str(caught.value)
+    assert open(good, "rb").read() == before
+
+
+# Card 35: set --dry-run said "planned" for a change the real run refuses, and the real run wrote the file first.
+@pytest.mark.parametrize("assignments, refused", [
+    (["-s", "series_index=3"], ["series_index"]),
+    (["-s", "month=5"], ["month"]),
+    (["-s", "year=2020", "-s", "day=14"], ["day"]),
+])
+def test_card35_set_refuses_what_the_epub_cannot_hold_in_dry_run_and_before_writing(tmp_path, capsys, assignments, refused):
+    import json
+
+    from epubcli.main import main
+
+    path = _make_book(tmp_path / "a.epub", _UUID)
+    before = open(path, "rb").read()
+    for extra in (["-n"], []):
+        code = main(["set", path, *assignments, *extra, "--json"])
+        row = json.loads(capsys.readouterr().out)["results"][0]
+        assert code == 1 and row["status"] == "failed" and row["not_stored"] == refused, (extra, row)
+        assert open(path, "rb").read() == before
+
+
+def test_card35_set_still_saves_a_complete_series_and_date(tmp_path, capsys):
+    import json
+
+    from core.epub_metadata import EpubBook
+    from epubcli.main import main
+
+    path = _make_book(tmp_path / "a.epub", _UUID)
+    argv = ["set", path, "-s", "series=Dune", "-s", "series_index=3", "-s", "year=2020", "-s", "month=5", "-s", "day=14"]
+    assert main([*argv, "-n", "--json"]) == 0
+    assert json.loads(capsys.readouterr().out)["results"][0]["status"] == "planned"
+    assert main([*argv, "--json"]) == 0
+    capsys.readouterr()
+    saved = EpubBook(path).metadata
+    assert (saved.series, saved.series_index, saved.pub_year, saved.pub_month, saved.pub_day) == ("Dune", "3", "2020", "05", "14")
+    assert main([*argv, "--json"]) == 0  # month 5 and the stored "05" are the same value
+    assert json.loads(capsys.readouterr().out)["results"][0]["status"] == "unchanged"
+
+
+# Card 36: the CLI took only one language subtag.
+@pytest.mark.parametrize("code", ["en", "nb", "eng", "en-US", "en-GB", "zh-Hans-CN", "sr-Latn-RS", "de-CH-1901"])
+def test_card36_language_codes_with_several_subtags_are_accepted(code):
+    from epubcli.fields import parse_assignment
+
+    assert parse_assignment(f"language={code}") == ("language", code)
+
+
+@pytest.mark.parametrize("code", ["english", "en-", "en--US", "e", "en_US"])
+def test_card36_language_still_refuses_what_is_not_a_code(code):
+    from epubcli.fields import parse_assignment
+    from redactor_common.cli import CliError
+
+    with pytest.raises(CliError, match="language code"):
+        parse_assignment(f"language={code}")
+
+
+# Card 44: the CLI read every book into memory before it printed anything or changed the first one.
+def _card44_folder(tmp_path, count=3):
+    folder = tmp_path / "books"
+    folder.mkdir()
+    return folder, [_make_book(folder / f"{chr(97 + i)}.epub", _UUID) for i in range(count)]
+
+
+@pytest.mark.parametrize("argv", [
+    ["info"], ["set", "-s", "publisher=ZZZ"], ["validate"], ["headers"],
+])
+def test_card44_each_book_is_handled_before_the_next_is_read(tmp_path, capsys, monkeypatch, argv):
+    import os
+
+    from core.epub_metadata import EpubBook
+    from epubcli import files as cli_files
+    from epubcli.main import main
+
+    folder, paths = _card44_folder(tmp_path)
+    seen_before_load: list[str] = []
+    printed = []
+
+    def loading(path):
+        printed.append(capsys.readouterr().out)
+        seen_before_load.append("".join(printed))
+        return EpubBook(path)
+
+    monkeypatch.setattr(cli_files, "EpubBook", loading)
+    main([argv[0], str(folder), *argv[1:]])
+    # When the last book is read, the first two are already reported on stdout.
+    assert len(seen_before_load) == 3
+    assert os.path.basename(paths[0]) in seen_before_load[2] and os.path.basename(paths[1]) in seen_before_load[2]
+    assert os.path.basename(paths[2]) not in seen_before_load[2]
+
+
+def test_card44_iter_books_is_lazy():
+    from epubcli import files as cli_files
+
+    assert not isinstance(cli_files.iter_books(["x.epub"]), list)
+
+
+def test_card44_headers_fix_reads_each_book_once_when_its_turn_comes(tmp_path, capsys, monkeypatch):
+    from core import redact_steps
+    from core.epub_metadata import EpubBook
+    from epubcli import files as cli_files
+    from epubcli.main import main
+
+    folder, paths = _card44_folder(tmp_path)
+    loads: list[tuple[str, str]] = []
+
+    def loading(path):
+        loads.append((path, capsys.readouterr().err))
+        return EpubBook(path)
+
+    monkeypatch.setattr(cli_files, "EpubBook", loading)
+    monkeypatch.setattr(redact_steps, "EpubBook", loading)
+    code = main(["headers", str(folder), "--fix", "--trash-dir", str(tmp_path / "bin")])
+    assert code == 0
+    assert [p for p, _ in loads] == paths  # one read per book, in order
+    assert "[2/3]" in loads[1][1] and "[3/3]" in loads[2][1]  # the engine reached each book before it was read

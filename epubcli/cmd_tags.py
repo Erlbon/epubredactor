@@ -17,7 +17,7 @@ from redactor_common.cli import EXIT_OK, EXIT_PARTIAL, CliError, Output, add_com
 from epubcli.fields import (
     CLI_FIELDS, DEFAULT_INFO_FIELDS, FIELD_NAMES, attr_for, normalize, parse_assignment, resolve_field,
 )
-from epubcli.files import add_path_arguments, collect, load_books, skip_reason
+from epubcli.files import add_path_arguments, collect, iter_books, skip_reason
 
 LABELS = {attr: name for name, attr in CLI_FIELDS.items()}
 
@@ -40,7 +40,7 @@ def run_info(args: argparse.Namespace, out: Output) -> int:
         [resolve_field(name) for name in args.fields.split(",") if name.strip()] if args.fields else DEFAULT_INFO_FIELDS
     )
     failed = 0
-    for index, book in enumerate(load_books(files, out), start=1):
+    for index, book in enumerate(iter_books(files), start=1):
         out.progress(index, len(files), book.path)
         fields = {n: getattr(book.metadata, CLI_FIELDS[n], "") for n in wanted}
         fields = {n: v for n, v in fields.items() if (v or "").strip()}
@@ -87,7 +87,7 @@ def run_set(args: argparse.Namespace, out: Output) -> int:
 
     files = collect(args.paths, out, recurse=not args.no_recurse)
     failed = 0
-    for index, book in enumerate(load_books(files, out), start=1):
+    for index, book in enumerate(iter_books(files), start=1):
         out.progress(index, len(files), book.path)
         row = {"path": book.path, "status": "", "changes": {}, "message": ""}
         reason = skip_reason(book)
@@ -99,8 +99,16 @@ def run_set(args: argparse.Namespace, out: Output) -> int:
                 old = getattr(book.metadata, attr, "") or ""
                 if normalize(attr, old) != normalize(attr, new):
                     row["changes"][LABELS[attr]] = {"old": old, "new": new}
+            refused = _not_storable(book, changes) if row["changes"] else []
             if not row["changes"]:
                 row["status"] = "unchanged"
+            elif refused:  # checked before anything is written, the same in a dry run as in a real one
+                row["status"], row["not_stored"] = "failed", [LABELS[attr] for attr in refused]
+                row["message"] = (
+                    f"not changed: the EPUB cannot hold {', '.join(row['not_stored'])} "
+                    f"(a series number needs a series, a month needs a year, a day needs a year and a month)"
+                )
+                failed += 1
             elif args.dry_run:
                 row["status"] = "planned"
             else:
@@ -112,6 +120,24 @@ def run_set(args: argparse.Namespace, out: Output) -> int:
             out.line(f"          {name}: {change['old']!r} -> {change['new']!r}")
     out.finish({"files": len(files), "failed": failed, "dry_run": args.dry_run})
     return EXIT_PARTIAL if failed else EXIT_OK
+
+
+def _not_storable(book: EpubBook, changes: dict[str, str]) -> list[str]:
+    """The changed fields the EPUB would not keep, judged on the values the book would have after the changes:
+    a series number with no series, a month with no year, a day with no year or no month (the date is written
+    as one dc:date, "2020-05-14", so a part with nothing before it is lost)."""
+    def after(attr: str) -> str:
+        return (changes[attr] if attr in changes else getattr(book.metadata, attr, "") or "").strip()
+
+    rules = (
+        ("series_index", ("series",)),
+        ("pub_month", ("pub_year",)),
+        ("pub_day", ("pub_year", "pub_month")),
+    )
+    return [
+        attr for attr, needs in rules
+        if attr in changes and after(attr) and not all(after(need) for need in needs)
+    ]
 
 
 def _save(book: EpubBook, changes: dict[str, str], row: dict, out: Output) -> str:

@@ -17,7 +17,7 @@ from core.epub_metadata import EpubBook, EpubError
 from core.validation_issue import SEVERITY_ERROR, SEVERITY_WARNING, STATUS_DRM
 from redactor_common.cli import EXIT_OK, EXIT_PARTIAL, Output, add_common_options
 
-from epubcli.files import add_path_arguments, collect, load_books
+from epubcli.files import add_path_arguments, collect, iter_books
 
 
 def add_validate_parser(sub) -> None:
@@ -75,7 +75,7 @@ def _fix_and_save(book: EpubBook, row: dict, out: Output) -> None:
 def run_validate(args: argparse.Namespace, out: Output) -> int:
     files = collect(args.paths, out, recurse=not args.no_recurse)
     problems = 0
-    for index, book in enumerate(load_books(files, out), start=1):
+    for index, book in enumerate(iter_books(files), start=1):
         out.progress(index, len(files), book.path)
         row = {
             "path": book.path, "status": book.load_error or book.validation_status, "problem": False,

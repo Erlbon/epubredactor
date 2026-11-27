@@ -33,7 +33,9 @@ _ALIASES = {
     "pub_year": "year", "pub_month": "month", "pub_day": "day", "lang": "language",
 }
 _NUMBER = re.compile(r"^[0-9]+(\.[0-9]+)?$")
-_LANGUAGE = re.compile(r"^[A-Za-z]{2,3}(-[A-Za-z0-9]{2,8})?$")
+# A BCP 47 tag: a 2-3 letter language, then any number of subtags (script, region, variant):
+# en, nb, eng, en-GB, zh-Hans-CN, sr-Latn-RS, de-CH-1901.
+_LANGUAGE = re.compile(r"^[A-Za-z]{2,3}(-[A-Za-z0-9]{1,8})*$")
 
 DEFAULT_INFO_FIELDS = ["title", "authors", "series", "series_index", "year"]
 
@@ -71,6 +73,8 @@ def normalize(attr: str, value: str) -> str:
     value = (value or "").strip()
     if attr in MULTI_VALUE_ATTRS:
         return "; ".join(part.strip() for part in value.split(";") if part.strip())
+    if attr in ("pub_month", "pub_day") and value.isascii() and value.isdigit():
+        return str(int(value))  # the date is written "2020-05": month 5 reads back as "05"
     return value
 
 

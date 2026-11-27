@@ -22,7 +22,7 @@ from redactor_common.cli import EXIT_OK, EXIT_PARTIAL, Output, add_common_option
 from redactor_common.cli.commands import redact_items, trash_to, trash_with_retries
 from redactor_common.core.pipeline import Recipe
 
-from epubcli.files import add_path_arguments, collect, load_books
+from epubcli.files import add_path_arguments, collect, iter_books
 
 STEP = "remove_page_headers"
 
@@ -53,12 +53,11 @@ def _row(book, plan) -> dict:
 
 def run_headers(args: argparse.Namespace, out: Output) -> int:
     files = collect(args.paths, out, recurse=not args.no_recurse)
-    books = load_books(files, out)
     if args.fix and not args.dry_run:
-        return _fix(books, args, out)
+        return _fix(files, args, out)
     found = failed = 0
-    for index, book in enumerate(books, start=1):
-        out.progress(index, len(books), book.path)
+    for index, book in enumerate(iter_books(files), start=1):
+        out.progress(index, len(files), book.path)
         if book.load_error:
             row = {"path": book.path, "status": "failed", "headers": 0, "removed": 0, "joined": 0, "hyphenated": 0, "hyphen_words": [],
                    "confidence": None, "headings": [], "examples": [], "message": book.load_error}
@@ -73,13 +72,27 @@ def run_headers(args: argparse.Namespace, out: Output) -> int:
         out.line(f"{row['status']:7} {book.path}" + (f"  ({row['message']})" if row["status"] != "clean" else ""))
         for example in row["examples"][:3]:
             out.line(f"        {example}")
-    out.finish({"files": len(books), "found": found, "failed": failed, "fix": args.fix, "dry_run": args.dry_run})
+    out.finish({"files": len(files), "found": found, "failed": failed, "fix": args.fix, "dry_run": args.dry_run})
     return EXIT_PARTIAL if (found or failed) else EXIT_OK
 
 
-def _fix(books, args: argparse.Namespace, out: Output) -> int:
+class _OnDisk:
+    """The "live" book EpubCtx starts from, for a file that is only on disk (no window, no unsaved edits). EpubCtx
+    reads its own working copy from the path, so the book is read once, when its turn comes, and dropped after it;
+    only this small object stays in the run's bookkeeping (env.touched)."""
+
+    load_error = None
+    dirty = False
+    stamp_only_dirty = False
+
+    def __init__(self, path: str):
+        self.path = path
+
+
+def _fix(files: list[str], args: argparse.Namespace, out: Output) -> int:
     """The Redact engine with this one step on, at confidence 0 (you asked for the fix): each changed book is saved
-    in place, verified, and its original goes to the bin."""
+    in place, verified, and its original goes to the bin. The items are the paths; each book is loaded only when
+    the engine reaches it (make_context), so a big folder is not read into memory first."""
     catalogue = build_catalogue("", "")
     recipe = Recipe(
         order=[s.key for s in catalogue], enabled={s.key: s.key == STEP for s in catalogue},
@@ -90,7 +103,7 @@ def _fix(books, args: argparse.Namespace, out: Output) -> int:
     )
     env.begin()
     return redact_items(
-        books, recipe_for_run(recipe), run_catalogue("", ""), make_context=lambda book: EpubCtx(book, env),
-        describe=lambda book: os.path.basename(book.path), finalize=save_finalize, finalize_label="Save",
-        path_of=lambda book: book.path, out=out,
+        files, recipe_for_run(recipe), run_catalogue("", ""), make_context=lambda path: EpubCtx(_OnDisk(path), env),
+        describe=os.path.basename, finalize=save_finalize, finalize_label="Save",
+        path_of=lambda path: path, out=out,
     )
