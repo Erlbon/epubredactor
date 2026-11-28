@@ -1,5 +1,11 @@
 # Changelog
 
+## 2026-11-28#01 -- Google Books searches use Google's own filter form
+
+- **Title, author and publisher filters are joined with a space.** The search sent a literal "+" between
+  `intitle:`, `inauthor:` and `inpublisher:`, so Google may have read them as one long title. It now sends them
+  the way Google documents.
+
 ## 2026-11-27#10 -- Command line: safer with typos, fewer surprises, big folders start at once
 
 - **A path that matches nothing stops the command.** `set a.epub "typo*.epub" ...` used to change `a.epub` and

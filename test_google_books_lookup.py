@@ -64,6 +64,14 @@ def test_build_query_url_basic():
     print("PASS: query URL includes title and author")
 
 
+def test_build_query_url_joins_filters_with_a_space():
+    from urllib.parse import parse_qs, urlparse
+    url = build_query_url("The Hobbit", "J.R.R. Tolkien", publisher="Allen")
+    assert "%2B" not in url
+    q = parse_qs(urlparse(url).query)["q"][0]
+    assert q == "intitle:The Hobbit inauthor:J.R.R. Tolkien inpublisher:Allen"
+
+
 def test_build_query_url_no_author():
     url = build_query_url("Dune", "")
     assert "inauthor" not in url

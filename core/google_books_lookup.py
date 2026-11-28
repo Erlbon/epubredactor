@@ -108,7 +108,9 @@ def build_query_url(title: str, authors_str: str = "", max_results: int = 5, pub
     if (publisher or "").strip():
         query_parts.append(f"inpublisher:{publisher.strip()}")
 
-    query = "+".join(query_parts)
+    # Google's documented form joins filters with a space. A "+" here was
+    # quoted to %2B, a literal plus inside the query (review card 68).
+    query = " ".join(query_parts)
     url = f"{API_URL}?q={quote(query)}&maxResults={max_results}"
     code = (language or "").strip().lower()
     if len(code) == 2 and code.isalpha():  # langRestrict takes a two-letter ISO 639-1 code; anything else is skipped
